@@ -70,8 +70,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.0.2
-        commit: 9efbb6aa7235656e2b4c51c0979b744f89c7785f
+        tag: v1.0.3
+        commit: 420aba60d89e5c74fee348348bd7aad313eefb54
 
   - name: libfuse
     buildsystem: meson
@@ -117,7 +117,7 @@ modules:
         url: https://gitlab.gnome.org/GNOME/gtk-frdp.git
         commit: 83854a24e31d1c07519f6e4393fe280d3b59e080
       - type: file
-        url: https://raw.githubusercontent.com/JMoratelli/acessos/v1.0.2/flatpak/aplicar-patches-frdp.sh
+        url: https://raw.githubusercontent.com/JMoratelli/acessos/v1.0.3/flatpak/aplicar-patches-frdp.sh
         sha256: ab547bf548d3fde9d0cf9a3805e9652b9e86ef5656bd107b73da52d3f2e92840
 
   - name: vte
@@ -282,8 +282,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.0.2
-        commit: 9efbb6aa7235656e2b4c51c0979b744f89c7785f
+        tag: v1.0.3
+        commit: 420aba60d89e5c74fee348348bd7aad313eefb54
       - type: script
         dest-filename: acessos-launcher
         commands:
