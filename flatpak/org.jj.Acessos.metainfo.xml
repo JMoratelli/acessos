@@ -54,6 +54,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.0.4" date="2026-09-09">
+      <description>
+        <p>Muda a licenca para GNU GPLv3 e adiciona verificacao e instalacao automatica de atualizacoes via Flatpak.</p>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-09-09">
       <description>
         <p>Adiciona manifest para submissao ao Flathub e ajustes finais de empacotamento.</p>
