@@ -546,7 +546,7 @@ fi
 # ------------------------------------------------------- 5. aplicacao
 azul "[5/5] instalando o Acessos"
 install -Dm755 "$AQUI/python/acessos.py"   "$DESTINO/acessos.py"
-for m in vncwidget sftp cofre rdp massa massa_ui ssh tema dialogo_ui; do
+for m in vncwidget sftp cofre rdp massa massa_ui ssh tema dialogo_ui atualizador; do
     install -Dm644 "$AQUI/python/$m.py" "$DESTINO/$m.py"
 done
 

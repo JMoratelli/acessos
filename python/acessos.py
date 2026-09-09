@@ -353,6 +353,7 @@ LARG_MIN_LATERAL = 180
 # arquivo (e para sftp.py, cofre.py e ssh.py) continuar usando como antes.
 from tema import (ACENTOS, TEMAS, MONO, SANS, COND,   # noqa: E402,F401
                   CSS_MOLDE, gerar_css, rgba, fonte_mono)
+import atualizador  # noqa: E402
 
 
 
@@ -4235,6 +4236,7 @@ class Janela(Gtk.Window):
         self._timer_busca = None
         self._timer_lateral = None
         self._encerrando = False
+        self._tag_disponivel = None
         # selecao para execucao em lote, por NOME (nao por objeto): a lista
         # de conexoes e recriada a cada recarregamento do INI, e guardar
         # referencia de objeto perderia a selecao a cada edicao
@@ -4252,6 +4254,7 @@ class Janela(Gtk.Window):
         self.connect("destroy", self._sair)
         self._aplicar_css()
         self._montar()
+        atualizador.checar_async(self._ao_checar_atualizacao)
 
     def cor(self, chave):
         return TEMAS[self.tema][chave]
@@ -5754,11 +5757,75 @@ class Janela(Gtk.Window):
     def _rodape(self):
         cx = Gtk.Box(spacing=8)
         cx.set_border_width(5)
+        # canto inferior esquerdo: some ate _ao_checar_atualizacao() achar
+        # uma release mais nova no GitHub — a checagem e assincrona e pode
+        # nunca voltar (sem rede, API fora do ar), entao comeca escondido.
+        self.bt_atualizacao = add_class(Gtk.Button(), "btn-atualizacao")
+        self.bt_atualizacao.set_no_show_all(True)
+        self.bt_atualizacao.set_visible(False)
+        self.bt_atualizacao.connect("clicked", self._clicou_atualizacao)
+        cx.pack_start(self.bt_atualizacao, False, False, 0)
         cx.pack_start(rotulo(self.caminho, "rodape-info"), True, True, 0)
         self.lb_conta = rotulo("%d máquinas" % len(self.conexoes),
                                "rodape-info", xalign=1.0)
         cx.pack_end(self.lb_conta, False, False, 0)
         return cx
+
+    # -------------------------------------------------- atualizacao
+    def _ao_checar_atualizacao(self, tag, _url_pagina):
+        if tag:
+            self._tag_disponivel = tag
+            self.bt_atualizacao.set_label("🟠  nova versão disponível: %s" % tag)
+            self.bt_atualizacao.set_tooltip_text(
+                "Clique para atualizar o Acessos agora")
+            self.bt_atualizacao.set_visible(True)
+        return False   # GLib.idle_add: roda uma unica vez
+
+    def _clicou_atualizacao(self, _b):
+        dialogo = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Atualizar o Acessos para %s?" % self._tag_disponivel)
+        dialogo.format_secondary_text(
+            "O aplicativo vai baixar a atualização pelo Flatpak, fechar e "
+            "abrir de novo sozinho. As abas abertas serão encerradas.")
+        dialogo.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+        dialogo.add_button("Atualizar agora", Gtk.ResponseType.OK)
+        resposta = dialogo.run()
+        dialogo.destroy()
+        if resposta != Gtk.ResponseType.OK:
+            return
+        self.bt_atualizacao.set_sensitive(False)
+        self.bt_atualizacao.set_label("⏳  atualizando…")
+
+        def trabalho():
+            erro = None
+            try:
+                atualizador.atualizar_e_reiniciar()
+            except atualizador.FalhaAtualizacao as e:
+                erro = str(e)
+            GLib.idle_add(self._atualizacao_concluida, erro)
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _atualizacao_concluida(self, erro):
+        if erro:
+            self.bt_atualizacao.set_sensitive(True)
+            self.bt_atualizacao.set_label(
+                "🟠  nova versão disponível: %s" % self._tag_disponivel)
+            dialogo = Gtk.MessageDialog(
+                transient_for=self, modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Não foi possível atualizar")
+            dialogo.format_secondary_text(erro)
+            dialogo.run()
+            dialogo.destroy()
+            return False
+        # fecha esta janela (dispara _sair -> Gtk.main_quit); a nova
+        # instancia ja foi lancada, desacoplada, por atualizar_e_reiniciar()
+        self.destroy()
+        return False
 
     # -------------------------------------------------- lista
     def _popular(self):

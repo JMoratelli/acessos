@@ -462,6 +462,22 @@ headerbar.dlg-topo button.perigo:hover {
     background-color: %(erro_h)s; border-color: %(erro_h)s;
 }
 .acao:hover            { background-color: %(acao_hover)s; }  /* so cor */
+
+/* aviso de atualizacao no rodape: ambar e a cor de "precisa de voce" no
+   resto da interface (ver .faixa-decisao acima) — o botao usa a mesma
+   linguagem visual para o mesmo tipo de aviso. */
+.btn-atualizacao, .btn-atualizacao label {
+    background-color: %(atencao_bg)s; color: %(atencao_fg)s;
+    background-image: none; box-shadow: none;
+}
+.btn-atualizacao {
+    border: 1px solid %(atencao_fg)s; border-radius: 6px;
+    padding: 2px 10px; min-height: 0px;
+    font-family: """ + SANS + """; font-size: 11px; font-weight: 600;
+}
+.btn-atualizacao:hover, .btn-atualizacao:hover label {
+    background-color: %(atencao_fg)s; color: %(atencao_bg)s;
+}
 .acao:hover label      { color: %(acao_txt)s; }
 .acao:disabled         { background-color: %(borda)s; border-color: %(borda)s; color: %(fraco)s; }
 .acao:disabled label   { color: %(fraco)s; }
