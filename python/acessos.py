@@ -95,7 +95,7 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gtk, Gdk, GLib, Pango  # noqa: E402
+from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf  # noqa: E402
 
 # motor de execucao em lote (SSH). Fica em arquivo separado de proposito:
 # nao depende de GTK, entao da para testar o protocolo inteiro contra um
@@ -5817,13 +5817,13 @@ class Janela(Gtk.Window):
     def _rodape(self):
         cx = Gtk.Box(spacing=8)
         cx.set_border_width(5)
-        # canto inferior esquerdo: some ate _ao_checar_atualizacao() achar
-        # uma release mais nova no GitHub — a checagem e assincrona e pode
-        # nunca voltar (sem rede, API fora do ar), entao comeca escondido.
-        self.bt_atualizacao = add_class(Gtk.Button(), "btn-atualizacao")
-        self.bt_atualizacao.set_no_show_all(True)
-        self.bt_atualizacao.set_visible(False)
-        self.bt_atualizacao.connect("clicked", self._clicou_atualizacao)
+        # canto inferior esquerdo, SEMPRE visivel: por padrao mostra a
+        # versao instalada e abre o dialogo Sobre; quando ha release nova
+        # no GitHub, _ao_checar_atualizacao() troca a aparencia e a acao do
+        # MESMO botao para o aviso ambar de atualizacao.
+        self.bt_atualizacao = add_class(Gtk.Button(), "btn-versao")
+        self.bt_atualizacao.connect("clicked", self._clicou_botao_versao)
+        self._rotular_versao_padrao()
         cx.pack_start(self.bt_atualizacao, False, False, 0)
         cx.pack_start(rotulo(self.caminho, "rodape-info"), True, True, 0)
         self.lb_conta = rotulo("%d máquinas" % len(self.conexoes),
@@ -5831,16 +5831,50 @@ class Janela(Gtk.Window):
         cx.pack_end(self.lb_conta, False, False, 0)
         return cx
 
-    # -------------------------------------------------- atualizacao
+    # -------------------------------------------------- atualizacao / sobre
+    def _rotular_versao_padrao(self):
+        versao = atualizador.versao_instalada()
+        self.bt_atualizacao.set_label(
+            "Acessos %s" % versao if versao else "Acessos")
+        self.bt_atualizacao.set_tooltip_text("Sobre o Acessos")
+
     def _ao_checar_atualizacao(self, tag, url_bundle):
         if tag:
             self._tag_disponivel = tag
             self._url_bundle_disponivel = url_bundle
+            ctx = self.bt_atualizacao.get_style_context()
+            ctx.remove_class("btn-versao")
+            ctx.add_class("btn-atualizacao")
             self.bt_atualizacao.set_label("🟠  nova versão disponível: %s" % tag)
             self.bt_atualizacao.set_tooltip_text(
                 "Clique para atualizar o Acessos agora")
-            self.bt_atualizacao.set_visible(True)
         return False   # GLib.idle_add: roda uma unica vez
+
+    def _clicou_botao_versao(self, botao):
+        if self._tag_disponivel:
+            self._clicou_atualizacao(botao)
+        else:
+            self._abrir_sobre()
+
+    def _abrir_sobre(self):
+        dlg = Gtk.AboutDialog(transient_for=self, modal=True)
+        dlg.set_program_name("Acessos")
+        dlg.set_version(atualizador.versao_instalada() or "versão desconhecida")
+        dlg.set_comments(
+            "Gerenciador de acesso remoto a máquinas em abas — "
+            "VNC, RDP, SSH e SFTP.")
+        dlg.set_website("https://github.com/JMoratelli/acessos")
+        dlg.set_website_label("github.com/JMoratelli/acessos")
+        dlg.set_license_type(Gtk.License.GPL_3_0)
+        dlg.set_authors(["Jurandir Moratelli"])
+        icone = caminho_icone()
+        if icone:
+            try:
+                dlg.set_logo(GdkPixbuf.Pixbuf.new_from_file_at_size(icone, 96, 96))
+            except Exception:
+                pass
+        dlg.run()
+        dlg.destroy()
 
     def _clicou_atualizacao(self, _b):
         dialogo = Gtk.MessageDialog(
