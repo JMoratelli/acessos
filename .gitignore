@@ -1,0 +1,5 @@
+build/*
+!build/manifest/
+__pycache__/
+*.pyc
+*.flatpak
