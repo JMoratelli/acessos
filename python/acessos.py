@@ -4237,6 +4237,7 @@ class Janela(Gtk.Window):
         self._timer_lateral = None
         self._encerrando = False
         self._tag_disponivel = None
+        self._url_bundle_disponivel = None
         # selecao para execucao em lote, por NOME (nao por objeto): a lista
         # de conexoes e recriada a cada recarregamento do INI, e guardar
         # referencia de objeto perderia a selecao a cada edicao
@@ -5772,9 +5773,10 @@ class Janela(Gtk.Window):
         return cx
 
     # -------------------------------------------------- atualizacao
-    def _ao_checar_atualizacao(self, tag, _url_pagina):
+    def _ao_checar_atualizacao(self, tag, url_bundle):
         if tag:
             self._tag_disponivel = tag
+            self._url_bundle_disponivel = url_bundle
             self.bt_atualizacao.set_label("🟠  nova versão disponível: %s" % tag)
             self.bt_atualizacao.set_tooltip_text(
                 "Clique para atualizar o Acessos agora")
@@ -5802,7 +5804,7 @@ class Janela(Gtk.Window):
         def trabalho():
             erro = None
             try:
-                atualizador.atualizar_e_reiniciar()
+                atualizador.atualizar_e_reiniciar(self._url_bundle_disponivel)
             except atualizador.FalhaAtualizacao as e:
                 erro = str(e)
             GLib.idle_add(self._atualizacao_concluida, erro)
