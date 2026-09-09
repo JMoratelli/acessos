@@ -28,7 +28,7 @@
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 
-APPID=org.machadao.Acessos
+APPID=org.jj.Acessos
 INSTALAR=0
 case "${1:-}" in
     --instalar) INSTALAR=1 ;;
@@ -71,7 +71,7 @@ mkdir -p build/manifest
 # sem o bash expandir $VAR nem $(comando) que existam la dentro.
 # --------------------------------------------------------------------
 cat > "build/manifest/$APPID.yml" <<'MANIFEST_ACESSOS_EOF'
-app-id: org.machadao.Acessos
+app-id: org.jj.Acessos
 runtime: org.gnome.Platform
 runtime-version: '47'
 sdk: org.gnome.Sdk
@@ -387,11 +387,11 @@ modules:
       - chmod 755 /app/lib/acessos/acessos.py
       # lancador: garante que os modulos ao lado sejam encontrados
       - install -Dm755 acessos-launcher /app/bin/acessos.py
-      - install -Dm644 org.machadao.Acessos.desktop
-        /app/share/applications/org.machadao.Acessos.desktop
+      - install -Dm644 org.jj.Acessos.desktop
+        /app/share/applications/org.jj.Acessos.desktop
       # Icone SVG vai para scalable, onde o tema procura vetor.
       - install -Dm644 icones/acessos.svg
-        /app/share/icons/hicolor/scalable/apps/org.machadao.Acessos.svg
+        /app/share/icons/hicolor/scalable/apps/org.jj.Acessos.svg
     sources:
       # Cada diretorio do projeto entra explicitamente, com dest. Usar
       # "path: ." aqui copiava o diretorio do manifest, e o sintoma era:
@@ -404,9 +404,9 @@ modules:
         dest: icones
       # O .desktop fica solto ao lado do manifest, entao precisa da propria
       # entrada — sem ela o build quebra em
-      #   install: cannot stat 'org.machadao.Acessos.desktop'
+      #   install: cannot stat 'org.jj.Acessos.desktop'
       - type: file
-        path: org.machadao.Acessos.desktop
+        path: org.jj.Acessos.desktop
       - type: script
         dest-filename: acessos-launcher
         commands:
@@ -924,7 +924,7 @@ Type=Application
 Name=Acessos
 Comment=Acesso remoto às máquinas (VNC, RDP, SSH, arquivos)
 Exec=acessos.py
-Icon=org.machadao.Acessos
+Icon=org.jj.Acessos
 Categories=Network;RemoteAccess;System;
 Terminal=false
 StartupNotify=true
