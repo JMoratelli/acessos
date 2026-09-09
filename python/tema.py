@@ -977,8 +977,12 @@ headerbar.dlg-topo { border-bottom: 1px solid %(borda2)s; }
 /* linha de opcao em painel: texto no corpo, nao em mono */
 .opcao-txt { color: %(texto)s; font-size: 12.5px; }
 
-/* separador horizontal entre secoes de um dialogo */
-.regua-h { background-color: %(borda)s; min-height: 1px; }
+/* separador horizontal entre secoes de um dialogo. borda2, nao borda: a
+   borda fraca e quase invisivel sobre o cartao (#e3e8ec no branco), e as
+   secoes do painel de Ajustes pareciam jogadas sem nenhuma linha entre
+   elas — borda2 e a mesma cor ja usada nas bordas que realmente precisam
+   aparecer (cards, campos, rodape da headerbar). */
+.regua-h { background-color: %(borda2)s; min-height: 1px; }
 .vida-on     { background-color: %(ok_fg)s; }
 .vida-off    { background-color: %(erro_fg)s; }
 .grupo-titulo    { color: %(texto)s; font-family: """ + COND + """; font-size: 18px; font-weight: 600; }
