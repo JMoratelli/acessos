@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Acessos
+Comment=Acesso remoto às máquinas (VNC, RDP, SSH, arquivos)
+Exec=acessos.py
+Icon=org.machadao.Acessos
+Categories=Network;RemoteAccess;System;
+Terminal=false
+StartupNotify=true
