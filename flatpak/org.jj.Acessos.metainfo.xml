@@ -4,7 +4,7 @@
   <name>Acessos</name>
   <summary>Gerenciador de acesso remoto a maquinas em abas</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <developer id="io.github.jmoratelli">
     <name>Jurandir Moratelli</name>
   </developer>
