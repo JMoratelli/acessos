@@ -1,6 +1,6 @@
 app-id: org.jj.Acessos
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 command: acessos.py
 
@@ -156,9 +156,12 @@ modules:
       - -DCHANNEL_URBDRC=OFF
       # FUSE fica ON: a libfuse do modulo anterior ja esta disponivel.
     sources:
+      # 3.9.0 tinha um bug de sintaxe em codecs.h (ordem de
+      # WINPR_DEPRECATED_VAR/FREERDP_API) que o GCC 15 rejeita; corrigido
+      # em versoes posteriores. 3.31.1 e a mais recente no momento.
       - type: archive
-        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.9.0.tar.gz
-        sha256: a1d2946c67037bf6bb8aa2f0441c7cacd5e92c835d776cecffb4fcdbaa45ec4f
+        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.31.1.tar.gz
+        sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
 
   # -------------------------------------------------------------------------
   # 5. gtk-frdp — o RDP do projeto, embutido como widget GTK.
