@@ -35,10 +35,11 @@ finish-args:
   - --filesystem=home
   - --filesystem=xdg-config/freerdp
   - --talk-name=org.freedesktop.secrets
-  # flatpak-spawn --host, usado por atualizador.py para rodar 'flatpak
-  # update' no host e reabrir o app apos atualizar. Fora do Flathub: essa
-  # permissao normalmente nao passa na revisao la (auto-atualizacao quebra
-  # o modelo de sandbox), mas aqui o app e distribuido por fora.
+  # flatpak-spawn --host, usado por atualizador.py para baixar o .flatpak
+  # do release e rodar 'flatpak install --reinstall' com ele no host, e
+  # depois reabrir o app. Fora do Flathub: essa permissao normalmente nao
+  # passa na revisao la (auto-atualizacao quebra o modelo de sandbox), mas
+  # aqui o app e distribuido por fora.
   - --talk-name=org.freedesktop.Flatpak
 
 cleanup:
