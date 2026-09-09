@@ -550,6 +550,13 @@ for m in vncwidget sftp cofre rdp massa massa_ui ssh tema dialogo_ui atualizador
     install -Dm644 "$AQUI/python/$m.py" "$DESTINO/$m.py"
 done
 
+# metainfo.xml ao lado dos modulos: e dali que atualizador.versao_instalada()
+# le a versao para mostrar no rodape e no dialogo Sobre. Fora do Flatpak nao
+# ha /app/share/metainfo, entao o proprio modulo cai neste caminho como
+# alternativa (ver _CAMINHOS_METAINFO em atualizador.py).
+install -Dm644 "$AQUI/flatpak/org.jj.Acessos.metainfo.xml" \
+    "$DESTINO/org.jj.Acessos.metainfo.xml"
+
 install -Dm644 "$AQUI/icones/acessos.svg" \
     "$PREFIXO/share/icons/hicolor/scalable/apps/acessos.svg"
 
