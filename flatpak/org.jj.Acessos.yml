@@ -1,0 +1,299 @@
+# org.jj.Acessos.yml — manifest para SUBMISSAO AO FLATHUB.
+#
+# Diferenca para o manifest que build.sh gera em build/manifest/: aquele usa
+# caminhos locais (../../python, ../../src etc.) porque roda dentro do
+# checkout de trabalho. Este busca o codigo-fonte por git (tag fixa), como
+# a Flathub exige: o repositorio de build deles nao tem o resto do projeto
+# ao lado, so este arquivo.
+#
+# Como submeter:
+#   1. Fork de https://github.com/flathub/flathub
+#   2. Criar uma branch chamada "org.jj.Acessos"
+#   3. Copiar este arquivo para a raiz do fork, renomeado para
+#      org.jj.Acessos.yml (sem o prefixo do caminho)
+#   4. Abrir PR de org.jj.Acessos contra flathub/flathub — isso cria
+#      automaticamente o repositorio github.com/flathub/org.jj.Acessos
+#      onde o build de CI roda
+#
+# Para atualizar uma versao nova: mude "tag:" e "commit:" abaixo (uma nova
+# tag no repo principal) e repita os testes locais com build.sh antes de
+# atualizar o repositorio do Flathub.
+
+app-id: org.jj.Acessos
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: acessos.py
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --filesystem=xdg-config/freerdp
+  - --talk-name=org.freedesktop.secrets
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - /share/gtk-doc
+  - '*.a'
+  - '*.la'
+
+modules:
+
+  - name: libvncserver
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DWITH_EXAMPLES=OFF
+      - -DWITH_TESTS=OFF
+      - -DWITH_FFMPEG=OFF
+      - -DWITH_GTK=OFF
+    sources:
+      - type: archive
+        url: https://github.com/LibVNC/libvncserver/archive/refs/tags/LibVNCServer-0.9.15.tar.gz
+        sha256: 62352c7795e231dfce044beb96156065a05a05c974e5de9e023d688d8ff675d7
+
+  - name: vncshim
+    buildsystem: simple
+    build-commands:
+      - gcc -shared -fPIC -O2 -Wall -o libvncshim.so src/vncshim.c
+        $(pkg-config --cflags --libs libvncclient)
+      - install -Dm755 libvncshim.so /app/lib/acessos/libvncshim.so
+    sources:
+      - type: git
+        url: https://github.com/JMoratelli/acessos.git
+        tag: v1.0.2
+        commit: 9efbb6aa7235656e2b4c51c0979b744f89c7785f
+
+  - name: libfuse
+    buildsystem: meson
+    config-opts:
+      - -Duseroot=false
+      - -Dutils=false
+      - -Dexamples=false
+      - -Dtests=false
+      - -Dinitscriptdir=
+    sources:
+      - type: archive
+        url: https://github.com/libfuse/libfuse/archive/refs/tags/fuse-3.16.2.tar.gz
+        sha256: 1bc306be1a1f4f6c8965fbdd79c9ccca021fdc4b277d501483a711cbd7dbcd6c
+
+  - name: freerdp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DWITH_SERVER=OFF
+      - -DWITH_SAMPLE=OFF
+      - -DWITH_CLIENT_SDL=OFF
+      - -DWITH_SWSCALE=OFF
+      - -DWITH_FFMPEG=OFF
+      - -DWITH_MANPAGES=OFF
+      - -DWITH_X11=ON
+      - -DWITH_WAYLAND=ON
+      - -DCHANNEL_URBDRC=OFF
+    sources:
+      - type: archive
+        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.31.1.tar.gz
+        sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
+
+  - name: gtk-frdp
+    buildsystem: simple
+    build-commands:
+      - bash aplicar-patches-frdp.sh .
+      - meson setup _build --prefix=/app --libdir=lib -Dexamples=false
+      - ninja -C _build
+      - ninja -C _build install
+    sources:
+      - type: git
+        url: https://gitlab.gnome.org/GNOME/gtk-frdp.git
+        commit: 83854a24e31d1c07519f6e4393fe280d3b59e080
+      - type: file
+        url: https://raw.githubusercontent.com/JMoratelli/acessos/v1.0.2/flatpak/aplicar-patches-frdp.sh
+        sha256: ab547bf548d3fde9d0cf9a3805e9652b9e86ef5656bd107b73da52d3f2e92840
+
+  - name: vte
+    buildsystem: meson
+    config-opts:
+      - --libdir=lib
+      - -Dgtk3=true
+      - -Dgtk4=false
+      - -Dgir=true
+      - -Dvapi=false
+      - -Ddocs=false
+      - -Da11y=true
+      - -Dgnutls=true
+    sources:
+      - type: archive
+        url: https://github.com/GNOME/vte/archive/refs/tags/0.76.4.tar.gz
+        sha256: 88979af0b02bac3c6d0bc95fcbeaf0ee025a7fc7a5b127155188b90718af0e78
+
+  - name: openssh
+    config-opts:
+      - --without-pam
+      - --without-selinux
+      - --without-kerberos5
+      - --disable-strip
+    make-install-args:
+      - install-nokeys
+    post-install:
+      - rm -f /app/sbin/sshd /app/bin/ssh-keysign /app/bin/ssh-pkcs11-helper
+    sources:
+      - type: archive
+        url: https://github.com/openssh/openssh-portable/archive/refs/tags/V_9_9_P2.tar.gz
+        sha256: 082dffcf651b9db762ddbe56ca25cc75a0355a7bea41960b47f3c139974c5e3e
+
+  - name: sshpass
+    buildsystem: simple
+    build-commands:
+      - |
+        cat > config.h <<'EOF'
+        #define PACKAGE_NAME "sshpass"
+        #define PACKAGE_STRING "sshpass 1.06"
+        #define VERSION "1.06"
+        #define PASSWORD_PROMPT "assword"
+        EOF
+      - gcc -O2 -Wall -DHAVE_CONFIG_H -D_GNU_SOURCE -I. -o sshpass main.c
+      - install -Dm755 sshpass /app/bin/sshpass
+    sources:
+      - type: git
+        url: https://github.com/kevinburke/sshpass
+        commit: ca7baa670d799b85ff91b4056e0a2bf9772cb2cf
+
+  # Dependencias Python — geradas com flatpak-pip-generator, ver comentario
+  # equivalente em build.sh (secao 8) para como regenerar apos uma
+  # atualizacao de versao.
+  - name: python3-paramiko
+    buildsystem: simple
+    build-commands:
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "paramiko" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/3b/71/427945e6ead72ccffe77894b2655b695ccf14ae1866cd977e185d606dd2f/bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: 560ddb6ec730386e7b3b26b8b4c88197aaed924430e7b74666a586ac997249ef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/45/b6/4c1205dde5e464ea3bd88e8742e19f899c16fa8916fb8510a851fae985b5/bcrypt-5.0.0-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: c2388ca94ffee269b6038d48747f4ce8df0ffbea43f31abfa18ac72f0218effb
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/90/34/9ce9a62ed9dc82ca9fd6a34445b6904af56e5f38b3eae2ed32e49c36053d/cryptography-50.0.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 53e279950892dc102c6b4e52af03ae5ea92fac572a1ddab78ca73a997f62b69f
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/5a/de/bbc12563bbf979618d17625a4e753ff7a078523e28d870d3626daa97261a/invoke-3.0.3-py3-none-any.whl
+      sha256: f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053
+    - type: file
+      url: https://files.pythonhosted.org/packages/82/5b/eadf6d45de38d30ab603f49393b6cd2cbe7e233af8cf90197e32782b68a9/paramiko-5.0.0-py3-none-any.whl
+      sha256: b7044611c30140d9a75261653210e2002977b71a0497ff3ba0d98d7edbf62f7c
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+    - type: file
+      url: https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: 22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/1e/b4/e927e0653ba63b02a4ca5b4d852a8d1d678afbf69b3dbf9c4d0785ac905c/pynacl-1.6.2-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 8845c0631c0be43abdd865511c41eab235e0be69c81dc66a50911594198679b0
+      only-arches:
+      - aarch64
+
+  - name: python3-cryptography
+    buildsystem: simple
+    build-commands:
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "cryptography" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/90/34/9ce9a62ed9dc82ca9fd6a34445b6904af56e5f38b3eae2ed32e49c36053d/cryptography-50.0.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 53e279950892dc102c6b4e52af03ae5ea92fac572a1ddab78ca73a997f62b69f
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+
+  - name: python3-argon2-cffi
+    buildsystem: simple
+    build-commands:
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "argon2-cffi" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/4f/d3/a8b22fa575b297cd6e3e3b0155c7e25db170edf1c74783d6a31a2490b8d9/argon2_cffi-25.1.0-py3-none-any.whl
+      sha256: fdc8b074db390fccb6eb4a3604ae7231f219aa669a2652e0f20e16ba513d5741
+    - type: file
+      url: https://files.pythonhosted.org/packages/6f/86/5363df11b86d02cf3662208e7406496327649cc90eb365bf6f4e8a54a41f/argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
+      sha256: 27f1821903e2ceadcb88ec2b45ef190897b7682449c772f4d9b53e42c520cf29
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/7e/e4/ad91d8297638aa2258aad4501c306aca99480dfe76ccd638173fa3702db9/argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
+      sha256: 78de2d65e0b9ea7ce9d1b1c3e87297b2d7305a02c266ee2a2d6910daddd7ee69
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+
+  - name: acessos
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib/acessos
+      - install -m644 python/*.py /app/lib/acessos/
+      - chmod 755 /app/lib/acessos/acessos.py
+      - install -Dm755 acessos-launcher /app/bin/acessos.py
+      - install -Dm644 flatpak/org.jj.Acessos.desktop
+        /app/share/applications/org.jj.Acessos.desktop
+      - install -Dm644 icones/acessos.svg
+        /app/share/icons/hicolor/scalable/apps/org.jj.Acessos.svg
+      - install -Dm644 flatpak/org.jj.Acessos.metainfo.xml
+        /app/share/metainfo/org.jj.Acessos.metainfo.xml
+    sources:
+      - type: git
+        url: https://github.com/JMoratelli/acessos.git
+        tag: v1.0.2
+        commit: 9efbb6aa7235656e2b4c51c0979b744f89c7785f
+      - type: script
+        dest-filename: acessos-launcher
+        commands:
+          - export PYTHONPATH="/app/lib/acessos:$PYTHONPATH"
+          - export GI_TYPELIB_PATH="/app/lib/girepository-1.0:/app/lib64/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+          - export LD_LIBRARY_PATH="/app/lib:/app/lib64:/app/lib/acessos${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          - unset GTK_MODULES
+          - export GDK_BACKEND=wayland
+          - export ACESSOS_KBD_LAYOUT="${ACESSOS_KBD_LAYOUT:-0x416}"
+          - export ACESSOS_KBD_OFFSET="${ACESSOS_KBD_OFFSET:-8}"
+          - mkdir -p "$HOME/.config/freerdp/server"
+          - '[ -e "$XDG_CONFIG_HOME/freerdp" ] || ln -s "$HOME/.config/freerdp" "$XDG_CONFIG_HOME/freerdp"'
+          - exec python3 /app/lib/acessos/acessos.py --wayland "$@"
