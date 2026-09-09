@@ -5857,39 +5857,60 @@ class Janela(Gtk.Window):
             self._abrir_sobre()
 
     def _abrir_sobre(self):
-        dlg = Gtk.AboutDialog(transient_for=self, modal=True)
-        dlg.set_program_name("Acessos")
-        dlg.set_version(atualizador.versao_instalada() or "versão desconhecida")
-        dlg.set_comments(
-            "Gerenciador de acesso remoto a máquinas em abas — "
-            "VNC, RDP, SSH e SFTP.")
-        dlg.set_website("https://github.com/JMoratelli/acessos")
-        dlg.set_website_label("github.com/JMoratelli/acessos")
-        dlg.set_license_type(Gtk.License.GPL_3_0)
-        dlg.set_authors(["Jurandir Moratelli"])
+        # Gtk.AboutDialog e nativo: estilo do SISTEMA, ignora o CSS do app —
+        # a mesma armadilha ja documentada em dialogo_ui.avisar() para o
+        # Gtk.MessageDialog. Casca propria (dialogo_ui.dialogo), no padrao.
+        import dialogo_ui
+        dlg, cx = dialogo_ui.dialogo("Sobre o Acessos", self)
+
         icone = caminho_icone()
         if icone:
             try:
-                dlg.set_logo(GdkPixbuf.Pixbuf.new_from_file_at_size(icone, 96, 96))
+                img = Gtk.Image.new_from_pixbuf(
+                    GdkPixbuf.Pixbuf.new_from_file_at_size(icone, 64, 64))
+                img.set_halign(Gtk.Align.CENTER)
+                img.set_margin_bottom(4)
+                cx.pack_start(img, False, False, 0)
             except Exception:
                 pass
+
+        versao = atualizador.versao_instalada()
+        lb_nome = rotulo("Acessos %s" % versao if versao else "Acessos",
+                         "dlg-titulo", xalign=0.5, ellipsize=None)
+        lb_nome.set_halign(Gtk.Align.CENTER)
+        cx.pack_start(lb_nome, False, False, 0)
+
+        lb_desc = dialogo_ui.nota(
+            cx, "Gerenciador de acesso remoto a máquinas em abas — "
+                "VNC, RDP, SSH e SFTP.", "dlg-texto")
+        lb_desc.set_justify(Gtk.Justification.CENTER)
+        lb_desc.set_halign(Gtk.Align.CENTER)
+
+        bt_site = add_class(
+            Gtk.Button(label="github.com/JMoratelli/acessos"), "secundaria")
+        bt_site.set_halign(Gtk.Align.CENTER)
+        bt_site.connect("clicked", lambda _b: Gtk.show_uri_on_window(
+            dlg, "https://github.com/JMoratelli/acessos", Gdk.CURRENT_TIME))
+        cx.pack_start(bt_site, False, False, 4)
+
+        lb_licenca = dialogo_ui.nota(
+            cx, "Licença GNU GPLv3 · Jurandir Moratelli", "dlg-dica")
+        lb_licenca.set_halign(Gtk.Align.CENTER)
+
+        # sem botao "Fechar": o X do cabecalho ja fecha, e um segundo botao
+        # ao lado seria a mesma acao escrita duas vezes (mesma razao do
+        # cancelar=None no editor() de paineis sem o que confirmar).
+        dlg.show_all()
         dlg.run()
         dlg.destroy()
 
     def _clicou_atualizacao(self, _b):
-        dialogo = Gtk.MessageDialog(
-            transient_for=self, modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.NONE,
-            text="Atualizar o Acessos para %s?" % self._tag_disponivel)
-        dialogo.format_secondary_text(
-            "O aplicativo vai baixar a atualização pelo Flatpak, fechar e "
-            "abrir de novo sozinho. As abas abertas serão encerradas.")
-        dialogo.add_button("Cancelar", Gtk.ResponseType.CANCEL)
-        dialogo.add_button("Atualizar agora", Gtk.ResponseType.OK)
-        resposta = dialogo.run()
-        dialogo.destroy()
-        if resposta != Gtk.ResponseType.OK:
+        import dialogo_ui
+        if not dialogo_ui.confirmar(
+                self, "Atualizar o Acessos para %s?" % self._tag_disponivel,
+                "O aplicativo vai baixar a atualização pelo Flatpak, fechar "
+                "e abrir de novo sozinho. As abas abertas serão encerradas.",
+                ok="Atualizar agora"):
             return
         self.bt_atualizacao.set_sensitive(False)
         self.bt_atualizacao.set_label("⏳  atualizando…")
@@ -5908,14 +5929,9 @@ class Janela(Gtk.Window):
             self.bt_atualizacao.set_sensitive(True)
             self.bt_atualizacao.set_label(
                 "🟠  nova versão disponível: %s" % self._tag_disponivel)
-            dialogo = Gtk.MessageDialog(
-                transient_for=self, modal=True,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK,
-                text="Não foi possível atualizar")
-            dialogo.format_secondary_text(erro)
-            dialogo.run()
-            dialogo.destroy()
+            import dialogo_ui
+            dialogo_ui.avisar(self, erro, titulo="Não foi possível atualizar",
+                              erro=True)
             return False
         # fecha esta janela (dispara _sair -> Gtk.main_quit); a nova
         # instancia ja foi lancada, desacoplada, por atualizar_e_reiniciar()
@@ -6860,18 +6876,40 @@ class Janela(Gtk.Window):
     # ---------------------------------------------------------- ajustes
     def _abrir_ajustes(self, _b=None):
         """Painel de ajustes. Usa os blocos do dialogo_ui — nada montado a
-        mao aqui, senao a proxima tela nasce fora do padrao outra vez."""
+        mao aqui, senao a proxima tela nasce fora do padrao outra vez.
+
+        Cada bloco e um Gtk.Expander, nao a antiga regua entre secoes: uma
+        linha de 1px era discreta demais para separar de verdade, e o
+        painel parecia uma lista de informacoes soltas. O cabecalho do
+        Expander e SO TEXTO — nunca um Switch ou botao ali dentro, que e a
+        mesma armadilha ja documentada em _servico() (EditorConexao) e
+        _no_grupo() (grupos da home): o Expander intercepta todo clique no
+        rotulo para abrir/fechar, e um widget interativo ali nunca recebe
+        o evento. O conteudo interativo de cada secao mora sempre no CORPO,
+        nunca no cabecalho."""
         import dialogo_ui
         dlg, cx, _ok = dialogo_ui.editor(
             # sem botao de acao: o X da barra fecha, e cada opcao ja se
             # aplica no momento em que voce mexe nela
             "Ajustes", self, ok=None, cancelar=None,
-            largura=560, altura=430)
+            largura=560, altura=480)
+
+        def secao(titulo):
+            exp = Gtk.Expander()
+            exp.set_label_widget(rotulo(titulo, "rotulo"))
+            exp.set_expanded(True)
+            corpo = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            corpo.set_margin_top(8)
+            corpo.set_margin_start(6)
+            exp.add(corpo)
+            cx.pack_start(exp, False, False, 0)
+            return corpo
 
         # ---- diagnostico
-        dialogo_ui.secao(cx, "DIAGNÓSTICO", primeira=True)
+        corpo_diag = secao("DIAGNÓSTICO")
         dialogo_ui.interruptor(
-            cx, "Painel de diagnóstico nas abas (F12)", self.mostrar_log,
+            corpo_diag, "Painel de diagnóstico nas abas (F12)",
+            self.mostrar_log,
             # espelha o ToggleButton, que segue sendo a fonte da verdade e o
             # alvo do F12 — assim o estado nao existe em dois lugares
             lambda ativo: self.bt_log.set_active(ativo),
@@ -6879,14 +6917,15 @@ class Janela(Gtk.Window):
             "uma conexão que cai.")
 
         # ---- local dos arquivos
-        dialogo_ui.secao(cx, "LOCAL DOS ARQUIVOS")
+        corpo_local = secao("LOCAL DOS ARQUIVOS")
         lb_atual = rotulo(dir_dados(), "opcao-txt")
         lb_atual.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        cx.pack_start(lb_atual, False, False, 0)
+        corpo_local.pack_start(lb_atual, False, False, 0)
         dialogo_ui.nota(
-            cx, "conexoes.ini, snippets.ini e histórico ficam aqui. "
-                "Apontando para uma pasta sincronizada, o backup passa a "
-                "ser automático.", "dlg-dica")
+            corpo_local,
+            "conexoes.ini, snippets.ini e histórico ficam aqui. "
+            "Apontando para uma pasta sincronizada, o backup passa a "
+            "ser automático.", "dlg-dica")
 
         aviso = rotulo("", "dlg-dica", ellipsize=None)
         aviso.set_line_wrap(True)
@@ -6922,12 +6961,26 @@ class Janela(Gtk.Window):
             if destino:
                 _aplicar(destino)
 
-        dialogo_ui.linha_botoes(cx, [
+        dialogo_ui.linha_botoes(corpo_local, [
             ("Escolher pasta…", "acao", _escolher),
             ("Voltar ao padrão", "secundaria",
              lambda: _aplicar(_dir_padrao())),
         ])
-        cx.pack_start(aviso, False, False, 0)
+        corpo_local.pack_start(aviso, False, False, 0)
+
+        # ---- sobre
+        corpo_sobre = secao("SOBRE")
+        versao = atualizador.versao_instalada()
+        corpo_sobre.pack_start(
+            rotulo("Acessos %s" % versao if versao else "Acessos",
+                   "opcao-txt"),
+            False, False, 0)
+        dialogo_ui.nota(
+            corpo_sobre, "Licença GNU GPLv3 · código aberto no GitHub.",
+            "dlg-dica")
+        dialogo_ui.linha_botoes(corpo_sobre, [
+            ("Sobre o Acessos…", "secundaria", self._abrir_sobre),
+        ])
 
         dlg.show_all()
         dlg.run()
@@ -7055,8 +7108,12 @@ def main():
     j.maximize()
     j.show_all()
     # no_show_all impede o show_all de exibi-lo; a home comeca ativa, entao
-    # o rodape tem de ser ligado a mao aqui
-    j.rodape.set_visible(True)
+    # o rodape tem de ser ligado a mao aqui. revelar(), NAO set_visible():
+    # set_visible() so mostra a CAIXA, e no_show_all tambem bloqueia o
+    # show_all() de alcancar os FILHOS dela (caminho do INI, contagem de
+    # maquinas, botao de versao) — o mesmo defeito documentado em
+    # revelar(), aqui emboscado hoje ao adicionar o botao de versao.
+    revelar(j.rodape)
     # show_all liga tudo; a lateral respeita o estado salvo depois disso
     j.lateral.set_visible(j.bt_lateral.get_active())
     Gtk.main()
