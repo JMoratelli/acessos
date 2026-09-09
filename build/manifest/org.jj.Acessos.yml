@@ -191,11 +191,13 @@ modules:
     sources:
       - type: git
         url: https://gitlab.gnome.org/GNOME/gtk-frdp.git
-        branch: master
-        # PENDENTE: trocar por commit fixo antes de considerar producao.
-        # Com 'master' a build muda sozinha entre uma compilacao e outra — e
-        # os patches dependem de trechos especificos do fonte. Pegue o sha:
+        # Commit fixo (era 'branch: master') porque os patches em
+        # aplicar-patches-frdp.sh dependem de trechos especificos do fonte;
+        # com 'master' flutuando a build muda sozinha entre uma compilacao
+        # e outra e pode quebrar os patches sem aviso. Para atualizar,
+        # rode e cole o novo sha:
         #   git ls-remote https://gitlab.gnome.org/GNOME/gtk-frdp.git master
+        commit: 83854a24e31d1c07519f6e4393fe280d3b59e080
       - type: file
         path: aplicar-patches-frdp.sh
 
