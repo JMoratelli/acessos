@@ -478,6 +478,21 @@ headerbar.dlg-topo button.perigo:hover {
 .btn-atualizacao:hover, .btn-atualizacao:hover label {
     background-color: %(atencao_fg)s; color: %(atencao_bg)s;
 }
+
+/* estado de repouso do mesmo botao: so a versao instalada, discreta, no
+   canto inferior esquerdo — vira .btn-atualizacao quando ha novidade. */
+.btn-versao, .btn-versao label {
+    background-color: transparent; color: %(fraco)s;
+    background-image: none; box-shadow: none;
+}
+.btn-versao {
+    border: 1px solid transparent; border-radius: 6px;
+    padding: 2px 10px; min-height: 0px;
+    font-family: """ + MONO + """; font-size: 11px;
+}
+.btn-versao:hover, .btn-versao:hover label {
+    background-color: %(hover)s; color: %(texto)s;
+}
 .acao:hover label      { color: %(acao_txt)s; }
 .acao:disabled         { background-color: %(borda)s; border-color: %(borda)s; color: %(fraco)s; }
 .acao:disabled label   { color: %(fraco)s; }

@@ -13,12 +13,16 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""atualizador — checa releases no GitHub e reinstala o pacote .flatpak novo.
+"""atualizador — versao instalada, releases no GitHub e reinstalacao via Flatpak.
 
-Feature EXCLUSIVA do Flatpak: fora dele (instalacao nativa via instalar.sh,
-ou "python3 acessos.py" direto em desenvolvimento) nao ha o que reinstalar,
-entao rodando_em_flatpak() bloqueia tudo o resto na porta de entrada —
-quem chama nem precisa se preocupar com o caso "instalado nativo".
+versao_instalada() funciona em QUALQUER forma de instalacao (Flatpak ou
+nativa via instalar.sh) — e usada tanto para mostrar a versao atual na UI
+(rodape, dialogo Sobre) quanto, dentro do Flatpak, para decidir se ha
+atualizacao. O resto do modulo (checar_async, atualizar_e_reiniciar) e
+Flatpak EXCLUSIVO: fora dele (instalacao nativa, ou "python3 acessos.py"
+direto em desenvolvimento) nao ha o que reinstalar, entao
+rodando_em_flatpak() bloqueia tudo o resto na porta de entrada — quem
+chama nem precisa se preocupar com o caso "instalado nativo".
 
 NAO usa 'flatpak update': os releases sao publicados como um arquivo
 .flatpak solto anexado ao release do GitHub (ver build.sh, 'flatpak
@@ -28,15 +32,17 @@ buscar e devolve sucesso sem mudar nada — pareceria ter atualizado e na
 verdade so reabriria a mesma versao antiga. Por isso o fluxo real e:
 baixar o .flatpak do release e 'flatpak install --reinstall' por cima.
 
-Tres papeis:
+Quatro papeis:
 
   versao_instalada()      le a versao da PROPRIA release do metainfo.xml
-                           instalado (/app/share/metainfo/...). Fonte unica
-                           de verdade: e o mesmo arquivo que ja se atualiza
-                           a cada release, tanto para o Flathub quanto para
-                           a distribuicao por fora — nao ha uma segunda
-                           constante de versao no codigo Python para
-                           esquecer de bumpar.
+                           instalado. Fonte unica de verdade: e o mesmo
+                           arquivo que ja se atualiza a cada release, tanto
+                           para o Flathub quanto para a distribuicao por
+                           fora — nao ha uma segunda constante de versao no
+                           codigo Python para esquecer de bumpar.
+
+  rodando_em_flatpak()     porta de entrada do que so faz sentido dentro do
+                           sandbox (checar_async, atualizar_e_reiniciar).
 
   checar_async()           so LE a API do GitHub, numa thread, e devolve o
                            resultado na main loop do GTK via GLib.idle_add.
@@ -82,17 +88,30 @@ def rodando_em_flatpak():
     return os.path.exists("/.flatpak-info")
 
 
+_CAMINHOS_METAINFO = (
+    CAMINHO_METAINFO,
+    # instalacao nativa (instalar.sh): sem /app, o metainfo.xml fica copiado
+    # ao lado dos modulos .py, no mesmo diretorio deste arquivo.
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "%s.metainfo.xml" % APP_ID),
+)
+
+
 def versao_instalada():
-    """Versao da release mais recente listada no metainfo.xml instalado, ou
-    None se o arquivo nao existe ou nao tem release nenhuma (nao deveria
-    acontecer dentro do Flatpak, mas a checagem de atualizacao nao e algo
-    que valha travar o app por causa disso)."""
-    try:
-        raiz = ET.parse(CAMINHO_METAINFO).getroot()
-        release = raiz.find("releases/release")
-        return release.get("version") if release is not None else None
-    except Exception:
-        return None
+    """Versao da release mais recente listada no metainfo.xml instalado —
+    usado tanto para exibir a versao atual (rodape, dialogo Sobre) quanto
+    para decidir se ha atualizacao. None se nenhum dos caminhos conhecidos
+    tem o arquivo, ou se ele nao lista release nenhuma (a UI so deixa de
+    mostrar a versao nesse caso; nao vale travar o app por isso)."""
+    for caminho in _CAMINHOS_METAINFO:
+        try:
+            raiz = ET.parse(caminho).getroot()
+            release = raiz.find("releases/release")
+            if release is not None:
+                return release.get("version")
+        except Exception:
+            continue
+    return None
 
 
 def _versao_tupla(v):
