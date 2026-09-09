@@ -81,8 +81,10 @@ import argparse
 import configparser
 import os
 import re
+import select
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -665,45 +667,102 @@ def selo_protocolo(tipo):
 
 
 _PING_DIAG = {"feito": False}
+_PING_ID = os.getpid() & 0xFFFF
+
+# (familia, protocolo, tipo do echo request, tipo do echo reply). Tentadas
+# nesta ordem — a maioria das maquinas do parque e IPv4, e so se cai nisso
+# nao resolver e que vale a pena tentar IPv6.
+_PING_PROTOCOLOS = (
+    (socket.AF_INET, socket.IPPROTO_ICMP, 8, 0),
+    (socket.AF_INET6, socket.IPPROTO_ICMPV6, 128, 129),
+)
+
+
+def _checksum_icmp(pacote):
+    if len(pacote) % 2:
+        pacote += b"\0"
+    soma = sum(struct.unpack("!%dH" % (len(pacote) // 2), pacote))
+    soma = (soma >> 16) + (soma & 0xFFFF)
+    soma += soma >> 16
+    return (~soma) & 0xFFFF
+
+
+def _pacote_icmp(tipo, ping_id, seq):
+    cabecalho = struct.pack("!BBHHH", tipo, 0, 0, ping_id, seq)
+    carga = struct.pack("!d", time.time())
+    soma = _checksum_icmp(cabecalho + carga)
+    return struct.pack("!BBHHH", tipo, 0, soma, ping_id, seq) + carga
 
 
 def pingar(host, espera=1):
-    """ICMP ping, um pacote. True = respondeu, False = nao, None = nao sei.
+    """ICMP echo, um pacote. True = respondeu, False = nao, None = nao sei.
 
-    Usa o binario `ping` do sistema: ICMP por socket exige privilegio e nao
-    vale a complicacao — a pergunta e so "a maquina esta ligada".
+    Pure Python, via socket SOCK_DGRAM/IPPROTO_ICMP — o "ping sem
+    privilegio" que o Linux libera desde o kernel 3.0 (controlado por
+    net.ipv4.ping_group_range, aberto por padrao nas distribuicoes atuais).
+    Nao depende do binario `ping`: dentro do Flatpak o runtime do GNOME nao
+    o traz, e subprocess.run(["ping", ...]) so falhava calado ali dentro
+    com FileNotFoundError. Este caminho funciona identico dentro e fora do
+    sandbox, sem exigir binario nem permissao nova no manifest.
 
-    None e devolvido quando NAO DA PARA SABER (binario ausente, parametro
-    recusado). Devolver False nesses casos afirmaria que a maquina esta
-    offline, o que e pior do que nao mostrar nada.
+    None e devolvido quando NAO DA PARA SABER (protocolo ICMP indisponivel
+    no sistema, nome que nao resolve). Devolver False nesses casos
+    afirmaria que a maquina esta offline, o que e pior do que nao mostrar
+    nada.
     """
     if not host:
         return False
-    cmd = ["ping", "-c", "1", "-W", str(espera), "-n", host]
-    try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT,
-                           timeout=espera + 2)
-    except FileNotFoundError:
-        _diag_ping("binario `ping` nao encontrado no PATH")
+    resolveu = False
+    sem_permissao = False
+    for familia, proto, tipo_pedido, tipo_resposta in _PING_PROTOCOLOS:
+        try:
+            # SEM proto aqui: alguns resolvers (glibc incluso) recusam a
+            # combinacao SOCK_DGRAM+IPPROTO_ICMP com "ai_socktype nao
+            # suportado" — o par so faz sentido para o SOQUETE, nao para a
+            # validacao do getaddrinfo. So o socket() abaixo precisa dele.
+            endereco = socket.getaddrinfo(
+                host, 0, familia, socket.SOCK_DGRAM)[0][4]
+        except socket.gaierror:
+            continue
+        resolveu = True
+        try:
+            s = socket.socket(familia, socket.SOCK_DGRAM, proto)
+        except OSError as e:
+            sem_permissao = True
+            _diag_ping("socket ICMP indisponivel: %s" % e)
+            continue
+        with s:
+            s.settimeout(espera)
+            try:
+                s.sendto(_pacote_icmp(tipo_pedido, _PING_ID, 1), endereco)
+            except OSError as e:
+                _diag_ping("falha ao enviar: %s" % e)
+                continue
+            fim = time.monotonic() + espera
+            while True:
+                restante = fim - time.monotonic()
+                if restante <= 0:
+                    break
+                pronto, _e, _x = select.select([s], [], [], restante)
+                if not pronto:
+                    break
+                try:
+                    resposta = s.recv(1024)
+                except OSError:
+                    break
+                # o kernel ja demultiplexa a resposta para O SOQUETE certo
+                # (e o id que ele proprio atribuiu, nao o que mandamos) —
+                # so falta confirmar que e um echo reply, nao outro tipo de
+                # ICMP (destino inalcancavel, tempo excedido etc.).
+                if len(resposta) >= 8 and resposta[0] == tipo_resposta:
+                    return True
+            return False   # resolveu e enviou, ninguem respondeu a tempo
+    if not resolveu:
+        _diag_ping("nao resolve: %s" % host)
         return None
-    except subprocess.TimeoutExpired:
-        return False
-    except Exception as e:
-        _diag_ping("falhou: %s: %s" % (type(e).__name__, e))
+    if sem_permissao:
         return None
-
-    if r.returncode == 0:
-        return True
-    # returncode 1 = sem resposta (offline de verdade).
-    # Qualquer outro codigo e o ping reclamando de uso/parametro — nao e
-    # resposta sobre a maquina, entao vira "nao sei", com diagnostico.
-    if r.returncode == 1:
-        return False
-    _diag_ping("codigo %d: %s" % (
-        r.returncode,
-        (r.stdout or b"").decode("utf-8", "replace").strip()[:200]))
-    return None
+    return False
 
 
 def _diag_ping(msg):
