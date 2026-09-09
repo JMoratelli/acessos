@@ -1023,87 +1023,8 @@ PYSCAN
 PATCHES_ACESSOS_EOF
 chmod +x build/manifest/aplicar-patches-frdp.sh
 
-cat > "build/manifest/$APPID.desktop" <<'DESKTOP_ACESSOS_EOF'
-[Desktop Entry]
-Type=Application
-Name=Acessos
-Comment=Acesso remoto às máquinas (VNC, RDP, SSH, arquivos)
-Exec=acessos.py
-Icon=org.jj.Acessos
-Categories=Network;RemoteAccess;System;
-Terminal=false
-StartupNotify=true
-DESKTOP_ACESSOS_EOF
-
-# METAINFO (AppStream) — exigido pela Flathub para listar o app na loja
-# com descricao, licenca e capturas de tela. O <screenshot> abaixo precisa
-# de uma URL absoluta e estavel (ex.: raw.githubusercontent.com de uma
-# imagem ja commitada); a Flathub busca a imagem no momento da revisao.
-cat > "build/manifest/$APPID.metainfo.xml" <<'METAINFO_ACESSOS_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<component type="desktop-application">
-  <id>org.jj.Acessos</id>
-  <name>Acessos</name>
-  <summary>Gerenciador de acesso remoto a maquinas em abas</summary>
-  <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
-  <developer id="io.github.jmoratelli">
-    <name>Jurandir Moratelli</name>
-  </developer>
-  <description>
-    <p>
-      Acessos reune VNC, RDP, SSH e transferencia de arquivos por SFTP em
-      abas, com RDP embutido nativo em Wayland (via gtk-frdp) e um cliente
-      VNC proprio construido sobre libvncclient para evitar os
-      congelamentos de interface do gtk-vnc.
-    </p>
-    <p>Recursos:</p>
-    <ul>
-      <li>VNC, RDP e SSH em abas na mesma janela</li>
-      <li>RDP embutido nativo em Wayland, sem depender de xfreerdp externo</li>
-      <li>Transferencia de arquivos via SFTP</li>
-      <li>Senhas salvas cifradas (cofre com Argon2/PBKDF2)</li>
-    </ul>
-  </description>
-  <launchable type="desktop-id">org.jj.Acessos.desktop</launchable>
-  <screenshots>
-    <screenshot type="default">
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/principal.png</image>
-      <caption>Painel principal com o resumo dos acessos cadastrados</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/vnc.png</image>
-      <caption>Sessao VNC embutida em aba</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/ssh.png</image>
-      <caption>Terminal SSH embutido com biblioteca de snippets</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/sftp.png</image>
-      <caption>Transferencia de arquivos via SFTP em duas colunas</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/execucao-massa.png</image>
-      <caption>Execucao de comandos em varias maquinas de uma vez</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/snippets.png</image>
-      <caption>Editor de snippets de comandos reutilizaveis</caption>
-    </screenshot>
-  </screenshots>
-  <url type="homepage">https://github.com/JMoratelli/acessos</url>
-  <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
-  <content_rating type="oars-1.1"/>
-  <releases>
-    <release version="1.0.0" date="2026-09-09">
-      <description>
-        <p>Primeira versao empacotada em Flatpak.</p>
-      </description>
-    </release>
-  </releases>
-</component>
-METAINFO_ACESSOS_EOF
+cp flatpak/org.jj.Acessos.desktop "build/manifest/$APPID.desktop"
+cp flatpak/org.jj.Acessos.metainfo.xml "build/manifest/$APPID.metainfo.xml"
 
 # Nada de symlinks aqui: o manifest referencia ../../python, ../../src e
 # ../../icones diretamente, e o flatpak-builder resolve esses caminhos em
