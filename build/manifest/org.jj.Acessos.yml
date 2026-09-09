@@ -283,24 +283,120 @@ modules:
   # -------------------------------------------------------------------------
   # 8. Dependencias Python.
   #
-  # pip com rede liberada no build em vez do flatpak-pip-generator: evita
-  # manter um requirements.txt com dezenas de wheels fixadas a mao. Para
-  # publicar na Flathub (que proibe rede no build), gere com
-  #   python3 flatpak-pip-generator paramiko cryptography argon2-cffi
-  # e substitua este modulo inteiro pelo json produzido.
+  # Gerado com flatpak-pip-generator (--requirements-file com paramiko,
+  # cryptography, argon2-cffi contra org.gnome.Sdk//50), fontes fixadas por
+  # sha256 em vez de pip com rede liberada no build. A Flathub proibe rede
+  # durante o build; para regenerar apos atualizar alguma versao:
+  #   python3 flatpak-pip-generator.py --requirements-file=requirements.txt \
+  #     --runtime='org.gnome.Sdk//50' \
+  #     --prefer-wheels=bcrypt,cryptography,argon2-cffi-bindings,pynacl \
+  #     -o python3-modules
+  # (requirements.txt com "paramiko", "cryptography" e "argon2-cffi", uma
+  # por linha) e substitua os tres modulos abaixo pelo json produzido.
+  # --prefer-wheels e obrigatorio para bcrypt e cryptography (nucleo em
+  # Rust desde as versoes recentes; o sdist exige maturin, ausente no
+  # runtime do GNOME), para argon2-cffi-bindings (sdist exige
+  # scikit-build-core/cmake) e para pynacl (o sdist compila a libsodium
+  # vendorizada, mas a extensao cffi _sodium nao fica instalada sob
+  # --no-build-isolation; a wheel ja traz tudo pronto). A wheel manylinux
+  # evita precisar desses toolchains/passos extras no sandbox de build.
   #
   # cryptography vem junto com o paramiko, mas esta explicito porque o
   # cofre.py depende dele diretamente. argon2-cffi e opcional por design
   # (sem ele o cofre cai em PBKDF2), mas resiste bem melhor a GPU.
   # -------------------------------------------------------------------------
-  - name: python-deps
+  - name: python3-paramiko
     buildsystem: simple
-    build-options:
-      build-args:
-        - --share=network
     build-commands:
-      - pip3 install --prefix=/app --no-warn-script-location
-        paramiko cryptography argon2-cffi
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "paramiko" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/3b/71/427945e6ead72ccffe77894b2655b695ccf14ae1866cd977e185d606dd2f/bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: 560ddb6ec730386e7b3b26b8b4c88197aaed924430e7b74666a586ac997249ef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/45/b6/4c1205dde5e464ea3bd88e8742e19f899c16fa8916fb8510a851fae985b5/bcrypt-5.0.0-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: c2388ca94ffee269b6038d48747f4ce8df0ffbea43f31abfa18ac72f0218effb
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/90/34/9ce9a62ed9dc82ca9fd6a34445b6904af56e5f38b3eae2ed32e49c36053d/cryptography-50.0.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 53e279950892dc102c6b4e52af03ae5ea92fac572a1ddab78ca73a997f62b69f
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/5a/de/bbc12563bbf979618d17625a4e753ff7a078523e28d870d3626daa97261a/invoke-3.0.3-py3-none-any.whl
+      sha256: f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053
+    - type: file
+      url: https://files.pythonhosted.org/packages/82/5b/eadf6d45de38d30ab603f49393b6cd2cbe7e233af8cf90197e32782b68a9/paramiko-5.0.0-py3-none-any.whl
+      sha256: b7044611c30140d9a75261653210e2002977b71a0497ff3ba0d98d7edbf62f7c
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+    - type: file
+      url: https://files.pythonhosted.org/packages/7f/81/d60984052df5c97b1d24365bc1e30024379b42c4edcd79d2436b1b9806f2/pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: 22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/1e/b4/e927e0653ba63b02a4ca5b4d852a8d1d678afbf69b3dbf9c4d0785ac905c/pynacl-1.6.2-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 8845c0631c0be43abdd865511c41eab235e0be69c81dc66a50911594198679b0
+      only-arches:
+      - aarch64
+  - name: python3-cryptography
+    buildsystem: simple
+    build-commands:
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "cryptography" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+      sha256: ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/90/34/9ce9a62ed9dc82ca9fd6a34445b6904af56e5f38b3eae2ed32e49c36053d/cryptography-50.0.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+      sha256: 53e279950892dc102c6b4e52af03ae5ea92fac572a1ddab78ca73a997f62b69f
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+  - name: python3-argon2-cffi
+    buildsystem: simple
+    build-commands:
+    - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "argon2-cffi" --no-build-isolation
+    sources:
+    - type: file
+      url: https://files.pythonhosted.org/packages/4f/d3/a8b22fa575b297cd6e3e3b0155c7e25db170edf1c74783d6a31a2490b8d9/argon2_cffi-25.1.0-py3-none-any.whl
+      sha256: fdc8b074db390fccb6eb4a3604ae7231f219aa669a2652e0f20e16ba513d5741
+    - type: file
+      url: https://files.pythonhosted.org/packages/6f/86/5363df11b86d02cf3662208e7406496327649cc90eb365bf6f4e8a54a41f/argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
+      sha256: 27f1821903e2ceadcb88ec2b45ef190897b7682449c772f4d9b53e42c520cf29
+      only-arches:
+      - x86_64
+    - type: file
+      url: https://files.pythonhosted.org/packages/7e/e4/ad91d8297638aa2258aad4501c306aca99480dfe76ccd638173fa3702db9/argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
+      sha256: 78de2d65e0b9ea7ce9d1b1c3e87297b2d7305a02c266ee2a2d6910daddd7ee69
+      only-arches:
+      - aarch64
+    - type: file
+      url: https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz
+      sha256: dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+    - type: file
+      url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
 
   # -------------------------------------------------------------------------
   # 9. O aplicativo.
@@ -322,6 +418,8 @@ modules:
       # Icone SVG vai para scalable, onde o tema procura vetor.
       - install -Dm644 icones/acessos.svg
         /app/share/icons/hicolor/scalable/apps/org.jj.Acessos.svg
+      - install -Dm644 org.jj.Acessos.metainfo.xml
+        /app/share/metainfo/org.jj.Acessos.metainfo.xml
     sources:
       # Cada diretorio do projeto entra explicitamente, com dest. Usar
       # "path: ." aqui copiava o diretorio do manifest, e o sintoma era:
@@ -337,6 +435,8 @@ modules:
       #   install: cannot stat 'org.jj.Acessos.desktop'
       - type: file
         path: org.jj.Acessos.desktop
+      - type: file
+        path: org.jj.Acessos.metainfo.xml
       - type: script
         dest-filename: acessos-launcher
         commands:
