@@ -54,6 +54,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.0.6" date="2026-09-09">
+      <description>
+        <p>Mostra a versao instalada no rodape da tela inicial e adiciona um dialogo Sobre, aberto ao clicar nela.</p>
+      </description>
+    </release>
     <release version="1.0.5" date="2026-09-09">
       <description>
         <p>Corrige o indicador de vida das maquinas (ping), que nao funcionava dentro do Flatpak por falta do binario ping no runtime.</p>
