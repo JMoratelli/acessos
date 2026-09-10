@@ -76,21 +76,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.0.7
-        commit: 13228ccf0306519d117f69d1fd686cdfd3f36e38
-
-  - name: libfuse
-    buildsystem: meson
-    config-opts:
-      - -Duseroot=false
-      - -Dutils=false
-      - -Dexamples=false
-      - -Dtests=false
-      - -Dinitscriptdir=
-    sources:
-      - type: archive
-        url: https://github.com/libfuse/libfuse/archive/refs/tags/fuse-3.16.2.tar.gz
-        sha256: 1bc306be1a1f4f6c8965fbdd79c9ccca021fdc4b277d501483a711cbd7dbcd6c
+        tag: v1.1.0
+        commit: bf5b35d098f3a571e120f9fe0e317de5926d9d61
 
   - name: freerdp
     buildsystem: cmake-ninja
@@ -111,20 +98,17 @@ modules:
         url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.31.1.tar.gz
         sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
 
-  - name: gtk-frdp
+  - name: rdpshim
     buildsystem: simple
     build-commands:
-      - bash aplicar-patches-frdp.sh .
-      - meson setup _build --prefix=/app --libdir=lib -Dexamples=false
-      - ninja -C _build
-      - ninja -C _build install
+      - gcc -shared -fPIC -O2 -Wall -pthread -o librdpshim.so src/rdpshim.c
+        $(pkg-config --cflags --libs freerdp3 freerdp-client3 winpr3)
+      - install -Dm755 librdpshim.so /app/lib/acessos/librdpshim.so
     sources:
       - type: git
-        url: https://gitlab.gnome.org/GNOME/gtk-frdp.git
-        commit: 83854a24e31d1c07519f6e4393fe280d3b59e080
-      - type: file
-        url: https://raw.githubusercontent.com/JMoratelli/acessos/v1.0.7/flatpak/aplicar-patches-frdp.sh
-        sha256: ab547bf548d3fde9d0cf9a3805e9652b9e86ef5656bd107b73da52d3f2e92840
+        url: https://github.com/JMoratelli/acessos.git
+        tag: v1.1.0
+        commit: bf5b35d098f3a571e120f9fe0e317de5926d9d61
 
   - name: vte
     buildsystem: meson
@@ -288,8 +272,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.0.7
-        commit: 13228ccf0306519d117f69d1fd686cdfd3f36e38
+        tag: v1.1.0
+        commit: bf5b35d098f3a571e120f9fe0e317de5926d9d61
       - type: script
         dest-filename: acessos-launcher
         commands:
@@ -299,7 +283,6 @@ modules:
           - unset GTK_MODULES
           - export GDK_BACKEND=wayland
           - export ACESSOS_KBD_LAYOUT="${ACESSOS_KBD_LAYOUT:-0x416}"
-          - export ACESSOS_KBD_OFFSET="${ACESSOS_KBD_OFFSET:-8}"
           - mkdir -p "$HOME/.config/freerdp/server"
           - '[ -e "$XDG_CONFIG_HOME/freerdp" ] || ln -s "$HOME/.config/freerdp" "$XDG_CONFIG_HOME/freerdp"'
           - exec python3 /app/lib/acessos/acessos.py --wayland "$@"
