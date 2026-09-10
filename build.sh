@@ -20,11 +20,14 @@
 # DECISOES DESTA VERSAO
 #   * VNC: so o embutido (libvncserver + vncshim). O gtk-vnc/gtk-vnc2 saiu
 #     do projeto — congelava de 2 a 3 minutos e nao volta.
-#   * RDP: so o embutido em Wayland nativo (gtk-frdp). Nao ha mais caminho
-#     de xfreerdp externo aqui.
-#   * O modulo "freerdp" CONTINUA no manifest: nao e um cliente alternativo,
-#     e a BIBLIOTECA (freerdp3/winpr3) contra a qual o gtk-frdp linka. O
-#     runtime do GNOME nao a traz; sem ela o meson do gtk-frdp nem comeca.
+#   * RDP: so o embutido em Wayland nativo, via rdpshim — ponte C direta
+#     para a libfreerdp3, sem GObject Introspection. O gtk-frdp (usado so
+#     como referencia de implementacao ao escrever o rdpshim) SAIU do
+#     projeto: nao ha mais um segundo motor GTK como reserva, nem xfreerdp
+#     externo neste manifest.
+#   * O modulo "freerdp" e a BIBLIOTECA (freerdp3/winpr3) contra a qual o
+#     rdpshim linka. O runtime do GNOME nao a traz; sem ela o rdpshim nem
+#     compila.
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 
@@ -34,8 +37,8 @@ case "${1:-}" in
     --instalar) INSTALAR=1 ;;
     --limpar)
         # Terra arrasada, sob pedido explicito. Leva junto as fontes
-        # baixadas, entao a proxima build rebaixa FreeRDP, gtk-frdp e VTE e
-        # recompila os tres — conte com uns 40 minutos.
+        # baixadas, entao a proxima build rebaixa FreeRDP e VTE e recompila
+        # os dois — conte com uns 30 minutos.
         rm -rf build
         echo "build/ apagado (inclui o cache em build/.flatpak-builder)."
         exit 0 ;;
@@ -47,7 +50,7 @@ esac
 # proposito: ela quebrava calada toda vez que um arquivo novo entrava em
 # python/ (foi o que aconteceu com cofre.py, rdp.py e depois com massa.py,
 # ssh.py e tema.py). Basta existir python/ com acessos.py dentro.
-for f in python/acessos.py src/vncshim.c icones/acessos.svg; do
+for f in python/acessos.py src/vncshim.c src/rdpshim.c icones/acessos.svg; do
     [ -f "$f" ] || { echo "ERRO: falta $f." >&2; exit 1; }
 done
 
@@ -60,7 +63,7 @@ for c in flatpak flatpak-builder ostree; do
 done
 
 echo "== fontes desta build =="
-md5sum python/*.py src/vncshim.c | sed 's/^/   /'
+md5sum python/*.py src/vncshim.c src/rdpshim.c | sed 's/^/   /'
 echo
 
 rm -rf build/manifest
@@ -169,36 +172,12 @@ modules:
         path: ../../src/vncshim.c
 
   # -------------------------------------------------------------------------
-  # 3. libfuse — dependencia do gtk-frdp.
-  #
-  # O gtk-frdp exige fuse3 no meson e o runtime do GNOME nao traz. Serve
-  # para a copia de ARQUIVOS pela area de transferencia do RDP; texto no
-  # clipboard nao depende disto. O pedido e incondicional, entao nao ha
-  # opcao de desligar — resta fornecer a biblioteca.
-  #
-  # useroot=false e obrigatorio: o build nao roda como root e nao pode
-  # aplicar setuid.
-  # -------------------------------------------------------------------------
-  - name: libfuse
-    buildsystem: meson
-    config-opts:
-      - -Duseroot=false
-      - -Dutils=false
-      - -Dexamples=false
-      - -Dtests=false
-      - -Dinitscriptdir=
-    sources:
-      - type: archive
-        url: https://github.com/libfuse/libfuse/archive/refs/tags/fuse-3.16.2.tar.gz
-        sha256: 1bc306be1a1f4f6c8965fbdd79c9ccca021fdc4b277d501483a711cbd7dbcd6c
-
-  # -------------------------------------------------------------------------
-  # 4. FreeRDP 3 — BIBLIOTECA, nao cliente.
+  # 3. FreeRDP 3 — BIBLIOTECA, nao cliente.
   #
   # Nao existe mais caminho de xfreerdp externo neste manifest: o RDP e
-  # sempre o widget embutido. Ainda assim o modulo fica, porque o gtk-frdp
-  # linka contra freerdp3/winpr3 e o runtime do GNOME nao os traz — sem
-  # este modulo o meson do gtk-frdp falha em dependency('freerdp3').
+  # sempre o widget embutido, falando com esta lib atraves do rdpshim
+  # (modulo seguinte) — sem gtk-frdp, sem GObject Introspection, um so
+  # motor, sem plano B.
   #
   # WITH_SERVER/SAMPLE/SDL desligados: so as bibliotecas cliente interessam.
   # FFMPEG/SWSCALE fora para nao arrastar a pilha de codecs — RemoteFX e GFX
@@ -232,7 +211,9 @@ modules:
       # a SDK nao tem. Nao ha uso para USB local dentro do terminal de um
       # PDV, entao o canal sai inteiro.
       - -DCHANNEL_URBDRC=OFF
-      # FUSE fica ON: a libfuse do modulo anterior ja esta disponivel.
+      # SEM FUSE: o clipboard do rdpshim so cobre texto (canal CLIPRDR),
+      # sem transferencia de arquivos — o FUSE so existia para isso no
+      # gtk-frdp, que saiu do projeto.
     sources:
       # 3.9.0 tinha um bug de sintaxe em codecs.h (ordem de
       # WINPR_DEPRECATED_VAR/FREERDP_API) que o GCC 15 rejeita; corrigido
@@ -242,45 +223,30 @@ modules:
         sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
 
   # -------------------------------------------------------------------------
-  # 5. gtk-frdp — o RDP do projeto, embutido como widget GTK.
+  # 4. rdpshim — a ponte C entre o Python e a libfreerdp3. UNICO motor de
+  # RDP embutido do projeto — sem gtk-frdp, sem fallback.
   #
-  # OS PATCHES SAO OBRIGATORIOS, nao um detalhe. A instalacao nativa
-  # (instalar.sh) compila o gtk-frdp CORRIGIDO; se o Flatpak compilar o
-  # master puro, o certificado nunca funciona aqui e funciona la — a
-  # correcao que liga FreeRDP_IgnoreCertificate mora nesses patches, e sem
-  # ela o FreeRDP recusa a conexao ANTES de emitir o sinal de verificacao.
-  #
-  # Sao seis: cursor (aborta a aplicacao), FUSE do clipboard, update() em
-  # segundo plano, SELECT_TIMEOUT (v2, com g_timeout_add), certificado,
-  # layout de teclado e scancode. Sao sete.
+  # Mesma ideia do vncshim (modulo 2): falar direto com a lib, sem casca
+  # GObject. A logica de certificado (pergunta ao operador, nunca aceita
+  # calado — nem para certificado novo nem para mudado), pipeline grafico
+  # (RDPGFX), clipboard (CLIPRDR, so texto) e redimensionamento dinamico
+  # (Display Control) estao todas aqui, portadas do gtk-frdp que usavamos
+  # antes so como referencia de implementacao. Compilado contra o FreeRDP
+  # do modulo anterior, como deve ser: a mesma razao do vncshim contra a
+  # libvncclient local.
   # -------------------------------------------------------------------------
-  - name: gtk-frdp
+  - name: rdpshim
     buildsystem: simple
     build-commands:
-      - bash aplicar-patches-frdp.sh .
-      # -Dlibdir=lib e OBRIGATORIO. Sem ele o meson herda o libdir do host
-      # e instala em /app/lib64 — a .so e o GtkFrdp-0.2.typelib vao para um
-      # caminho que o Flatpak NAO procura. O sintoma nao e erro de build:
-      # o app sobe normalmente, o gi nao acha o namespace GtkFrdp, o rdp.py
-      # marca TEM_FRDP=False e a aba cai calada no xfreerdp externo.
-      - meson setup _build --prefix=/app --libdir=lib -Dexamples=false
-      - ninja -C _build
-      - ninja -C _build install
+      - gcc -shared -fPIC -O2 -Wall -pthread -o librdpshim.so rdpshim.c
+        $(pkg-config --cflags --libs freerdp3 freerdp-client3 winpr3)
+      - install -Dm755 librdpshim.so /app/lib/acessos/librdpshim.so
     sources:
-      - type: git
-        url: https://gitlab.gnome.org/GNOME/gtk-frdp.git
-        # Commit fixo (era 'branch: master') porque os patches em
-        # aplicar-patches-frdp.sh dependem de trechos especificos do fonte;
-        # com 'master' flutuando a build muda sozinha entre uma compilacao
-        # e outra e pode quebrar os patches sem aviso. Para atualizar,
-        # rode e cole o novo sha:
-        #   git ls-remote https://gitlab.gnome.org/GNOME/gtk-frdp.git master
-        commit: 83854a24e31d1c07519f6e4393fe280d3b59e080
       - type: file
-        path: aplicar-patches-frdp.sh
+        path: ../../src/rdpshim.c
 
   # -------------------------------------------------------------------------
-  # 6. VTE (GTK3) — widget de terminal das abas de Shell (python/ssh.py).
+  # 5. VTE (GTK3) — widget de terminal das abas de Shell (python/ssh.py).
   #
   # As runtimes recentes do GNOME trazem so a variante GTK4 do VTE, e o app
   # pede Vte-2.91 (GTK3) — o sintoma e "namespace Vte not available" ao
@@ -294,7 +260,7 @@ modules:
   - name: vte
     buildsystem: meson
     config-opts:
-      # Mesmo cuidado do gtk-frdp: sem --libdir=lib o Vte-2.91.typelib cai
+      # Mesmo cuidado do rdpshim/freerdp: sem --libdir=lib o Vte-2.91.typelib cai
       # em /app/lib64 e o gi nao enxerga o namespace.
       - --libdir=lib
       - -Dgtk3=true
@@ -310,7 +276,7 @@ modules:
         sha256: 88979af0b02bac3c6d0bc95fcbeaf0ee025a7fc7a5b127155188b90718af0e78
 
   # -------------------------------------------------------------------------
-  # 7. ssh, ssh-keygen e sshpass.
+  # 6. ssh, ssh-keygen e sshpass.
   #
   # Sem eles a aba de Shell PEDE A SENHA no terminal, ignorando a que ja
   # esta gravada — o proprio app avisa ("senha definida mas sshpass
@@ -361,7 +327,7 @@ modules:
         commit: ca7baa670d799b85ff91b4056e0a2bf9772cb2cf
 
   # -------------------------------------------------------------------------
-  # 8. Dependencias Python.
+  # 7. Dependencias Python.
   #
   # Gerado com flatpak-pip-generator (--requirements-file com paramiko,
   # cryptography, argon2-cffi contra org.gnome.Sdk//50), fontes fixadas por
@@ -479,7 +445,7 @@ modules:
       sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
 
   # -------------------------------------------------------------------------
-  # 9. O aplicativo.
+  # 8. O aplicativo.
   # -------------------------------------------------------------------------
   - name: acessos
     buildsystem: simple
@@ -544,13 +510,10 @@ modules:
           # LAYOUT DE TECLADO DO RDP EMBUTIDO.
           #
           # Sem DISPLAY no sandbox o FreeRDP nao consegue autodetectar e
-          # assume US. O patch do gtk-frdp le esta variavel; 0x416 e
-          # pt-BR/ABNT2. Para outro layout, mude aqui ou exporte antes de
-          # chamar o app (ex.: 0x409 = US).
+          # assume US. O rdpshim le esta variavel; 0x416 e pt-BR/ABNT2. Para
+          # outro layout, mude aqui ou exporte antes de chamar o app
+          # (ex.: 0x409 = US).
           - export ACESSOS_KBD_LAYOUT="${ACESSOS_KBD_LAYOUT:-0x416}"
-          # Deslocamento X11 -> evdev do scancode. 8 e o valor correto; 0
-          # desliga a correcao caso algum servidor precise do numero cru.
-          - export ACESSOS_KBD_OFFSET="${ACESSOS_KBD_OFFSET:-8}"
           # CERTIFICADOS DO FREERDP.
           #
           # O FreeRDP guarda os aceitos em $XDG_CONFIG_HOME/freerdp/server/.
@@ -561,10 +524,9 @@ modules:
           # ja aceitos nativamente ficam em ~/.config/freerdp, que o sandbox
           # alcanca pelo --filesystem=xdg-config/freerdp.
           #
-          # O symlink liga os dois. O _caminho_certificado() do rdp.py, que
-          # tambem monta o caminho a partir de XDG_CONFIG_HOME, passa a
-          # resolver no mesmo arquivo — entao "esquecer certificado" pela
-          # interface apaga o certificado certo.
+          # O symlink liga os dois: o rdpshim usa o caminho padrao da
+          # propria libfreerdp (baseado em XDG_CONFIG_HOME), que passa a
+          # resolver no mesmo arquivo que a instalacao nativa ja usa.
           - mkdir -p "$HOME/.config/freerdp/server"
           - '[ -e "$XDG_CONFIG_HOME/freerdp" ] || ln -s "$HOME/.config/freerdp" "$XDG_CONFIG_HOME/freerdp"'
           # --wayland e OBRIGATORIO, nao conveniencia. O proprio acessos.py
@@ -572,12 +534,9 @@ modules:
           # RDP em janela" — ela muda o caminho de RDP. Sem ela o app
           # autodetecta, e o observado foi a aba de RDP abrir, aceitar o
           # open_host e ficar em "conectando" para sempre, sem disparar
-          # nenhum sinal de erro do gtk-frdp.
+          # nenhum sinal de erro do rdpshim.
           - exec python3 /app/lib/acessos/acessos.py --wayland "$@"
 MANIFEST_ACESSOS_EOF
-
-cp flatpak/aplicar-patches-frdp.sh build/manifest/aplicar-patches-frdp.sh
-chmod +x build/manifest/aplicar-patches-frdp.sh
 
 cp flatpak/org.jj.Acessos.desktop "build/manifest/$APPID.desktop"
 cp flatpak/org.jj.Acessos.metainfo.xml "build/manifest/$APPID.metainfo.xml"
@@ -615,7 +574,7 @@ if [ -d "$CACHE/cache" ]; then
     fi
 fi
 
-echo "-- construindo (freerdp e gtk-frdp demoram) --"
+echo "-- construindo (freerdp demora) --"
 cd build/manifest
 # SEM --repo aqui, de proposito.
 #
@@ -691,7 +650,7 @@ fi
 # saem: guardamos os tres ultimos, que e o bastante para voltar uma versao.
 #
 # O cache de compilacao e as fontes baixadas NAO sao tocados aqui: sao eles
-# que evitam recompilar FreeRDP e gtk-frdp na proxima vez. Para apagar
+# que evitam recompilar o FreeRDP na proxima vez. Para apagar
 # tambem, ./build.sh --limpar.
 rm -rf build/builder-out build/repo
 ls -1t build/*.flatpak 2>/dev/null | tail -n +4 | xargs -r rm -f

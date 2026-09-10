@@ -35,9 +35,11 @@ USO
     python3 acessos.py [--conf caminho/conexoes.ini] [--debug]
                        [--x11 | --wayland]
 
-    --x11      forca XWayland: RDP embutido na aba, sem captura de teclado
-    --wayland  forca Wayland nativo: captura de teclado, RDP em janela
-    (o padrao vem de `x11` em [geral]; hoje 1)
+    --x11      forca XWayland: captura total de teclado (Super, Alt+Tab
+               tambem vao para a sessao remota); sem escala fracionaria
+    --wayland  forca Wayland nativo: nitido em qualquer escala; captura de
+               teclado pode ficar parcial, dependendo do compositor
+    (RDP embute igual nos dois modos; o padrao vem de `x11` em [geral])
 
 ARQUIVOS   (em ~/.config/acessos/, ou onde [geral] caminho= apontar)
     conexoes.ini   uma secao por maquina, com tela + shell + rdp juntos.
@@ -136,8 +138,9 @@ except Exception as e:
     ERRO_VNC = ("widget VNC indisponível: %s\n\n"
                 "Compile o vncshim com ./instalar.sh" % e)
 
-# RDP embutido: widget GTK sobre o gtk-frdp. Ausente, cai no xfreerdp
-# externo (classe AbaRdp), que continua sendo o caminho padrao do projeto.
+# RDP: widget GTK proprio (rdpshim.c + libfreerdp3, sem GObject
+# Introspection), UNICO caminho — sem xfreerdp externo como fallback.
+# Ausente, a aba de RDP avisa e nao abre (ver Janela.abrir).
 try:
     from rdp import RdpWidget, TEM_FRDP, ERRO_FRDP
 except Exception as e:
@@ -168,15 +171,19 @@ except Exception as e:
 def talvez_reexec_x11(forcar):
     """Roda o processo inteiro sob XWayland.
 
-    O RDP embutido depende de Gtk.Socket, que exige um XID — algo que nao
-    existe em Wayland nativo. Forcando GDK_BACKEND=x11 o app vira cliente
-    XWayland, ganha XID, e o /parent-window: do xfreerdp volta a funcionar.
+    NAO tem mais relacao com RDP — o RdpWidget embute em qualquer backend,
+    sem precisar de XID/Gtk.Socket. O motivo agora e so a captura de
+    teclado: sob XWayland, GrabNativo usa XGrabKeyboard, que o proprio
+    XWayland traduz para o protocolo de inibicao de atalhos do Wayland —
+    Super e Alt+Tab tambem vao para a sessao remota. Em Wayland nativo o
+    inibidor (via ctypes, sem typelib no GTK3) nem sempre e suportado pelo
+    compositor.
 
     Tem de ser feito ANTES de qualquer chamada que abra o display, por isso
     e um re-exec e nao um simples setenv.
 
     Preco: sob XWayland nao ha escala fracionaria por monitor. Em tela HiDPI
-    com escala 125%% ou 150%% a janela sai borrada.
+    com escala 125% ou 150% a janela sai borrada.
     """
     if not forcar:
         return
@@ -323,14 +330,6 @@ def sondar_porta(host, porta, timeout, callback):
     threading.Thread(target=_trabalho, daemon=True).start()
 
 
-def _bin_rdp():
-    for nome in ("xfreerdp3", "xfreerdp", "wlfreerdp"):
-        c = shutil.which(nome)
-        if c:
-            return c, nome
-    return None, None
-
-
 DEBUG = False
 SEP_GRUPO = ";"
 SECAO_GERAL = "geral"
@@ -403,16 +402,20 @@ CONF_EXEMPLO = """\
 #                opcao recusada faz o cliente abortar.
 #                    rdp_extras = +compression /audio-mode:1
 
-# x11 = 1 (padrao) roda o programa sob XWayland. E o unico modo em que o RDP
-# abre EMBUTIDO na aba, porque reparentar janela e um conceito do X que o
-# Wayland nao tem.
+# x11 = 1 (padrao) roda o programa sob XWayland. NAO influencia mais o RDP
+# (o RdpWidget embute em qualquer backend, sem precisar de XEmbed) — a
+# escolha aqui e so sobre captura de teclado:
 #
-# O que se perde: a captura total de teclado. O inibidor de atalhos do
-# compositor nao alcanca janelas XWayland, entao Super e Alt+Tab continuam do
-# sistema. O botao de teclado ainda pega o que o compositor nao reserva
-# (Ctrl+W, Ctrl+T, F1-F12), e o menu de teclas injeta Ctrl+Alt+Del e afins.
+# x11 = 1: GrabNativo usa XGrabKeyboard, que sob XWayland o compositor
+# traduz para o protocolo de inibicao do Wayland de verdade — Super e
+# Alt+Tab tambem vao para a sessao remota. Preco: sem escala fracionaria
+# por monitor: em tela HiDPI com 125% ou 150% a janela sai borrada.
 #
-# x11 = 0 inverte a troca: captura total de teclado, RDP em janela separada.
+# x11 = 0: Wayland nativo, nitido em qualquer escala. GrabNativo tenta o
+# inibidor de atalhos do Wayland via ctypes (nem sempre suportado pelo
+# compositor); quando falha, Super e Alt+Tab continuam do sistema — o botao
+# de teclado ainda pega o que o compositor nao reserva (Ctrl+W, Ctrl+T,
+# F1-F12), e o menu de teclas injeta Ctrl+Alt+Del e afins.
 [geral]
 painel  = 240
 lateral = 1
@@ -489,11 +492,15 @@ def liberar_grab_gtk():
     resto da interface para de responder — inclusive dialogos modais, que
     aparecem mas nao aceitam clique.
 
-    O gtk-frdp instala um desses enquanto a sessao RDP esta ativa, e ele
-    nao depende de foco: por isso, com uma aba RDP aberta (mesmo em segundo
-    plano), o aviso de mudanca de host key do SSH ficava suprimido, e o ssh
-    esperava para sempre por uma resposta que ninguem conseguia dar. Fechar
-    a aba RDP liberava, o que apontava para o grab e nao para o SSH.
+    O gtk-frdp (motor RDP anterior, removido) instalava um desses enquanto
+    a sessao RDP estava ativa, e ele nao dependia de foco: por isso, com
+    uma aba RDP aberta (mesmo em segundo plano), o aviso de mudanca de
+    host key do SSH ficava suprimido, e o ssh esperava para sempre por uma
+    resposta que ninguem conseguia dar. Fechar a aba RDP liberava, o que
+    apontava para o grab e nao para o SSH. O motor atual (rdpshim) nao usa
+    gtk_grab_add — mas a chamada continua aqui como rede de seguranca
+    generica, ja que qualquer outro widget da interface poderia, em tese,
+    deixar um grab preso do mesmo jeito.
 
     Devolve a lista de widgets que estavam segurando o grab, para quem
     chamar poder devolver depois se quiser."""
@@ -1802,8 +1809,8 @@ class CapturaTeclado:
         # SOLTAR TAMBEM O GRAB DO WIDGET.
         #
         # O _grab acima desfaz so o GrabNativo. O grab de seat feito pelo
-        # proprio widget (VncWidget.set_keyboard_grab, e o equivalente
-        # interno do gtk-frdp) e independente e ficava preso.
+        # proprio widget (VncWidget/RdpWidget.set_keyboard_grab) e
+        # independente e ficava preso.
         #
         # Consequencia observada: com uma aba RDP aberta em segundo plano, o
         # terminal da aba SSH nao recebia tecla nenhuma. O ssh ficava parado
@@ -1826,7 +1833,7 @@ class CapturaTeclado:
         # O grab do WIDGET tambem se perde no focus-out, e ele e independente
         # do _grab_ativo (que rastreia so o GrabNativo). Sem refaze-lo, o
         # VNC voltava sem captura mesmo com o botao marcado — e no RDP o
-        # gtk-frdp precisa do foco de volta pelo mesmo motivo.
+        # RdpWidget precisa do foco de volta pelo mesmo motivo.
         alvo = getattr(self, "display", None) or getattr(self, "tela", None)
         if alvo is not None:
             if hasattr(alvo, "set_keyboard_grab"):
@@ -2372,7 +2379,8 @@ class AbaVnc(AbaBase, CapturaTeclado):
         self.conectar()
 
     def adiar_ate_focar(self):
-        """Mesmo tratamento que a AbaRdp ja recebia, agora tambem no VNC.
+        """Mesmo tratamento que a AbaRdpEmbutido ja recebia, agora tambem no
+        VNC.
 
         O motivo aqui e outro, e mais grave que tela preta: abrindo em
         segundo plano, o codigo antigo trocava para a aba nova, chamava
@@ -2876,26 +2884,24 @@ class AbaVnc(AbaBase, CapturaTeclado):
 
 
 class AbaRdpEmbutido(AbaBase, CapturaTeclado):
-    """RDP como widget GTK de verdade, via gtk-frdp.
+    """RDP como widget GTK de verdade, via rdpshim (ponte C para
+    libfreerdp3, sem GObject Introspection — ver python/rdpwidget.py).
 
-    POR QUE EXISTE, ao lado da AbaRdp
-    ---------------------------------
-    A AbaRdp lanca o xfreerdp e o reparenta num Gtk.Socket. Isso depende de
-    XEmbed, que so existe em X11 — em Wayland nativo o RDP vira janela
-    separada.
+    UNICO CAMINHO DE RDP DO PROJETO
+    --------------------------------
+    Ate uma versao anterior existia uma classe AbaRdp, que lancava o
+    xfreerdp como processo externo e o reparentava num Gtk.Socket — via
+    XEmbed, disponivel so em X11; em Wayland nativo a sessao virava janela
+    separada. Essa classe saiu: o RdpWidget e um GtkDrawingArea de verdade
+    (mesmo desenho do VncWidget) e embute em QUALQUER backend, sem XEmbed —
+    entao nao ha mais razao para dois caminhos que se comportavam
+    diferente entre si (grab de teclado, tratamento de certificado, cores).
 
-    E isso passou a pesar: o congelamento da interface que perseguimos por
-    dias so acontece sob XWayland. Wayland nativo e a configuracao boa para
-    o VNC, e era justamente a que impedia o RDP embutido.
-
-    O gtk-frdp resolve: e um GtkDrawingArea, embute em qualquer backend.
-    Testado contra Windows real com FreeRDP 3.30 — conecta, escala
-    acompanhando a janela, captura atalhos sem vazar para o host, e aguenta
-    video em tela cheia sem travar o laco de eventos.
-
-    A AbaRdp NAO foi tocada: sob X11 ela continua sendo usada, por ser mais
-    madura. A escolha e feita em abrir(), e `rdp_embutido = 0` no [geral]
-    forca o caminho antigo.
+    Testado contra Windows real — conecta, ajusta a resolucao dinamicamente
+    (canal Display Control), captura atalhos sem vazar para o host,
+    sincroniza clipboard de texto (CLIPRDR) e aguenta video em tela cheia
+    sem travar o laco de eventos. Sem o rdpshim compilado, a aba de RDP
+    simplesmente avisa e nao abre — ver Janela.abrir().
     """
 
     tipo = "rdp"
@@ -2976,7 +2982,7 @@ class AbaRdpEmbutido(AbaBase, CapturaTeclado):
     def conectar(self):
         # SONDA ANTES, mesma licao do VNC: entregar host morto ao cliente
         # deixa uma conexao pendurada e complica todo o resto.
-        self._estado("AGUARDE", "neutro", "testando %s…" % self.cx.destino)
+        self._estado("AGUARDE", "neutro", "testando %s…" % self.cx.destino_rdp)
         host, porta = self.cx.host, int(self.cx.rdp_porta or 3389)
         self._sondando = (host, porta)
         self.reg("sondando %s:%s (RDP embutido)" % (host, porta))
@@ -2994,7 +3000,7 @@ class AbaRdpEmbutido(AbaBase, CapturaTeclado):
             if self.bt_auto.get_active():
                 self._agendar_auto("host não respondeu")
             return
-        self._estado("AGUARDE", "neutro", "conectando em %s…" % self.cx.destino)
+        self._estado("AGUARDE", "neutro", "conectando em %s…" % self.cx.destino_rdp)
         self.reg("abrindo %s:%s (usuario=%s)"
                  % (host, porta, self.cx.rdp_usuario or "<nenhum>"))
         self.tela.conectar(host, porta,
@@ -3032,7 +3038,7 @@ class AbaRdpEmbutido(AbaBase, CapturaTeclado):
 
     # ------------------------------------------------------------- sinais
     def _on_conectado(self, _w):
-        self._estado("ATIVO", "ok", self.cx.destino)
+        self._estado("ATIVO", "ok", self.cx.destino_rdp)
         self.reg("sessão ativa")
         self._cancelar_auto()
         self.tela.focar()
@@ -3052,7 +3058,7 @@ class AbaRdpEmbutido(AbaBase, CapturaTeclado):
     def _trocar_teclado(self, bt):
         """Captura de teclado.
 
-        O gtk-frdp ja retem os atalhos enquanto o widget tem foco, mas isso
+        O RdpWidget ja retem os atalhos enquanto o widget tem foco, mas isso
         nao basta: sem o grab do GdkSeat, o compositor continua ficando com
         Super, Alt+Tab e afins. E sem marcar_captura() a janela continuaria
         interceptando F9/F12 antes de a sessao ve-los."""
@@ -3069,478 +3075,6 @@ class AbaRdpEmbutido(AbaBase, CapturaTeclado):
             "capturado — atalhos globais vão para a máquina remota"
             if ligado else "liberado",
             "" if (ok or not ligado) else " (o compositor recusou o inibidor)"))
-
-
-class AbaRdp(AbaBase, CapturaTeclado):
-    """RDP pelo xfreerdp do sistema.
-
-    Sob X11 o cliente e reparentado dentro de um Gtk.Socket e vira aba de
-    verdade. Sob Wayland nao existe XID para reparentar: o FreeRDP abre em
-    janela propria e a aba fica sendo o painel de controle da sessao. Nao ha
-    widget RDP embutivel em GTK3 — o Remmina resolve isso com um plugin em C
-    falando direto com a libfreerdp, que e trabalho de outra ordem."""
-
-    tipo = "rdp"
-
-    def __init__(self, conexao, janela):
-        super().__init__(conexao, janela)
-        self.pid = None
-        self.socket = None
-        self.sem_socket = False
-        self.modo_seguro = False
-        self.plug_ok = False
-        self._timer_plug = None
-        self.sem_dominio = False
-        self.kerberos_falhou = False
-        self.logon_falhou = False
-        self.adiada = False
-        self._tent_pronto = 0
-        self.embutido = _backend_x11()
-
-        self.bt_auto.set_active(self.cx.rdp_auto)
-        self._ligar_auto("rdp_auto")
-
-        bt_rec = add_class(Gtk.Button(label="Reconectar"), "secundaria")
-        bt_rec.connect("clicked", lambda _b: self.reconectar(manual=True))
-        self.barra.pack_end(bt_rec, False, False, 0)
-
-        # SEM menu de injecao de teclas no RDP (⌁). Removido de proposito:
-        # o xdotool, sob XWayland/Mutter, aciona o portal de "Area de
-        # Trabalho Remota" do GNOME ao tentar sintetizar Super — pedindo
-        # permissao para controlar a PROPRIA maquina local, nao a sessao
-        # RDP. Aceitar esse dialogo colide com o nosso proprio XGrabKeyboard
-        # (duas fontes de captura de teclado disputando), e ja causou
-        # travamento do sistema operacional inteiro em teste real. Perigoso
-        # demais para manter, mesmo remendado — nao ha garantia de que
-        # outras combinacoes nao acionem o mesmo caminho.
-        #
-        # Ctrl+Alt+Del e afins continuam alcancaveis: se o servidor for
-        # UltraVNC/uvnc_service, a aba de Tela (VNC) da mesma maquina envia
-        # pelo protocolo RFB, que nao tem esse problema.
-
-        bt_cmd = add_class(Gtk.Button(label="⧉"), "secundaria", "tog-glifo")
-        bt_cmd.set_tooltip_text("Copiar o comando xfreerdp para testar no "
-                                "terminal (com a senha real)")
-        bt_cmd.connect("clicked", self._copiar_comando)
-        self.barra.pack_end(bt_cmd, False, False, 0)
-
-        for rot, tp in (("Tela", "vnc"), ("Shell", "ssh")):
-            if self.cx.tem(tp):
-                b = add_class(Gtk.Button(label=rot), "secundaria")
-                b.connect("clicked", lambda _b, t=tp: self.janela.abrir(self.cx, t))
-                self.barra.pack_end(b, False, False, 0)
-
-        self.bt_teclado = Gtk.ToggleButton(label="⌨")
-        add_class(self.bt_teclado, "tog", "tog-ok", "tog-glifo")
-        self.bt_teclado.set_tooltip_text(
-            "Capturar o teclado. Atalhos reservados pelo compositor não "
-            "passam — para esses, use o menu ⌁. Pause libera.")
-        self.bt_teclado.connect("toggled", self._trocar_teclado)
-        self.barra.pack_end(self.bt_teclado, False, False, 0)
-
-        self.seg, self.seg_botoes = segmentado(
-            [("dinamico", "Dinâmico"), ("janela", "Janela"), ("cheia", "Cheia")],
-            self.cx.rdp_tela, self._trocar_tela)
-        self.barra.pack_end(self.seg, False, False, 0)
-
-        self.palco = add_class(Gtk.Box(orientation=Gtk.Orientation.VERTICAL), "palco")
-        self.palco.set_size_request(1, 1)
-        self.pack_start(self.palco, True, True, 0)
-        self._iniciar_captura()
-        self.pack_start(self.exp_log, False, False, 0)
-
-        if self.embutido:
-            self.socket = Gtk.Socket()
-            self.socket.connect("plug-removed", self._on_plug_saiu)
-            self.socket.connect("plug-added", self._on_plug_entrou)
-            # sem minimo proprio o Gtk.Socket adota o tamanho pedido pelo
-            # plug como MINIMO da janela inteira, e a janela cresce sem parar
-            # ate os botoes sairem da tela
-            self.socket.set_size_request(1, 1)
-            self.socket.set_hexpand(True)
-            self.socket.set_vexpand(True)
-            rolagem = Gtk.ScrolledWindow()
-            rolagem.set_policy(Gtk.PolicyType.AUTOMATIC,
-                               Gtk.PolicyType.AUTOMATIC)
-            rolagem.set_propagate_natural_width(False)
-            rolagem.set_propagate_natural_height(False)
-            rolagem.add(self.socket)
-            self.palco.pack_start(rolagem, True, True, 0)
-        else:
-            self.palco.pack_start(self._aviso_externo(), True, True, 0)
-
-    def _trocar_para_externo(self):
-        """Desmonta o socket e poe o painel de controle no lugar."""
-        self.embutido = False
-        self.socket = None
-        # destroy(): o socket e o painel antigos precisam MORRER, nao apenas
-        # sair do container — senao suas GdkWindow continuam capturando
-        # clique por cima do que vier depois
-        for f in self.palco.get_children():
-            f.destroy()
-        self.palco.pack_start(self._aviso_externo(), True, True, 0)
-        self.palco.show_all()
-
-    def _aviso_externo(self):
-        cx = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        cx.set_valign(Gtk.Align.CENTER)
-        cx.set_halign(Gtk.Align.CENTER)
-        t = rotulo("Sessão RDP em janela separada", "hero-titulo", xalign=0.5)
-        t.set_ellipsize(Pango.EllipsizeMode.NONE)
-        cx.pack_start(t, False, False, 0)
-        motivo = ("esta build do FreeRDP não suporta /parent-window"
-                  if self.sem_socket else
-                  "em Wayland não existe XID para reparentar a janela")
-        lb = rotulo("A imagem aparece na janela do xfreerdp porque %s.\n"
-                    "Esta aba controla a sessão: reconectar, encerrar e log."
-                    % motivo, "hero-sub", xalign=0.5)
-        lb.set_ellipsize(Pango.EllipsizeMode.NONE)
-        lb.set_justify(Gtk.Justification.CENTER)
-        cx.pack_start(lb, False, False, 0)
-        return cx
-
-    # ---- ciclo
-    def _argv(self):
-        """Linha de comando MINIMA.
-
-        Cada opcao extra e uma chance de o FreeRDP recusar e abortar, e a
-        recusa nao vem com mensagem util. Aqui fica so o indispensavel; os
-        adornos (clipboard, audio, compressao) entram por rdp_extras no INI,
-        conscientemente, e nunca por conta propria."""
-        binario, nome = _bin_rdp()
-        if not binario:
-            return None, None
-
-        argv = [binario, "/v:%s:%s" % (self.cx.host, self.cx.rdp_porta),
-                "/cert:ignore"]
-        if DEBUG:
-            argv.append("/log-level:INFO")
-        if self.cx.rdp_usuario:
-            argv.append("/u:%s" % self.cx.rdp_usuario)
-        if self.cx.rdp_dominio and not self.sem_dominio:
-            argv.append("/d:%s" % self.cx.rdp_dominio)
-        if self.cx.rdp_senha:
-            # aparece no ps local; mesmo compromisso do sshpass
-            argv.append("/p:%s" % self.cx.rdp_senha)
-
-        embutir = (self.embutido and self.socket is not None
-                   and not self.sem_socket)
-        if embutir:
-            if not self.socket.get_realized():
-                try:
-                    self.socket.realize()
-                except Exception as e:
-                    self.reg("realize do socket falhou: %s" % e)
-            xid = self.socket.get_id()
-            if xid:
-                al = self.palco.get_allocation()
-                larg = al.width if al.width > 1 else 1280
-                alt = al.height if al.height > 1 else 800
-                argv.append("/parent-window:%d" % xid)
-                argv.append("/size:%dx%d" % (max(larg, 640), max(alt, 480)))
-            else:
-                self.reg("Gtk.Socket sem XID; abrindo em janela externa")
-                embutir = False
-        if not embutir:
-            if self.cx.rdp_tela == "cheia":
-                argv.append("/f")
-            elif self.cx.rdp_tela == "dinamico":
-                argv.append("/dynamic-resolution")
-
-        if not self.modo_seguro:
-            # +clipboard sempre ligado por padrao. Durante a caçada ao
-            # SIGABRT (codigo 134) eu tirei isso do padrao para isolar qual
-            # flag causava o abort — a causa real era outra (/grab-keyboard
-            # sem o prefixo certo), e eu nunca devolvi o clipboard depois.
-            # A pessoa que usa este programa todo dia nao deveria precisar
-            # descobrir e declarar rdp_extras so para copiar e colar.
-            if "+clipboard" not in self.cx.rdp_extras and \
-               "-clipboard" not in self.cx.rdp_extras:
-                argv.append("+clipboard")
-            for extra in self.cx.rdp_extras:
-                argv.append(extra)
-            if getattr(self, "bt_teclado", None):
-                # booleana do FreeRDP leva + ou -, nunca "/"
-                argv.append("+grab-keyboard" if self.bt_teclado.get_active()
-                            else "-grab-keyboard")
-        return argv, nome
-
-    def linha_comando(self, ocultar_senha=True):
-        argv, _n = self._argv()
-        if not argv:
-            return ""
-        return " ".join(
-            "/p:***" if (ocultar_senha and a.startswith("/p:")) else a
-            for a in argv)
-
-    def conectar(self):
-        # A aba acabou de ser criada: o Gtk.Socket ainda nao tem alocacao nem
-        # XID valido. Spawnar aqui entrega um /parent-window: invalido e o
-        # FreeRDP aborta com SIGABRT (codigo 134).
-        if self.embutido and not self.get_mapped():
-            self._estado("AGUARDE", "neutro", "preparando…")
-            self._agendar(50, self._conectar_quando_pronto)
-            return
-        self._conectar_agora()
-
-    def _conectar_quando_pronto(self):
-        """Espera a aba ter geometria real antes de lancar o xfreerdp.
-
-        O contador vive na instancia. Antes era um argumento com default
-        mutavel (tentativas=[0]), que em Python e criado UMA vez e fica
-        compartilhado por todas as abas RDP: duas sessoes abrindo juntas
-        somavam no mesmo contador e uma delas desistia cedo demais."""
-        if self.fechando:
-            return False
-        al = self.palco.get_allocation()
-        if self.get_mapped() and al.width > 1:
-            self._tent_pronto = 0
-            self._conectar_agora()
-            return False
-        self._tent_pronto += 1
-        if self._tent_pronto > 40:      # ~2s
-            self._tent_pronto = 0
-            self.reg("aba em segundo plano: usando 1280x800 como tamanho")
-            self._conectar_agora()
-            return False
-        return True
-
-    def _conectar_agora(self):
-        argv, nome = self._argv()
-        if not argv:
-            self._estado("ERRO", "erro", "xfreerdp não encontrado")
-            self.reg("instale o freerdp: dnf install freerdp / pacman -S freerdp")
-            self.janela.avisar(
-                "FreeRDP ausente",
-                "Fedora: sudo dnf install freerdp\n"
-                "Arch:   sudo pacman -S freerdp")
-            return
-        self._estado("AGUARDE", "neutro", "abrindo %s…" % self.cx.destino_rdp)
-        self.reg("exec (%s): %s" % (nome, " ".join(
-            "/p:***" if a.startswith("/p:") else a for a in argv)))
-        if self.modo_seguro:
-            self.reg("modo mínimo: rdp_extras e grab-keyboard desativados")
-        try:
-            pid, _i, _o, err_fd = GLib.spawn_async(
-                argv, flags=GLib.SpawnFlags.DO_NOT_REAP_CHILD |
-                GLib.SpawnFlags.SEARCH_PATH,
-                standard_error=True)
-        except Exception as e:
-            self._estado("ERRO", "erro", "falha ao iniciar")
-            self.reg("spawn falhou: %s" % e)
-            return
-        self._ler_erro(err_fd)
-        self.pid = pid
-        GLib.child_watch_add(GLib.PRIORITY_DEFAULT, pid, self._on_saiu)
-        if self.embutido and not self.sem_socket:
-            self.plug_ok = False
-            if self._timer_plug:
-                self._timer_plug = self._cancelar_timer(self._timer_plug)
-            self._timer_plug = self._agendar(8, self._vigia_plug, segundos=True)
-            self._estado("AGUARDE", "atencao", "aguardando a janela remota…")
-        else:
-            self._estado("ATIVO", "ok", self.cx.destino_rdp)
-        self.reg("xfreerdp iniciado (pid %s, %s%s)" % (
-            pid, "embutido" if self.embutido else "janela externa",
-            ", modo mínimo" if self.modo_seguro else ""))
-        self.sucesso()
-
-    def _ler_erro(self, fd):
-        """Sem isto o motivo do SIGABRT morre no vazio: o FreeRDP explica o
-        que houve no stderr, que o spawn descartava."""
-        try:
-            canal = GLib.IOChannel.unix_new(fd)
-            canal.set_flags(GLib.IOFlags.NONBLOCK)
-            canal.set_close_on_unref(True)
-        except Exception:
-            return
-
-        def leu(ch, cond):
-            if self.fechando:
-                try:
-                    ch.shutdown(False)
-                except Exception:
-                    pass
-                return False
-            if cond & (GLib.IOCondition.HUP | GLib.IOCondition.ERR):
-                try:
-                    ch.shutdown(False)
-                except Exception:
-                    pass
-                return False
-            try:
-                estado, linha, _t, _e = ch.read_line()
-            except Exception:
-                return False
-            if estado != GLib.IOStatus.NORMAL or not linha:
-                return estado == GLib.IOStatus.AGAIN
-            linha = linha.strip()
-            if linha:
-                self._analisar_erro(linha)
-                if DEBUG or "[ERROR]" in linha or "ERRCONNECT" in linha:
-                    self.reg("freerdp: %s" % linha)
-            return True
-
-        GLib.io_add_watch(canal,
-                          GLib.PRIORITY_DEFAULT,
-                          GLib.IOCondition.IN | GLib.IOCondition.HUP,
-                          leu)
-
-    def _analisar_erro(self, linha):
-        """Um /d: com FQDN faz o FreeRDP tentar Kerberos e procurar um KDC
-        para aquele realm. Sem krb5.conf apontando para o domínio a busca
-        falha, e ele NAO volta para NTLM: segue e leva LOGON_FAILURE. Sem
-        /d: o servidor usa o dominio padrao dele e a autenticacao passa."""
-        if "Cannot find KDC for realm" in linha:
-            self.kerberos_falhou = True
-        if "ERRCONNECT_LOGON_FAILURE" in linha:
-            self.logon_falhou = True
-
-    def _on_saiu(self, pid, status, *_a):
-        GLib.spawn_close_pid(pid)
-        self.pid = None
-        if self.fechando:
-            return          # aba ja foi embora: nada de religar nem repintar
-        codigo = status >> 8 if status > 255 else status
-        if codigo == 0:
-            self._estado("ENCERRADO", "neutro", "sessão finalizada")
-            return
-
-        if (self.logon_falhou and self.cx.rdp_dominio
-                and not self.sem_dominio):
-            self.sem_dominio = True
-            motivo = ("o domínio '%s' foi tratado como realm Kerberos e não "
-                      "há KDC alcançável" % self.cx.rdp_dominio
-                      if self.kerberos_falhou else
-                      "a autenticação com domínio foi recusada")
-            self.reg("%s; repetindo sem /d: — o servidor usará o domínio "
-                     "padrão dele" % motivo)
-            self._estado("SEM DOMÍNIO", "atencao", "repetindo sem domínio…")
-            self.logon_falhou = self.kerberos_falhou = False
-            self._agendar(400, lambda: (self._conectar_agora(), False)[1])
-            return
-
-        # Abortou embutido? Nem toda build tem /parent-window: o cliente SDL
-        # do FreeRDP 3, por exemplo, nao implementa reparenting e aborta.
-        # Em vez de acusar o usuario, tenta uma vez em janela externa.
-        if codigo in (134, 139, 255) and not self.modo_seguro:
-            # Primeiro suspeito de um abort e sempre uma opcao que a build
-            # nao aceita. Antes de desistir do embutido, tenta so o essencial.
-            self.modo_seguro = True
-            self.reg("abortou (código %s); repetindo apenas com as opções "
-                     "essenciais para isolar a flag culpada" % codigo)
-            self._estado("SEGURO", "atencao", "repetindo em modo mínimo…")
-            self._agendar(500, lambda: (self._conectar_agora(), False)[1])
-            return
-
-        if codigo in (134, 139, 255) and self.embutido and not self.sem_socket:
-            self.sem_socket = True
-            self.reg("abortou mesmo em modo mínimo; esta build não deve "
-                     "suportar /parent-window. Reabrindo em janela externa.")
-            self._estado("EXTERNO", "atencao", "reabrindo fora da aba…")
-            self._trocar_para_externo()
-            self._agendar(500, lambda: (self._conectar_agora(), False)[1])
-            return
-
-        self._estado("ENCERRADO", "erro", "saiu com código %s" % codigo)
-        self.reg("xfreerdp terminou, código %s" % codigo)
-        if codigo == 134:
-            self.reg("SIGABRT também fora do socket — veja as linhas "
-                     "'freerdp:' acima para a causa real.")
-            self.bt_auto.set_active(False)
-            return
-        # 131 = credenciais recusadas; insistir nao ajuda
-        if codigo in (131, 132):
-            self.reg("credenciais recusadas — auto desligado")
-            self.bt_auto.set_active(False)
-            return
-        self._agendar_auto("código %s" % codigo)
-
-    def _on_plug_entrou(self, _s):
-        self.plug_ok = True
-        self.reg("janela do FreeRDP acoplada ao socket")
-        self._estado("ATIVO", "ok", self.cx.destino_rdp)
-
-    def _vigia_plug(self):
-        """Tela preta = o processo subiu mas nada foi desenhado. Quase sempre
-        significa que o cliente ignorou /parent-window e abriu (ou tentou
-        abrir) em outro lugar. Sem esta checagem a aba fica preta para sempre
-        sem dizer nada."""
-        self._timer_plug = None
-        if self.fechando or self.plug_ok or not self.pid:
-            return False
-        self.reg("8s sem acoplar: o cliente aceitou /parent-window mas não "
-                 "reparentou. Reabrindo em janela externa.")
-        self.sem_socket = True
-        try:
-            os.kill(self.pid, 15)
-        except Exception:
-            pass
-        self.pid = None
-        self._trocar_para_externo()
-        self._agendar(500, lambda: (self._conectar_agora(), False)[1])
-        return False
-
-    def _on_plug_saiu(self, _s):
-        self.reg("a janela do FreeRDP foi removida do socket")
-        return True          # nao destroi o Gtk.Socket: ele sera reusado
-
-    def adiar_ate_focar(self):
-        self.adiada = True
-        self._estado("EM ESPERA", "neutro",
-                     "conecta ao entrar na aba (evita tela preta)")
-        self.reg("aberta em segundo plano: conexão adiada até a aba receber "
-                 "foco, porque o FreeRDP não desenha em janela não mapeada")
-
-    def reatar_foco(self):
-        """Voltar para a aba deixa o socket sem foco de entrada e o mouse
-        para de responder dentro da sessao."""
-        if self.socket is not None and self.socket.get_realized():
-            self.socket.grab_focus()
-        return False
-
-    def _copiar_comando(self, _b):
-        linha = self.linha_comando(ocultar_senha=False)
-        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(linha, -1)
-        self.reg("comando copiado (com senha) para a área de transferência")
-        self._estado(self.chip_estado.get_text(), "neutro",
-                     "comando copiado — cole num terminal para testar")
-
-    def _trocar_teclado(self, bt):
-        if bt.get_active():
-            self.reatar_foco()
-        ok = self._grab(bt.get_active())
-        self.reg("teclado %s%s" % (
-            "capturado — atalhos globais vão para a sessão"
-            if bt.get_active() else "liberado",
-            "" if (ok or not bt.get_active()) else " (grab recusado)"))
-
-    def _trocar_tela(self, novo):
-        if novo == self.cx.rdp_tela:
-            return
-        self.cx.rdp_tela = novo
-        self.janela.gravar(self.cx.nome, "rdp_tela", novo)
-        self.reg("modo de tela %s — vale na próxima conexão" % novo)
-
-    def desconectar(self):
-        super().desconectar()
-        self._grab(False)
-        if self.pid:
-            try:
-                os.kill(self.pid, 15)
-            except Exception:
-                pass
-
-    def reconectar(self, manual=False):
-        if manual:
-            self._inicio_manual()
-        if self.pid:
-            try:
-                os.kill(self.pid, 15)
-            except Exception:
-                pass
-            self.pid = None
-        self._agendar(400, lambda: (self.conectar(), False)[1])
 
 
 def proximo_nome(nome):
@@ -4291,7 +3825,6 @@ class Janela(Gtk.Window):
         self.geral = geral
         self.caminho = caminho
         self.abas = {}
-        self._ja_ofereceu_x11 = False
         self._timer_busca = None
         self._timer_lateral = None
         self._encerrando = False
@@ -5112,8 +4645,8 @@ class Janela(Gtk.Window):
             return False
 
         # NAO SONDA FORA DO PAINEL.
-        # Cada ping bifurca um processo; dezenas disso enquanto o gtk-frdp
-        # negocia certificado e autenticacao deixavam a interface
+        # Cada ping bifurca um processo; dezenas disso enquanto uma sessao
+        # RDP/VNC negocia certificado e autenticacao deixavam a interface
         # irresponsiva ate a sessao resolver. Se voce nao esta olhando a
         # lista, a cor pode esperar — quando voltar, o proprio despertar dos
         # cards dispara de novo.
@@ -6225,48 +5758,24 @@ class Janela(Gtk.Window):
         return True
 
     def abrir(self, cx, tipo="vnc", focar=True):
-        classe_rdp = AbaRdp        # ajustado no ramo do RDP, se for o caso
         if tipo == "rdp":
-            binario, _n = _bin_rdp()
-            if not binario:
-                self.avisar("FreeRDP ausente",
-                            "Fedora: sudo dnf install freerdp\n"
-                            "Arch:   sudo pacman -S freerdp")
+            # UNICO caminho de RDP: o RdpWidget proprio (rdpshim), em
+            # qualquer backend (X11 ou Wayland) — ele e um GtkDrawingArea
+            # de verdade, sem depender de XEmbed/Gtk.Socket como o antigo
+            # xfreerdp externo (classe AbaRdp, removida) dependia. Sem o
+            # rdpshim compilado, RDP fica indisponivel — nao ha mais
+            # fallback para processo externo.
+            if not (TEM_FRDP and RdpWidget is not None):
+                self.avisar("RDP indisponível",
+                            "O widget RDP próprio não carregou.\n\n"
+                            "Compile o rdpshim rodando ./instalar.sh na "
+                            "pasta do projeto.\n\n" + ERRO_FRDP)
                 return
-            # Decidido AQUI, e nao mais abaixo: o aviso de "janela separada"
-            # precisa saber qual caminho sera usado.
-            #
-            # Sob X11 fica a AbaRdp: ela ja embute por Gtk.Socket e e mais
-            # madura. Em Wayland, onde XEmbed nao existe, entra o widget
-            # gtk-frdp — quando disponivel.
-            if (TEM_FRDP and RdpWidget is not None
-                    and verdade(self.geral.get("rdp_embutido", ""), True)
-                    and not _backend_x11()):
-                classe_rdp = AbaRdpEmbutido
-
             if not cx.tem_rdp:
                 self.avisar("Sem RDP configurado",
                             "Defina rdp_usuario (ou rdp = 1) no bloco [%s]."
                             % cx.nome)
                 return
-            # Aviso SO quando o RDP realmente vai sair em janela separada.
-            #
-            # A condicao original supunha que Wayland nativo implicava janela
-            # externa — verdade enquanto o unico caminho era o xfreerdp com
-            # Gtk.Socket. Com o widget gtk-frdp o RDP embute em Wayland, e o
-            # aviso passou a aparecer contradizendo o que o operador via na
-            # tela: dizia "janela separada" e a sessao abria dentro da aba.
-            if (not _backend_x11() and os.environ.get("WAYLAND_DISPLAY")
-                    and classe_rdp is AbaRdp
-                    and not self._ja_ofereceu_x11):
-                self._ja_ofereceu_x11 = True
-                self.avisar(
-                    "RDP em janela separada",
-                    "Você está em Wayland nativo (x11 = 0), onde não existe "
-                    "XID para reparentar a janela do FreeRDP. A aba controla "
-                    "a sessão; a imagem aparece fora dela.\n\n"
-                    "Para embutir o RDP na aba, use x11 = 1 no INI — em "
-                    "troca, a captura total de teclado deixa de funcionar.")
         if tipo == "vnc" and not TEM_VNC:
             self.avisar("VNC indisponível",
                         "O widget VNC próprio não carregou.\n\n"
@@ -6295,7 +5804,7 @@ class Janela(Gtk.Window):
         if tipo == "ssh":
             classe = AbaSsh
         elif tipo == "rdp":
-            classe = classe_rdp        # definido no ramo do RDP, acima
+            classe = AbaRdpEmbutido
         else:
             classe = AbaVnc
         aba = classe(cx, self)
@@ -6346,13 +5855,19 @@ class Janela(Gtk.Window):
         # evitar — entao congelar so cria risco sem beneficio.
         #
         # E o risco se concretizou: com uma sessao RDP aberta, o update() do
-        # gtk-frdp ocupa o laco de eventos o tempo todo, e o thaw_updates()
-        # estava num idle de PRIORITY_LOW — que so roda quando nao ha nada
-        # mais urgente. Como sempre havia, o thaw nunca acontecia e a janela
-        # ficava congelada para sempre: responsiva ao clique, sem repintar
-        # nada. Batia com o relato — so pelo clique esquerdo, so depois de um
-        # RDP aberto, e afetando VNC e SSH igualmente, porque o congelado era
-        # a janela, nao a sessao.
+        # gtk-frdp (motor anterior, removido) ocupava o laco de eventos o
+        # tempo todo, e o thaw_updates() estava num idle de PRIORITY_LOW —
+        # que so roda quando nao ha nada mais urgente. Como sempre havia, o
+        # thaw nunca acontecia e a janela ficava congelada para sempre:
+        # responsiva ao clique, sem repintar nada. Batia com o relato — so
+        # pelo clique esquerdo, so depois de um RDP aberto, e afetando VNC e
+        # SSH igualmente, porque o congelado era a janela, nao a sessao.
+        #
+        # O motor atual (rdpshim) processa a rede numa THREAD Python
+        # separada, sem monopolizar o laco de eventos do GTK como o
+        # gtk-frdp fazia — mas a rede de seguranca abaixo continua, porque
+        # o risco de categoria (idle de prioridade baixa que nunca roda)
+        # nao depende de qual motor de RDP esta em uso.
         descongelado = [False]
         gdkwin = self.get_window() if not focar else None
         if gdkwin is not None:
@@ -6424,9 +5939,8 @@ class Janela(Gtk.Window):
 
     # -------------------------------------------------- dialogos
     def pedir_senha(self, nome, destino):
-        # Um gtk_grab_add() ativo (o gtk-frdp instala um enquanto a
-        # sessao RDP roda) faz o dialogo aparecer sem receber clique.
-        # Nao depende de foco: bastava ter uma aba RDP aberta.
+        # Rede de seguranca generica contra gtk_grab_add() preso (ver
+        # liberar_grab_gtk) — o motor RDP atual (rdpshim) nao usa isso.
         liberar_grab_gtk()
         # um modal sob grab trava o teclado do desktop
         self.soltar_capturas()
@@ -6454,9 +5968,8 @@ class Janela(Gtk.Window):
         return valor
 
     def confirmar(self, titulo, texto, ok="Confirmar", destrutivo=False):
-        # Um gtk_grab_add() ativo (o gtk-frdp instala um enquanto a
-        # sessao RDP roda) faz o dialogo aparecer sem receber clique.
-        # Nao depende de foco: bastava ter uma aba RDP aberta.
+        # Rede de seguranca generica contra gtk_grab_add() preso (ver
+        # liberar_grab_gtk) — o motor RDP atual (rdpshim) nao usa isso.
         liberar_grab_gtk()
         # um modal sob grab trava o teclado do desktop
         self.soltar_capturas()
@@ -6486,9 +5999,8 @@ class Janela(Gtk.Window):
         return r == Gtk.ResponseType.OK
 
     def avisar(self, titulo, texto):
-        # Um gtk_grab_add() ativo (o gtk-frdp instala um enquanto a
-        # sessao RDP roda) faz o dialogo aparecer sem receber clique.
-        # Nao depende de foco: bastava ter uma aba RDP aberta.
+        # Rede de seguranca generica contra gtk_grab_add() preso (ver
+        # liberar_grab_gtk) — o motor RDP atual (rdpshim) nao usa isso.
         liberar_grab_gtk()
         # um modal sob grab trava o teclado do desktop
         self.soltar_capturas()
@@ -7040,10 +6552,11 @@ def main():
     ap.add_argument("--conf", help="caminho do conexoes.ini")
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--x11", action="store_true",
-                    help="forcar XWayland: embute o RDP na aba, mas desliga "
-                         "a captura de teclado")
+                    help="forcar XWayland: captura total de teclado, sem "
+                         "escala fracionaria")
     ap.add_argument("--wayland", action="store_true",
-                    help="forcar Wayland nativo, ignorando x11 do INI")
+                    help="forcar Wayland nativo: nitido em qualquer escala, "
+                         "ignorando x11 do INI")
     args = ap.parse_args()
 
     # GTK_THEME, se definida no ambiente, tem prioridade sobre o
