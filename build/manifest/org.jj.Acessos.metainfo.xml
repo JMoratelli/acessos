@@ -11,14 +11,18 @@
   <description>
     <p>
       Acessos reune VNC, RDP, SSH e transferencia de arquivos por SFTP em
-      abas, com RDP embutido nativo em Wayland (via gtk-frdp) e um cliente
-      VNC proprio construido sobre libvncclient para evitar os
-      congelamentos de interface do gtk-vnc.
+      abas, com clientes proprios de RDP (sobre libfreerdp3) e VNC (sobre
+      libvncclient), ambos falando com a biblioteca C direto — sem GObject
+      Introspection nem processos externos — para evitar os congelamentos
+      de interface do gtk-vnc/gtk-frdp.
     </p>
     <p>Recursos:</p>
     <ul>
       <li>VNC, RDP e SSH em abas na mesma janela</li>
-      <li>RDP embutido nativo em Wayland, sem depender de xfreerdp externo</li>
+      <li>RDP embutido em qualquer backend (X11 ou Wayland), com ajuste
+        dinamico de resolucao e clipboard de texto sincronizado</li>
+      <li>Certificado sempre confirmado pelo operador (estilo SSH),
+        nunca aceito automaticamente</li>
       <li>Transferencia de arquivos via SFTP</li>
       <li>Senhas salvas cifradas (cofre com Argon2/PBKDF2)</li>
     </ul>
@@ -54,6 +58,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.1.0" date="2026-09-10">
+      <description>
+        <p>Novo motor de RDP proprio (rdpshim), falando direto com libfreerdp3 sem GObject Introspection — substitui o gtk-frdp por completo, sem segundo motor de reserva. Embute em qualquer backend (X11 ou Wayland), ajusta a resolucao dinamicamente durante a sessao, sincroniza clipboard de texto e sempre pede confirmacao do operador para certificado novo ou alterado (nunca aceita calado). Corrige tambem o rotulo de porta errado exibido na aba de RDP.</p>
+      </description>
+    </release>
     <release version="1.0.7" date="2026-09-09">
       <description>
         <p>Corrige o rodape da tela inicial, que nao mostrava a versao instalada, e reorganiza a tela de Ajustes em secoes recolhiveis.</p>
