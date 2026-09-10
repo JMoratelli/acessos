@@ -17,7 +17,7 @@ Depois: `acessos` no terminal, ou pelo menu de aplicativos.
 | Opção | O que faz |
 |---|---|
 | `./instalar.sh` | instala ou atualiza |
-| `./instalar.sh --sem-rdp` | pula o gtk-frdp; RDP usa o xfreerdp externo |
+| `./instalar.sh --sem-rdp` | pula o rdpshim; RDP fica indisponível (sem fallback) |
 | `./instalar.sh --verificar` | testa o que já está instalado |
 | `./instalar.sh --remover` | desinstala (preserva a configuração) |
 
@@ -28,11 +28,13 @@ instalar.sh        instalação completa
 python/            a aplicação
   acessos.py         principal
   vncwidget.py       VNC próprio (libvncclient)
-  rdp.py             RDP embutido (gtk-frdp)
+  rdpwidget.py       RDP próprio (libfreerdp3)
+  rdp.py             reexporta rdpwidget como "rdp" (nome esperado pelo app)
   sftp.py            transferência de arquivos
   cofre.py           senhas cifradas
 src/
   vncshim.c          ponte C entre o Python e a libvncclient
+  rdpshim.c          ponte C entre o Python e a libfreerdp3
 icones/
   acessos.svg
 ```
@@ -44,26 +46,36 @@ repinturas grandes. O mesmo defeito aparece no GNOME Connections (que usa a
 mesma biblioteca) e não aparece no Remmina (que usa libvncclient). Este
 projeto usa libvncclient direto, através de um shim em C.
 
-O shim precisa ser **compilado na máquina**: a struct `rfbClient` tem blocos
-condicionais de compilação, e um binário feito contra outra build teria os
-offsets errados — o que causa corrupção de memória silenciosa.
+**rdpshim** — mesma ideia, para RDP: fala direto com a libfreerdp3, sem
+GObject Introspection e sem processo externo. Embute em qualquer backend
+(X11 ou Wayland), pede confirmação do operador para certificado novo ou
+alterado (nunca aceita calado, estilo SSH), sincroniza clipboard de texto e
+ajusta a resolução dinamicamente durante a sessão.
 
-**gtk-frdp** — dá o RDP embutido na aba sob Wayland, coisa que o
-`xfreerdp` + `Gtk.Socket` não consegue (XEmbed só existe em X11). Não é
-empacotado em nenhuma distro; o `instalar.sh` compila e aplica uma correção
-de um bug do cursor que derruba a aplicação.
+Os dois shims precisam ser **compilados na máquina**: as structs internas
+das bibliotecas (`rfbClient`, `rdpSettings`) têm blocos condicionais de
+compilação, e um binário feito contra outra build teria os offsets
+errados — o que causa corrupção de memória silenciosa.
+
+Não há mais segundo motor de RDP como reserva (o projeto já teve dois:
+gtk-frdp e, antes disso, xfreerdp externo via `Gtk.Socket`) — sem o
+rdpshim compilado, a aba de RDP simplesmente avisa que está indisponível.
 
 ## Notas de uso
 
 **Wayland nativo é a configuração recomendada.** O congelamento da interface
-só acontece sob XWayland. Se você tinha `x11 = 1` no `conexoes.ini`, remova.
+do VNC só acontece sob XWayland; em Wayland nativo não ocorre.
 
-**O RDP embutido só entra em Wayland nativo.** Sob X11 o Acessos usa o
-`xfreerdp`, que já embute na aba por outro caminho, e é mais maduro.
+**O toggle `x11` no INI não afeta mais o RDP** (ele embute em qualquer
+backend). A escolha entre X11/Wayland passou a ser só sobre captura de
+teclado: XWayland dá captura total (Super, Alt+Tab inclusos), Wayland
+nativo é nítido em qualquer escala mas a captura pode ficar parcial,
+dependendo do compositor.
 
 **Certificado por IP:** conectar por IP em servidor cujo certificado foi
-emitido para um nome (`redemachado.local`) faz o FreeRDP recusar. Conecte
-pelo nome, quando possível.
+emitido para um nome (`redemachado.local`) aciona o diálogo de confirmação
+mesmo assim (em vez de recusar direto) — confira a impressão digital antes
+de aceitar.
 
 ## Diagnóstico
 
@@ -78,6 +90,3 @@ Para ver os frames C, que o `faulthandler` não mostra:
 pip install --user py-spy
 py-spy dump --native --pid $(pgrep -f acessos.py)
 ```
-
-Não use `G_DEBUG=fatal-criticals` junto com o RDP embutido: o gtk-frdp emite
-avisos inofensivos que, com essa flag, viram abort.

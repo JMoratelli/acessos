@@ -11,19 +11,19 @@
 #
 #  USO:
 #     ./instalar.sh              instala ou atualiza
-#     ./instalar.sh --sem-rdp    pula o rdpshim (usa o xfreerdp externo)
+#     ./instalar.sh --sem-rdp    pula o rdpshim (RDP fica indisponivel)
 #     ./instalar.sh --verificar  so testa o que ja esta instalado
 #     ./instalar.sh --remover    desinstala
 #
 #  Sem Flatpak, sem container, sem AppImage. Instala no home do usuario,
 #  entao nao precisa de root exceto para os pacotes do sistema.
 #
-#  SEM FALLBACK PARA GTK-FRDP, DE PROPOSITO. O RDP embutido teve, ate uma
-#  versao anterior, um segundo motor por baixo do gtk-frdp (GObject
-#  Introspection), usado quando o rdpshim nao compilava. Essa via saiu:
-#  ter dois motores que podiam se comportar diferente entre si (aceitar
-#  certificado calado vs perguntar, por exemplo) era risco, nao seguranca.
-#  Sem o rdpshim, a aba de RDP cai direto no xfreerdp externo (AbaRdp).
+#  SEM FALLBACK, DE PROPOSITO. O RDP ja teve dois motores de reserva ao
+#  longo do projeto: primeiro o gtk-frdp (GObject Introspection), depois
+#  a classe AbaRdp (xfreerdp externo + Gtk.Socket, so em X11). Os dois
+#  sairam: ter caminhos que podiam se comportar diferente entre si
+#  (aceitar certificado calado vs perguntar, por exemplo) era risco, nao
+#  seguranca. Sem o rdpshim compilado, RDP fica indisponivel — sem plano B.
 
 set -euo pipefail
 
@@ -94,7 +94,7 @@ verificar() {
     if [ -f "$DESTINO/librdpshim.so" ]; then
         ok "  rdpshim ....... instalado (RDP embutido)"
     else
-        nota "  rdpshim ....... ausente (RDP cai no xfreerdp externo)"
+        nota "  rdpshim ....... ausente (RDP fica indisponível, sem fallback)"
     fi
 
     PYTHONPATH="$DESTINO" \
@@ -215,10 +215,10 @@ nota "$(basename "$DESTINO/libvncshim.so") — $(stat -c%s "$DESTINO/libvncshim.
 # src/rdpshim.c e python/rdpwidget.py para o detalhe de cada canal.
 #
 # rdp.py usa este motor sempre que ele compilar. --sem-rdp pula a
-# compilacao e a aba de RDP cai no xfreerdp externo.
+# compilacao — SEM RDP nenhum, nao ha mais xfreerdp externo como plano B.
 if [ "$SEM_RDP" = "1" ]; then
     azul "[4/5] rdpshim — pulado (--sem-rdp)"
-    nota "o RDP usará o xfreerdp externo, em janela separada"
+    nota "RDP ficará indisponível (nenhum fallback externo)"
 else
     azul "[4/5] compilando o rdpshim"
     if pkg-config --exists freerdp3 freerdp-client3 winpr3 2>/dev/null; then
@@ -227,8 +227,8 @@ else
             $(pkg-config --cflags --libs freerdp3 freerdp-client3 winpr3)
         nota "$(basename "$DESTINO/librdpshim.so") — $(stat -c%s "$DESTINO/librdpshim.so") bytes"
     else
-        erro "freerdp3/winpr3 (pkg-config) não encontrados — RDP embutido"
-        erro "indisponível; a aba de RDP vai cair no xfreerdp externo."
+        erro "freerdp3/winpr3 (pkg-config) não encontrados — RDP ficará"
+        erro "indisponível (sem fallback externo)."
         nota "confira se freerdp-devel (Fedora) ou freerdp (Arch) instalou"
         nota "uma versao 3.x com pkg-config: pkg-config --modversion freerdp3"
     fi
@@ -290,6 +290,5 @@ if ! echo "$PATH" | grep -q "$PREFIXO/bin"; then
     nota "  fish:      fish_add_path ~/.local/bin"
 fi
 echo
-nota "O RDP embutido só entra em Wayland nativo. Sob X11 o Acessos usa o"
-nota "xfreerdp, que já embute na aba por outro caminho (Gtk.Socket/XEmbed,"
-nota "mais maduro ali)."
+nota "O RDP embutido (rdpshim) funciona em qualquer backend, X11 ou"
+nota "Wayland — não depende mais de XEmbed nem de processo externo."
