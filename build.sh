@@ -196,6 +196,13 @@ modules:
       - -DWITH_SWSCALE=OFF
       - -DWITH_FFMPEG=OFF
       - -DWITH_MANPAGES=OFF
+      # WITH_FUSE=OFF: sem ela o cmake EXIGE fuse3 (pkg_check_modules
+      # REQUIRED em client/common/CMakeLists.txt) so para o clipboard de
+      # ARQUIVOS. O rdpshim so implementa clipboard de TEXTO (CF_UNICODETEXT
+      # via canal CLIPRDR), entao esse suporte fica de fora e a dependencia
+      # de fuse3 desaparece — sem ela o build falha com
+      #     Checking for module 'fuse3' ... not found
+      - -DWITH_FUSE=OFF
       # WITH_X11=ON apesar de rodarmos em Wayland nativo.
       #
       # Nao e para usar o cliente X11 — e porque em
