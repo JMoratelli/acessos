@@ -3,3 +3,7 @@ build/*
 __pycache__/
 *.pyc
 *.flatpak
+# .so compilados em modo dev direto em python/ (instalar.sh normalmente os
+# poe em ~/.local/lib/acessos, fora do repo — isto cobre quem compila aqui
+# do lado do fonte para testar rapido, sem instalar)
+python/*.so
