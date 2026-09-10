@@ -90,6 +90,7 @@ modules:
       - -DWITH_SWSCALE=OFF
       - -DWITH_FFMPEG=OFF
       - -DWITH_MANPAGES=OFF
+      - -DWITH_FUSE=OFF
       - -DWITH_X11=ON
       - -DWITH_WAYLAND=ON
       - -DCHANNEL_URBDRC=OFF
