@@ -609,6 +609,16 @@ headerbar.dlg-topo button.perigo:hover {
    :hover e o node "row" dentro dele (GtkTreeView E GtkListBoxRow usam o
    MESMO nome de node, "row"). Repetido em variantes (:focus, :backdrop,
    "cell") porque a estrutura de nodes mudou entre versoes do GTK3. */
+/* Estado NORMAL (nao selecionada, nao hover) nunca foi definido aqui —
+   so :selected e :hover existiam. Sem isto a row cai no branco padrao do
+   Adwaita (row { background: @theme_base_color }), que e branco nos DOIS
+   temas. Invisivel no tema claro por coincidencia (cartao tambem e claro
+   ali), mas no escuro sobra uma linha branca ilegivel (texto claro sobre
+   fundo claro) ao lado da selecionada — foi o que apareceu no seletor
+   "Usar do chaveiro" com mais de uma credencial cadastrada. */
+.lista row {
+    background-color: %(cartao)s; color: %(texto)s;
+}
 .lista row:selected, .lista row:selected:focus, .lista row:selected:backdrop,
 .lista cell:selected {
     background-color: %(sel)s; color: %(sel_txt)s;
