@@ -76,8 +76,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.1.0
-        commit: 6089eab3dc900bd2bf244e0af27273f8da6417ac
+        tag: v1.2.0
+        commit: 717ab191b4be2273a624f4196a00994b4fe829ea
 
   - name: freerdp
     buildsystem: cmake-ninja
@@ -108,8 +108,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.1.0
-        commit: 6089eab3dc900bd2bf244e0af27273f8da6417ac
+        tag: v1.2.0
+        commit: 717ab191b4be2273a624f4196a00994b4fe829ea
 
   - name: vte
     buildsystem: meson
@@ -273,8 +273,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/JMoratelli/acessos.git
-        tag: v1.1.0
-        commit: 6089eab3dc900bd2bf244e0af27273f8da6417ac
+        tag: v1.2.0
+        commit: 717ab191b4be2273a624f4196a00994b4fe829ea
       - type: script
         dest-filename: acessos-launcher
         commands:
