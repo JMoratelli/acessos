@@ -58,6 +58,13 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.2.0" date="2026-09-11">
+      <description>
+        <p>Chaveiro de senhas: uma credencial e cadastrada uma vez e apontada por varias conexoes com "!nome" no usuario e/ou na senha, em vez de repetida maquina a maquina. Editar a credencial no chaveiro vale para todas as conexoes que a referenciam. O cofre (sal e senha mestra) passou a morar no chaveiro.ini, com migracao automatica do conexoes.ini — mesma senha mestra, nenhuma senha recifrada.</p>
+        <p>VNC: o aplicativo passa a dizer por que a conexao falhou, em vez de uma unica mensagem para tudo. Distingue host inacessivel, senha recusada e servidor que exige usuario alem da senha (UltraVNC MS-Logon, VeNCrypt) — neste caso pede o usuario e tenta de novo. Reconhece tambem a recusa por tentativas repetidas e para de reconectar sozinho, que so aumentava o tempo de bloqueio.</p>
+        <p>Correcoes: divisorias entre secoes que nunca apareciam, selecao e realce de listas sem retorno visual, vazamento de memoria a cada tentativa de conexao VNC, e a instalacao nativa que podia sair sem o modulo do cofre.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-09-10">
       <description>
         <p>Novo motor de RDP proprio (rdpshim), falando direto com libfreerdp3 sem GObject Introspection — substitui o gtk-frdp por completo, sem segundo motor de reserva. Embute em qualquer backend (X11 ou Wayland), ajusta a resolucao dinamicamente durante a sessao, sincroniza clipboard de texto e sempre pede confirmacao do operador para certificado novo ou alterado (nunca aceita calado). Corrige tambem o rotulo de porta errado exibido na aba de RDP.</p>
