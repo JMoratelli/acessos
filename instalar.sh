@@ -236,10 +236,21 @@ fi
 
 # ------------------------------------------------------- 5. aplicacao
 azul "[5/5] instalando o Acessos"
-install -Dm755 "$AQUI/python/acessos.py"   "$DESTINO/acessos.py"
-for m in vncwidget rdpwidget sftp cofre rdp massa massa_ui ssh tema dialogo_ui atualizador; do
-    install -Dm644 "$AQUI/python/$m.py" "$DESTINO/$m.py"
-done
+# GLOB, nao lista de nomes. A lista explicita que morava aqui era um
+# esquecimento esperando acontecer: bastava um modulo novo entrar no
+# projeto e ninguem lembrar de acrescentar o nome, e a instalacao NATIVA
+# saia sem ele — silenciosamente, porque o acessos.py importa os modulos
+# dentro de try/except e degrada em vez de falhar. Foi o que aconteceu com
+# o chaveiro.py: sem ele o app roda, mas SEM COFRE, com as senhas em claro
+# e as ja cifradas inacessiveis. O build do Flatpak ja usava glob pelo
+# mesmo motivo (ver build.sh); agora os dois caminhos concordam.
+#
+# "-D -t": o -D sozinho nao aceita varias origens com destino de
+# diretorio (falha com "alvo inexistente"); com -t ele cria o diretorio e
+# instala todos de uma vez. O acessos.py e reinstalado logo depois so
+# para ganhar o bit de execucao.
+install -Dm644 -t "$DESTINO/" "$AQUI"/python/*.py
+install -m755 "$AQUI/python/acessos.py" "$DESTINO/acessos.py"
 
 # metainfo.xml ao lado dos modulos: e dali que atualizador.versao_instalada()
 # le a versao para mostrar no rodape e no dialogo Sobre. Fora do Flatpak nao
