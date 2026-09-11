@@ -58,6 +58,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.2.2" date="2026-09-11">
+      <description>
+        <p>Corrige a linha nao selecionada da lista no seletor "Usar do chaveiro": nunca teve fundo definido no CSS (so :selected e :hover existiam), e ficava com o branco padrao do GTK nos dois temas — invisivel no tema claro por coincidencia, mas quase ilegivel no escuro ao lado da credencial selecionada.</p>
+      </description>
+    </release>
     <release version="1.2.1" date="2026-09-11">
       <description>
         <p>Corrige o texto ilegivel na credencial selecionada ao usar "Usar do chaveiro": o fundo da linha selecionada e invertido de proposito, mas a cor do texto nao acompanhava — ficava preto sobre preto no tema claro e branco sobre branco no escuro.</p>
