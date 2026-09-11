@@ -98,6 +98,31 @@ _lib.vs_altura.restype = ctypes.c_int
 _lib.vs_altura.argtypes = [ctypes.c_void_p]
 _lib.vs_morto.restype = ctypes.c_int
 _lib.vs_morto.argtypes = [ctypes.c_void_p]
+
+# Diagnostico da ultima tentativa de conexao. Sem isto o Python so sabia
+# "falhou" e dizia sempre a mesma frase — host desligado, senha errada e
+# "o servidor exige usuario" eram a mesma coisa na tela, com solucoes
+# completamente diferentes.
+#
+# getattr com fallback: um libvncshim.so antigo (compilado antes destas
+# funcoes existirem) continua carregando; o diagnostico apenas fica mudo,
+# em vez de o app inteiro morrer no import por simbolo ausente.
+def _opcional(nome, restype=ctypes.c_int):
+    try:
+        fn = getattr(_lib, nome)
+    except AttributeError:
+        return None
+    fn.restype = restype
+    fn.argtypes = [ctypes.c_void_p]
+    return fn
+
+
+_vs_erro_auth = _opcional("vs_erro_auth")
+_vs_falta_usuario = _opcional("vs_falta_usuario")
+_vs_exige_usuario = _opcional("vs_exige_usuario")
+_vs_pediu_credencial = _opcional("vs_pediu_credencial")
+_vs_recusado = _opcional("vs_recusado")
+_vs_erro_msg = _opcional("vs_erro_msg", ctypes.c_char_p)
 _lib.vs_ponteiro.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                              ctypes.c_int]
 _lib.vs_tecla.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int]
@@ -151,6 +176,13 @@ class VncWidget(Gtk.DrawingArea):
         self._manter_proporcao = True
         self._usuario = None
         self._senha = None
+        # diagnostico da ultima tentativa (preenchido por _ler_diagnostico)
+        self.erro_auth = False       # a falha foi de credencial?
+        self.exige_usuario = False   # o esquema pede usuario+senha?
+        self.falta_usuario = False   # ...e nao tinhamos usuario?
+        self.recusado = False        # o servidor barrou antes de perguntar?
+        self.erro_msg = ""           # motivo, nas palavras da libvncclient
+        self.voluntario = False      # a ultima queda foi pedida por nos?
         # cursor LOCAL visivel: o shim pede os pseudo-encodings de cursor,
         # entao o servidor manda o ponteiro separado em vez de carimba-lo
         # no framebuffer. Como nao desenhamos a forma remota, sobra apenas
@@ -224,8 +256,14 @@ class VncWidget(Gtk.DrawingArea):
         sessao = self._sessao
         ok = _lib.vs_conectar(sessao, host.encode("utf-8"), int(porta))
         if not ok:
-            GLib.idle_add(self._falhou, "não foi possível conectar em "
-                                        "%s:%s" % (host, porta))
+            self._ler_diagnostico(sessao)
+            if self.erro_auth:
+                GLib.idle_add(self._falhou_auth, self.erro_msg)
+            else:
+                detalhe = (" (%s)" % self.erro_msg) if self.erro_msg else ""
+                GLib.idle_add(self._falhou,
+                              "não foi possível conectar em %s:%s%s"
+                              % (host, porta, detalhe))
             return
         GLib.idle_add(self._conectou)
 
@@ -237,7 +275,26 @@ class VncWidget(Gtk.DrawingArea):
                 continue
             if not _lib.vs_processar(sessao):
                 break
-        GLib.idle_add(self._caiu)
+        # VOLUNTARIO vs QUEDA: "_parar" so esta marcado quando fomos nos
+        # que pedimos para encerrar (fechar a aba, reconectar). Sem essa
+        # distincao, uma futura reconexao automatica trataria o fechamento
+        # deliberado como queda e reabriria a sessao que o operador acabou
+        # de fechar.
+        GLib.idle_add(self._caiu, self._parar.is_set())
+
+    def _ler_diagnostico(self, sessao):
+        """Copia, do shim para cá, o motivo da ultima falha."""
+        self.erro_auth = bool(_vs_erro_auth(sessao)) if _vs_erro_auth else False
+        self.falta_usuario = (bool(_vs_falta_usuario(sessao))
+                              if _vs_falta_usuario else False)
+        self.exige_usuario = (bool(_vs_exige_usuario(sessao))
+                              if _vs_exige_usuario else False)
+        self.recusado = bool(_vs_recusado(sessao)) if _vs_recusado else False
+        self.erro_msg = ""
+        if _vs_erro_msg:
+            bruto = _vs_erro_msg(sessao)
+            if bruto:
+                self.erro_msg = bruto.decode("utf-8", "replace")
 
     def desconectar(self):
         self._soltar_seat()
@@ -417,7 +474,19 @@ class VncWidget(Gtk.DrawingArea):
         self.emit("vnc-error", msg)
         return False
 
-    def _caiu(self):
+    def _falhou_auth(self, msg):
+        """Falha de CREDENCIAL, nao de rede.
+
+        Sinal proprio (vnc-auth-failure) porque a resposta do app e outra:
+        insistir na mesma senha nao adianta, e reconectar sozinho so
+        repetiria o erro — no caso do UltraVNC MS-Logon, ainda por cima
+        somando tentativa falha na conta do Windows."""
+        self.emit("vnc-auth-failure", msg or "credencial recusada")
+        return False
+
+    def _caiu(self, voluntario=False):
+        self._conectado = False
+        self.voluntario = bool(voluntario)
         self.emit("vnc-disconnected")
         return False
 

@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 /* Callbacks para o lado Python. Deliberadamente simples: sem structs,
  * so escalares e ponteiros opacos. */
@@ -51,7 +53,106 @@ typedef struct {
      * framebuffer antigo na hora, porque a superficie Cairo do lado Python
      * ainda aponta para ele. */
     uint8_t *fb_velho;
+
+    /* ---- diagnostico da falha (espelha o que o rdpshim ja fazia) ----
+     *
+     * Sem isto, TODA falha virava a mesma frase no Python ("nao foi
+     * possivel conectar"): host desligado, senha errada e "o servidor
+     * exige usuario e voce nao informou" eram indistinguiveis. Sao
+     * problemas com solucoes opostas — um pede conferir a rede, outro
+     * pede digitar de novo, o terceiro pede um campo que a tela nem
+     * mostrava. */
+    int pediu_credencial;      /* o servidor chegou a pedir autenticacao */
+    int exige_usuario;         /* o esquema negociado quer usuario+senha
+                                * (VeNCrypt Plain, UltraVNC MS-Logon II) */
+    int falta_usuario;         /* ...e nao tinhamos usuario para dar */
+    int erro_auth;             /* a falha foi de credencial, nao de rede */
+    int recusado;              /* o servidor cortou antes de perguntar
+                                * (lista negra do UltraVNC, p.ex.) */
+    char erro_msg[256];        /* ultima mensagem da propria libvncclient */
 } Sessao;
+
+/* ULTIMA MENSAGEM DA LIB, POR THREAD.
+ *
+ * A libvncclient so conta o que deu errado por printf global; o retorno de
+ * rfbInitClient e um sim/nao seco. Capturamos o texto para poder mostrar o
+ * motivo de verdade.
+ *
+ * DOIS CANAIS, e isso importa: descobrir qual usar nao foi obvio.
+ * "ConnectClientToTcpAddr6: connect" (host inalcancavel) sai por
+ * rfbClientErr, mas "VNC connection failed: password check failed!" —
+ * justamente a mensagem mais util — sai por rfbClientLog, o canal
+ * NORMAL. Capturando so o de erro, a falha de senha chegava ao Python
+ * como mensagem vazia.
+ *
+ * __thread: cada aba tem sua propria thread de rede, e sem isso duas
+ * conexoes falhando ao mesmo tempo sobrescreveriam a mensagem uma da
+ * outra — a aba erraria ao explicar o proprio erro. */
+static __thread char erro_thread[256];
+static __thread char log_thread[256];
+
+static void guardar(char *destino, size_t tam, const char *formato,
+                    va_list ap) {
+    vsnprintf(destino, tam, formato, ap);
+    /* a lib manda a linha com \n; guardamos sem, para caber num rotulo */
+    size_t n = strlen(destino);
+    while (n && (destino[n - 1] == '\n' || destino[n - 1] == '\r'))
+        destino[--n] = '\0';
+}
+
+static void hook_log_erro(const char *formato, ...) {
+    va_list ap;
+    va_start(ap, formato);
+    guardar(erro_thread, sizeof(erro_thread), formato, ap);
+    va_end(ap);
+    /* erro continua indo para o stderr do app, como sempre foi */
+    fprintf(stderr, "[vnc] %s\n", erro_thread);
+}
+
+static void hook_log_normal(const char *formato, ...) {
+    va_list ap;
+    va_start(ap, formato);
+    guardar(log_thread, sizeof(log_thread), formato, ap);
+    va_end(ap);
+    /* o log normal e verboso (uma linha por etapa do handshake) e antes
+     * ia inteiro para o stderr do app; agora so sai com VS_LOG=1 */
+    if (getenv("VS_LOG")) fprintf(stderr, "[vnc] %s\n", log_thread);
+}
+
+/* A lib chama "falha de autenticacao" de varios jeitos; o Python so
+ * precisa saber que foi credencial. */
+static int parece_falha_de_auth(const char *m) {
+    if (!m || !*m) return 0;
+    return strstr(m, "password") || strstr(m, "Password")
+        || strstr(m, "authentication") || strstr(m, "Authentication")
+        || strstr(m, "auth failed") || strstr(m, "credential");
+}
+
+/* O SERVIDOR RECUSOU A CONEXAO ANTES DE PEDIR CREDENCIAL.
+ *
+ * Caso concreto, visto num PDV com UltraVNC: apos algumas senhas erradas
+ * ele poe o IP de origem numa lista negra e passa a responder o
+ * handshake de versao com ZERO esquemas de seguranca + "Your connection
+ * has been rejected". Nao e senha errada (nem chegou a perguntar) e nao e
+ * rede (o TCP abriu).
+ *
+ * A distincao importa por um motivo pratico: o tempo de bloqueio do
+ * UltraVNC DOBRA a cada reincidencia. Reconectar sozinho nesse estado —
+ * que e o que o app fazia, por achar que era queda comum — mantem a
+ * maquina inacessivel por cada vez mais tempo. */
+static int parece_recusa_do_servidor(const char *m) {
+    if (!m || !*m) return 0;
+    /* "rejected" sozinho NAO serve: a mensagem de senha errada do
+     * UltraVNC e "authentication rejected", que e o oposto disto — ali o
+     * servidor perguntou e nao gostou da resposta. Casar por "rejected"
+     * fazia senha errada ser classificada como bloqueio, e o app parava
+     * de oferecer nova tentativa. O que caracteriza a recusa previa e a
+     * conexao ser barrada, nao a credencial. */
+    return strstr(m, "connection has been rejected")
+        || strstr(m, "too many")
+        || strstr(m, "blacklist") || strstr(m, "Blacklist")
+        || strstr(m, "security types is ZERO");
+}
 
 /* A libvncclient nos devolve o rfbClient nos callbacks; guardamos o Sessao*
  * no clientData dela para achar o caminho de volta. */
@@ -101,18 +202,64 @@ static void hook_terminou(rfbClient *cl) {
 
 static char *hook_senha(rfbClient *cl) {
     Sessao *s = sessao_de(cl);
+    if (s) {
+        s->pediu_credencial = 1;
+        if (!s->senha || !*s->senha) s->erro_auth = 1;
+    }
     /* A lib faz free() no ponteiro devolvido, entao entregamos uma copia. */
     if (s && s->senha) return strdup(s->senha);
     return strdup("");
 }
 
 /* Autenticacao que exige USUARIO + SENHA (VeNCrypt Plain, UltraVNC
- * MSLogon). O hook GetPassword acima so cobre a autenticacao VNC classica,
- * que e somente senha. A lib libera tudo o que devolvemos aqui, entao
- * entregamos copias. */
+ * MS-Logon II). O hook GetPassword acima so cobre a autenticacao VNC
+ * classica, que e somente senha. A lib libera tudo o que devolvemos aqui,
+ * entao entregamos copias.
+ *
+ * MARCAR "EXIGE USUARIO" E O PONTO DESTA FUNCAO, tanto quanto devolver a
+ * credencial. Antes, sem usuario definido, mandavamos string VAZIA em
+ * silencio: o servidor recusava e o app dizia "nao foi possivel conectar",
+ * como se fosse rede. So que a tela nem tinha campo de usuario para
+ * preencher — o operador nao tinha como consertar o que nao sabia que
+ * faltava. Com a marca, o Python sabe que precisa perguntar, e pergunta
+ * SO quando o servidor de fato exigiu. */
 static rfbCredential *hook_credencial(rfbClient *cl, int tipo) {
     Sessao *s = sessao_de(cl);
-    if (tipo != rfbCredentialTypeUser) return NULL;   /* X509 nao tratado */
+
+    if (tipo == rfbCredentialTypeX509) {
+        /* Continuamos sem tratar: exige CA/certificado do cliente, que o
+         * app nao coleta. Antes isto era um "return NULL" mudo e a
+         * conexao morria sem explicacao nenhuma; agora ao menos diz o
+         * que aconteceu. */
+        if (s) {
+            s->pediu_credencial = 1;
+            s->erro_auth = 1;
+            snprintf(s->erro_msg, sizeof(s->erro_msg),
+                     "o servidor exige certificado X509, que este cliente "
+                     "não trata");
+        }
+        return NULL;
+    }
+    if (tipo != rfbCredentialTypeUser) {
+        if (s) {
+            s->pediu_credencial = 1;
+            s->erro_auth = 1;
+            snprintf(s->erro_msg, sizeof(s->erro_msg),
+                     "o servidor pediu um tipo de credencial que este "
+                     "cliente não trata (%d)", tipo);
+        }
+        return NULL;
+    }
+
+    if (s) {
+        s->pediu_credencial = 1;
+        s->exige_usuario = 1;
+        if (!s->usuario || !*s->usuario) {
+            s->falta_usuario = 1;
+            s->erro_auth = 1;
+        }
+        if (!s->senha || !*s->senha) s->erro_auth = 1;
+    }
 
     rfbCredential *c = (rfbCredential *)calloc(1, sizeof(rfbCredential));
     if (!c) return NULL;
@@ -148,9 +295,15 @@ static rfbBool hook_malloc_fb(rfbClient *cl) {
      * esta memoria, sem conversao por quadro. */
     cl->frameBuffer = (uint8_t *)calloc((size_t)w * h, 4);
     if (!cl->frameBuffer) return FALSE;
-    s->tem_sujo = 0;                  /* area suja do buffer antigo nao vale */
 
-    if (s && s->ao_redimensionar) s->ao_redimensionar(s->ctx, w, h);
+    /* "if (s)" aqui tambem: o resto da funcao ja tratava s como podendo
+     * ser NULL (tres linhas acima e logo abaixo), menos esta atribuicao —
+     * bastava o clientData nao estar no lugar para virar escrita em
+     * ponteiro nulo dentro da thread de rede. */
+    if (s) {
+        s->tem_sujo = 0;              /* area suja do buffer antigo nao vale */
+        if (s->ao_redimensionar) s->ao_redimensionar(s->ctx, w, h);
+    }
     return TRUE;
 }
 
@@ -167,6 +320,13 @@ Sessao *vs_criar(void *ctx,
                  cb_texto ao_receber_texto) {
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
+
+    /* Desvia os dois canais da lib para os nossos buffers por thread. Sao
+     * variaveis GLOBAIS da libvncclient, entao bastaria uma vez — mas
+     * custa nada reafirmar, e assim nao depende da ordem de criacao das
+     * abas. */
+    rfbClientErr = hook_log_erro;
+    rfbClientLog = hook_log_normal;
 
     /* 8 bits por amostra, 3 amostras, 4 bytes por pixel = 32bpp */
     rfbClient *cl = rfbGetClient(8, 3, 4);
@@ -251,17 +411,78 @@ void vs_definir_usuario(Sessao *s, const char *usuario) {
 /* Conecta. Devolve 1 em sucesso. BLOQUEIA — chame de uma thread. */
 int vs_conectar(Sessao *s, const char *host, int porta) {
     if (!s || !s->cl) return 0;
+
+    /* free ANTES de substituir: o rfbGetClient ja deixa um serverHost
+     * alocado aqui, e sobrescrever direto vazava aquela alocacao a cada
+     * tentativa de conexao (reconexao automatica repete isto sem fim). */
+    free(s->cl->serverHost);
     s->cl->serverHost = strdup(host);
     s->cl->serverPort = porta;
+
+    /* estado de diagnostico zerado por TENTATIVA, nao por sessao: numa
+     * reconexao o motivo da falha anterior nao pode contaminar esta */
+    s->pediu_credencial = 0;
+    s->exige_usuario = 0;
+    s->falta_usuario = 0;
+    s->erro_auth = 0;
+    s->recusado = 0;
+    s->erro_msg[0] = '\0';
+    erro_thread[0] = '\0';
+    log_thread[0] = '\0';
+
     /* rfbInitClient com argc=0: nao queremos que ele leia argv do processo */
     int argc = 0;
     if (!rfbInitClient(s->cl, &argc, NULL)) {
         /* Em falha, a propria lib ja liberou o rfbClient. */
         s->cl = NULL;
         s->morto = 1;
+
+        /* MOTIVO, em ordem de qualidade: o que os hooks de credencial
+         * escreveram (mais especifico), depois a mensagem do canal
+         * normal quando ela fala de autenticacao ("password check
+         * failed!"), e por fim o erro cru de rede. */
+        if (!s->erro_msg[0]) {
+            if (parece_falha_de_auth(log_thread))
+                snprintf(s->erro_msg, sizeof(s->erro_msg), "%s", log_thread);
+            else if (erro_thread[0])
+                snprintf(s->erro_msg, sizeof(s->erro_msg), "%s", erro_thread);
+            else if (log_thread[0])
+                snprintf(s->erro_msg, sizeof(s->erro_msg), "%s", log_thread);
+        }
+
+        /* ORDEM: "pediu credencial?" decide primeiro.
+         *
+         * O SINAL MAIS CONFIAVEL de "foi credencial" nao e a mensagem, e o
+         * fato de o servidor ter PEDIDO uma: se ele chegou a chamar nosso
+         * hook e a conexao morreu depois disso, o handshake de rede tinha
+         * dado certo — o que falhou foi o login. So quando o servidor NAO
+         * perguntou nada e ainda assim barrou e que se trata de recusa
+         * previa (lista negra).
+         *
+         * Inverter estes dois ja custou um falso positivo: "authentication
+         * rejected" (senha errada) caiu como bloqueio, e a aba parava de
+         * oferecer nova tentativa por causa de uma palavra em comum. */
+        if (s->pediu_credencial || parece_falha_de_auth(log_thread)) {
+            s->erro_auth = 1;
+        } else if (parece_recusa_do_servidor(log_thread)
+                   || parece_recusa_do_servidor(erro_thread)) {
+            s->recusado = 1;
+        }
         return 0;
     }
     return 1;
+}
+
+/* ---- diagnostico da ultima tentativa (ver os campos em Sessao) ---- */
+
+int vs_erro_auth(Sessao *s)       { return s ? s->erro_auth : 0; }
+int vs_falta_usuario(Sessao *s)   { return s ? s->falta_usuario : 0; }
+int vs_exige_usuario(Sessao *s)   { return s ? s->exige_usuario : 0; }
+int vs_pediu_credencial(Sessao *s) { return s ? s->pediu_credencial : 0; }
+int vs_recusado(Sessao *s)        { return s ? s->recusado : 0; }
+
+const char *vs_erro_msg(Sessao *s) {
+    return (s && s->erro_msg[0]) ? s->erro_msg : "";
 }
 
 /* Espera mensagem por ate `usecs`. >0 ha dados, 0 timeout, <0 erro. */
