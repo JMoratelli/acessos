@@ -148,14 +148,28 @@ except Exception as e:
 
 # Cofre de senhas: modulo separado. Ausente, o app roda normalmente com as
 # senhas em claro (comportamento antigo) — nao trava por falta dele.
+#
+# O cofre em si (chave/salt/senha mestra) mora no chaveiro.py, nao aqui —
+# ver chaveiro.py para o porque. cofre.py continua fornecendo o mecanismo
+# generico (classe Cofre, cifrar/decifrar, CAMPOS_SIGILOSOS) que os dois
+# modulos usam.
 try:
     import cofre as _cofre
+    import chaveiro as _chaveiro
     TEM_COFRE, ERRO_COFRE = True, ""
 except Exception as e:
-    _cofre, TEM_COFRE, ERRO_COFRE = None, False, str(e)
+    _cofre, _chaveiro, TEM_COFRE, ERRO_COFRE = None, None, False, str(e)
 
 # instancia unica da sessao: preenchida no arranque, usada ao ler e gravar
 COFRE = None
+
+# {nome: {"usuario":..., "senha":...}} do chaveiro.ini, ja decifrado —
+# preenchido no arranque junto com COFRE, usado por carregar() para
+# resolver os alias "!nome".
+CHAVEIRO_REGISTRO = {}
+
+CAMPOS_ALIAS = ("usuario", "senha", "ssh_usuario", "ssh_senha",
+               "rdp_usuario", "rdp_senha")
 
 # Transferencia de arquivos: modulo separado de proposito, para poder mexer
 # nela sem tocar no resto. Ausente, o botao apenas avisa.
@@ -809,6 +823,22 @@ def icone_acao(tipo, px=15):
     return add_class(lb, "card-ico-txt")
 
 
+def icone_chave(px=13):
+    """Glifo de chave, mesma familia symbolic dos icones de protocolo —
+    linha fina, sem preenchimento colorido. Cai num glifo de texto se o
+    tema de icones nao tiver o nome (mesma degradacao de icone_acao)."""
+    try:
+        tema_ic = Gtk.IconTheme.get_default()
+        if tema_ic.has_icon("dialog-password-symbolic"):
+            img = Gtk.Image.new_from_icon_name("dialog-password-symbolic",
+                                               Gtk.IconSize.MENU)
+            img.set_pixel_size(px)
+            return img
+    except Exception:
+        pass
+    return Gtk.Label(label="🔑")
+
+
 # ---------------------------------------------------------------- efemeras
 PORTA_PROTO = {"22": "ssh", "3389": "rdp", "5900": "vnc"}
 
@@ -1007,12 +1037,6 @@ def segmentado(opcoes, ativo, ao_mudar):
 # ------------------------------------------------- gravacao cirurgica no INI
 
 HISTORICO_MAX = 20
-SECAO_COFRE_NOME = "cofre"
-
-
-def _tem_secao_cofre(linhas):
-    alvo = "[%s]" % SECAO_COFRE_NOME
-    return any(ln.strip().lower() == alvo for ln in linhas)
 
 
 def _guardar_copia(caminho, motivo=""):
@@ -1053,29 +1077,17 @@ def _guardar_copia(caminho, motivo=""):
 
 
 def escrever_ini(caminho, linhas, motivo=""):
-    """Ponto UNICO de escrita do INI. Atomico, com fsync e guardas.
+    """Ponto UNICO de escrita do conexoes.ini. Atomico, com fsync.
 
-    - GUARDA DO COFRE: se o arquivo atual tem [cofre] e o conteudo novo
-      nao, a gravacao e ABORTADA. A secao guarda o salt; sem ele, a mesma
-      senha mestra deriva outra chave e nenhuma senha guardada abre. Bug
-      aqui custaria o cofre inteiro, entao ele nao passa.
-    - fsync antes do replace: sem ele o os.replace pode trocar o nome
-      enquanto o conteudo ainda esta em cache, e uma queda deixa o arquivo
-      novo VAZIO — pior que o antigo intacto.
+    O cofre (secao [cofre]) NAO mora mais aqui — ver chaveiro.py. Este
+    arquivo so cifra/decifra valores com a chave que vem de la; nao
+    guarda mais o salt, entao nao ha mais o risco de uma gravacao aqui
+    perder a secao do cofre.
+
+    fsync antes do replace: sem ele o os.replace pode trocar o nome
+    enquanto o conteudo ainda esta em cache, e uma queda deixa o arquivo
+    novo VAZIO — pior que o antigo intacto.
     """
-    try:
-        with open(caminho, encoding="utf-8") as f:
-            antigas = f.readlines()
-    except OSError:
-        antigas = []
-
-    if antigas and _tem_secao_cofre(antigas) and not _tem_secao_cofre(linhas):
-        sys.stderr.write(
-            "[ini] GRAVACAO ABORTADA: o conteudo novo nao tem a secao "
-            "[%s] e o arquivo atual tem. Sem o salt as senhas guardadas "
-            "ficam irrecuperaveis.\n" % SECAO_COFRE_NOME)
-        return False
-
     _guardar_copia(caminho, motivo)
 
     tmp = caminho + ".tmp"
@@ -1103,8 +1115,13 @@ def gravar_chave(caminho, secao, chave, valor):
     # CIFRAGEM NA SAIDA, ponto unico. Todo caminho de gravacao passa por
     # aqui, entao basta interceptar neste lugar: o resto do programa lida
     # com senha em claro e nao precisa saber que existe cofre.
-    if (COFRE is not None and not COFRE.trancado()
-            and TEM_COFRE and chave in _cofre.CAMPOS_SIGILOSOS and valor):
+    #
+    # ALIAS "!nome" NUNCA E CIFRADO: e so um ponteiro pro chaveiro, nao um
+    # segredo — cifra-lo so tornaria o conexoes.ini ilegivel a toa (a
+    # promessa do cofre e "so a senha vira ilegivel", nao o apontamento).
+    eh_alias = TEM_COFRE and _chaveiro is not None and _chaveiro.eh_alias(valor)
+    if (COFRE is not None and not COFRE.trancado() and TEM_COFRE
+            and chave in _cofre.CAMPOS_SIGILOSOS and valor and not eh_alias):
         try:
             valor = COFRE.cifrar(valor)
         except Exception as e:
@@ -1260,6 +1277,11 @@ class Conexao:
         # efemera: conexao digitada na busca, viva so nesta sessao. Default
         # False para que qualquer codigo possa consultar sem verificar.
         self.efemera = False
+        # {campo: "!nome"} para os campos que vieram como alias do
+        # chaveiro. carregar() preenche isto ANTES de sobrescrever o
+        # atributo com o valor resolvido — o editor le daqui para nao
+        # perder o alias e regravar a senha crua por engano.
+        self.alias_bruto = {}
         self.host  = sec.get("host", "").strip()
         self.grupo = sec.get("grupo", "Sem grupo").strip()
 
@@ -1387,6 +1409,13 @@ def caminho_snippets():
     # acompanha o caminho= do [geral]: separar snippets do INI faria a
     # pasta sincronizada levar metade da configuracao
     return os.path.join(dir_dados(), "snippets.ini")
+
+
+def caminho_chaveiro():
+    # mesmo diretorio de snippets.ini: o chaveiro guarda credenciais, nao
+    # dados de conexao, entao acompanha dir_dados() e nao o caminho= do
+    # [geral] (que so vale para o proprio conexoes.ini).
+    return os.path.join(dir_dados(), "chaveiro.ini")
 
 
 def carregar_snippets(caminho=None):
@@ -1595,6 +1624,17 @@ def carregar(caminho):
                     except Exception as e:
                         sys.stderr.write("cofre: %s em [%s].%s\n"
                                          % (e, cx.nome, campo))
+    # RESOLVER ALIAS DO CHAVEIRO: "!nome" nos campos de usuario/senha vira
+    # o valor guardado no chaveiro.ini. Mesma logica do cofre acima —
+    # acontece so aqui, o resto do app ve texto claro direto.
+    if TEM_COFRE and CHAVEIRO_REGISTRO:
+        for cx in conexoes:
+            for campo in CAMPOS_ALIAS:
+                valor = getattr(cx, campo, None)
+                if valor and _chaveiro.eh_alias(valor):
+                    cx.alias_bruto[campo] = valor       # guarda ANTES
+                    setattr(cx, campo,
+                            _chaveiro.resolver(CHAVEIRO_REGISTRO, valor, campo))
     conexoes.sort(key=lambda c: c.ordem)      # alfabetica por padrao
     return conexoes, geral
 
@@ -3322,6 +3362,13 @@ class EditorSnippets(Gtk.Dialog):
             self.stop_emission_by_name("response")
 
 
+# tipo de servico -> (campo de usuario, campo de senha) que o botao
+# "usar do chaveiro" preenche com "!nome" de uma so vez
+MAPA_CHAVEIRO_CAMPOS = {"vnc": ("usuario", "senha"),
+                        "ssh": ("ssh_usuario", "ssh_senha"),
+                        "rdp": ("rdp_usuario", "rdp_senha")}
+
+
 class EditorConexao(Gtk.Dialog):
     """Formulario de adicionar/editar.
 
@@ -3393,12 +3440,18 @@ class EditorConexao(Gtk.Dialog):
             [("porta", "Porta", "5900"),
              ("usuario", "Usuário", "só se o servidor pedir (VeNCrypt)"),
              ("senha", "Senha", "vazio pergunta na hora")]), False, False, 0)
+        # divisoria fina entre os blocos: os 10px de spacing da coluna
+        # sozinhos deixavam VNC/SSH/RDP parecendo soltos, sem indicar que
+        # sao secoes de uma mesma lista — mesma classe "regua-h" que
+        # dialogo_ui.secao() usa nos Ajustes.
+        coluna.pack_start(add_class(Gtk.Box(), "regua-h"), False, False, 0)
         coluna.pack_start(self._servico(
             "ssh", "SHELL · SSH",
             [("ssh_porta", "Porta", "22"),
              ("ssh_usuario", "Usuário", "obrigatório"),
              ("ssh_senha", "Senha", "exige sshpass; vazio usa chave")]),
             False, False, 0)
+        coluna.pack_start(add_class(Gtk.Box(), "regua-h"), False, False, 0)
         coluna.pack_start(self._servico(
             "rdp", "RDP",
             [("rdp_porta", "Porta", "3389"),
@@ -3429,6 +3482,15 @@ class EditorConexao(Gtk.Dialog):
             escolhido = "vnc"
         self._abrir_bloco(escolhido)
         self._encolher_para_conteudo()
+
+    def _usar_chaveiro(self, _b, tipo):
+        nome = _chaveiro.escolher(caminho_chaveiro(), self)
+        if nome is None:
+            return
+        ch_usuario, ch_senha = MAPA_CHAVEIRO_CAMPOS[tipo]
+        alias = "!" + nome
+        self.campos[ch_usuario].set_text(alias)
+        self.campos[ch_senha].set_text(alias)
 
     def _teclas(self, _w, ev):
         nome = Gdk.keyval_name(ev.keyval) or ""
@@ -3572,6 +3634,18 @@ class EditorConexao(Gtk.Dialog):
                 olho.connect("toggled",
                              lambda b, e=ent: e.set_visibility(b.get_active()))
                 grade.attach(olho, 2, i, 1, 1)
+                # "usar do chaveiro": ao lado do olho, mesma familia visual —
+                # preenche usuario+senha deste servico com o alias "!nome"
+                # de uma credencial ja cadastrada. So aparece se o chaveiro
+                # estiver disponivel, senao nao ha o que escolher.
+                if TEM_COFRE and tipo in MAPA_CHAVEIRO_CAMPOS:
+                    bt_chaveiro = Gtk.Button()
+                    bt_chaveiro.set_image(icone_chave())
+                    bt_chaveiro.set_always_show_image(True)
+                    add_class(bt_chaveiro, "tog", "tog-glifo")
+                    bt_chaveiro.set_tooltip_text("Usar do chaveiro")
+                    bt_chaveiro.connect("clicked", self._usar_chaveiro, tipo)
+                    grade.attach(bt_chaveiro, 3, i, 1, 1)
             self.campos[ch] = ent
             grade.attach(lb, 0, i, 1, 1)
             grade.attach(ent, 1, i, 1, 1)
@@ -3680,6 +3754,10 @@ class EditorConexao(Gtk.Dialog):
                      ("rdp_senha", c.rdp_senha),
                      ("rdp_dominio", c.rdp_dominio),
                      ("rdp_extras", " ".join(c.rdp_extras))):
+            # campo de usuario/senha que veio como alias do chaveiro:
+            # mostra "!nome", NAO a credencial resolvida — senao Salvar
+            # regravaria a senha crua e o alias se perderia pra sempre.
+            v = c.alias_bruto.get(k, v)
             self.campos[k].set_text(v or "")
         self.chaves["vnc"].set_active(c.tem_vnc)
         self.chaves["ssh"].set_active(c.tem_ssh)
@@ -4015,12 +4093,25 @@ class Janela(Gtk.Window):
         for texto, dica, fn in (
                 ("✎ snippets", "Biblioteca de comandos para execução em lote",
                  self.abrir_snippets),
+                (None, "Credenciais reutilizáveis entre conexões",
+                 self.abrir_chaveiro),
                 ("＋ nova", "Cadastrar uma conexão", self.nova_conexao),
                 ("⌂  início", "Voltar ao painel", self._ir_home),
                 ("⟳", "Recarregar o INI", self._recarregar),
                 ("✎  INI", "Abrir o arquivo de conexões", self._editar_ini),
                 ("⚙", "Ajustes", self._abrir_ajustes)):
-            b = add_class(Gtk.Button(label=texto), "btn-topo")
+            if texto is None:
+                # chaveiro: glifo proprio (icone_chave), NAO o emoji 🔑 —
+                # os outros botoes desta barra usam glifos de texto FINOS
+                # e sem cor (✎ ⌂ ⟳ ⚙); o emoji de chave vem colorido na
+                # maioria das fontes e desentoava sozinho ao lado deles.
+                b = add_class(Gtk.Button(), "btn-topo")
+                dentro = Gtk.Box(spacing=4)
+                dentro.pack_start(icone_chave(13), False, False, 0)
+                dentro.pack_start(Gtk.Label(label="chaveiro"), False, False, 0)
+                b.add(dentro)
+            else:
+                b = add_class(Gtk.Button(label=texto), "btn-topo")
             b.set_valign(Gtk.Align.CENTER)
             b.set_tooltip_text(dica)
             b.connect("clicked", fn)
@@ -6159,6 +6250,31 @@ class Janela(Gtk.Window):
         dlg.run()
         dlg.destroy()
 
+    def abrir_chaveiro(self, _b=None):
+        self.soltar_capturas()
+        if not TEM_COFRE:
+            self.avisar("Indisponível", "Módulo do chaveiro ausente: %s"
+                        % ERRO_COFRE)
+            return
+        if COFRE is None or COFRE.trancado():
+            self.avisar("Chaveiro trancado",
+                        "O chaveiro não pôde ser aberto no arranque; "
+                        "reinicie o app para tentar de novo.")
+            return
+        _chaveiro.abrir_gerenciador(caminho_chaveiro(), COFRE, self)
+        # credenciais podem ter mudado (nome, usuario, senha): recarrega o
+        # registro em memoria para as proximas resolucoes de alias
+        global CHAVEIRO_REGISTRO
+        CHAVEIRO_REGISTRO = _chaveiro.carregar_credenciais(
+            caminho_chaveiro(), COFRE)
+        # E RECARREGA AS CONEXOES. O alias so e resolvido na CARGA: as
+        # Conexao que ja estao em memoria guardam o valor resolvido
+        # naquele momento. Sem isto, trocar a senha de uma credencial no
+        # chaveiro nao teria efeito nenhum ate reiniciar o app — e a
+        # conexao seguinte ainda mandaria a senha ANTIGA para o servidor,
+        # silenciosamente.
+        self._recarregar()
+
     def abrir_lote(self, _b=None):
         if not TEM_MASSA:
             self.avisar("Motor ausente",
@@ -6355,6 +6471,9 @@ class Janela(Gtk.Window):
     def duplicar_conexao(self, cx):
         import copy
         novo = copy.copy(cx)
+        # copy.copy e RASO: sem isto, novo.alias_bruto seria o MESMO dict
+        # do original, e editar o alias da copia mudaria a original tambem
+        novo.alias_bruto = dict(cx.alias_bruto)
         # incrementa o ultimo numero do nome: PDV 001 -> PDV 002.
         # Pula os que ja existem, para cadastro em sequencia nao esbarrar.
         usados = {c.nome.lower() for c in self.conexoes}
@@ -6390,15 +6509,17 @@ class Janela(Gtk.Window):
         """Painel de ajustes. Usa os blocos do dialogo_ui — nada montado a
         mao aqui, senao a proxima tela nasce fora do padrao outra vez.
 
-        Cada bloco e um Gtk.Expander, nao a antiga regua entre secoes: uma
-        linha de 1px era discreta demais para separar de verdade, e o
-        painel parecia uma lista de informacoes soltas. O cabecalho do
-        Expander e SO TEXTO — nunca um Switch ou botao ali dentro, que e a
-        mesma armadilha ja documentada em _servico() (EditorConexao) e
-        _no_grupo() (grupos da home): o Expander intercepta todo clique no
-        rotulo para abrir/fechar, e um widget interativo ali nunca recebe
-        o evento. O conteudo interativo de cada secao mora sempre no CORPO,
-        nunca no cabecalho."""
+        Cada bloco e um Gtk.Expander — o cabecalho e SO TEXTO, nunca um
+        Switch ou botao ali dentro, que e a mesma armadilha ja documentada
+        em _servico() (EditorConexao) e _no_grupo() (grupos da home): o
+        Expander intercepta todo clique no rotulo para abrir/fechar, e um
+        widget interativo ali nunca recebe o evento. O conteudo interativo
+        de cada secao mora sempre no CORPO, nunca no cabecalho.
+
+        Entre um Expander e o proximo vai uma regua-h fina: o Expander por
+        si so separa o TITULO do corpo, mas nao marca onde uma secao acaba
+        e a proxima comeca — sem a linha, "Voltar ao padrão" (fim de LOCAL
+        DOS ARQUIVOS) e "▾ SOBRE" pareciam do mesmo bloco."""
         import dialogo_ui
         dlg, cx, _ok = dialogo_ui.editor(
             # sem botao de acao: o X da barra fecha, e cada opcao ja se
@@ -6406,7 +6527,12 @@ class Janela(Gtk.Window):
             "Ajustes", self, ok=None, cancelar=None,
             largura=560, altura=480)
 
+        primeira = [True]
+
         def secao(titulo):
+            if not primeira[0]:
+                cx.pack_start(add_class(Gtk.Box(), "regua-h"), False, False, 4)
+            primeira[0] = False
             exp = Gtk.Expander()
             exp.set_label_widget(rotulo(titulo, "rotulo"))
             exp.set_expanded(True)
@@ -6597,18 +6723,23 @@ def main():
     # estilo instalada aqui, ele sairia com o tema do sistema
     instalar_css_cedo(ler_tema(caminho))
 
-    # COFRE ANTES DE CARREGAR: carregar() decifra os campos sigilosos
-    # usando o cofre global, entao ele precisa estar aberto aqui. Sem
-    # cofre no arquivo, ou sem a biblioteca, destrancar() devolve None e
-    # tudo segue como antes, com as senhas em claro.
+    # CHAVEIRO ANTES DE CARREGAR: carregar() decifra os campos sigilosos e
+    # resolve os alias "!nome" usando o cofre/registro globais, entao
+    # precisam estar prontos aqui. destrancar() tambem cuida da migracao
+    # do [cofre] antigo, se o conexoes.ini ainda tiver um. Sem cofre (nem
+    # aqui nem no chaveiro), ou sem a biblioteca, devolve None e tudo
+    # segue como antes, com as senhas em claro.
     if TEM_COFRE:
         try:
-            global COFRE
-            COFRE, seguir = _cofre.destrancar(caminho)
+            global COFRE, CHAVEIRO_REGISTRO
+            COFRE, seguir = _chaveiro.destrancar(caminho_chaveiro(), caminho)
             if not seguir:
                 return 0              # operador desistiu na senha mestra
+            if COFRE is not None:
+                CHAVEIRO_REGISTRO = _chaveiro.carregar_credenciais(
+                    caminho_chaveiro(), COFRE)
         except Exception as e:
-            sys.stderr.write("cofre: %s\n" % e)
+            sys.stderr.write("chaveiro: %s\n" % e)
             COFRE = None
 
     conexoes, geral = carregar(caminho)
