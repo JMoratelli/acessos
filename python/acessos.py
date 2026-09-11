@@ -2129,6 +2129,11 @@ class AbaVnc(AbaBase, CapturaTeclado):
         # passam a fazer a mesma coisa: primeira conexao sempre em display
         # recem-criado.
         self._display_frio = True
+        # o dialogo de usuario+senha e oferecido UMA vez por aba: se a
+        # credencial informada tambem for recusada, insistir so repetiria
+        # o pedido em laco (e, no MS-Logon, somaria tentativa falha na
+        # conta do Windows do cliente)
+        self._pediu_usuario = False
         self._ultimo_recebido = None
         self._ultimo_enviado = None
         self._timer_vigia = None
@@ -2512,10 +2517,48 @@ class AbaVnc(AbaBase, CapturaTeclado):
     def _on_erro(self, d, msg):
         if self.fechando or d is not self.display:
             return
+        # SERVIDOR BARROU A CONEXAO — nao insistir.
+        #
+        # O UltraVNC bota o IP numa lista negra depois de algumas senhas
+        # erradas e passa a recusar antes mesmo de perguntar a senha. Como
+        # o tempo de bloqueio DOBRA a cada nova tentativa, reconectar
+        # sozinho (o comportamento antigo, que tratava isso como queda
+        # comum) e o pior a fazer: mantem o PDV inacessivel por cada vez
+        # mais tempo, e o operador nem fica sabendo o motivo.
+        if getattr(d, "recusado", False):
+            self._estado("RECUSADO", "erro", "o servidor recusou a conexão")
+            self.reg("servidor recusou: %s" % msg)
+            self.reg("possível bloqueio por tentativas repetidas — o "
+                     "UltraVNC libera sozinho depois de alguns minutos, "
+                     "ou reinicie o serviço na máquina remota")
+            self._cancelar_auto()
+            self.bt_auto.set_active(False)
+            return
         self._estado("ERRO", "erro", msg)
         self.reg("erro: %s" % msg)
 
     def _on_auth_falhou(self, _d, msg):
+        # O SERVIDOR EXIGE USUARIO E A CONEXAO NAO TINHA.
+        #
+        # Casos assim (UltraVNC MS-Logon, VeNCrypt Plain) falhavam com a
+        # mensagem generica de "nao foi possivel conectar", e a tela nem
+        # tinha campo de usuario — o operador nao tinha como consertar o
+        # que nao sabia que faltava. Agora o shim avisa qual era o
+        # problema e o campo aparece na hora, uma vez so: se a credencial
+        # informada tambem for recusada, a proxima falha ja cai no
+        # tratamento normal de senha errada, sem insistir.
+        if getattr(self.display, "falta_usuario", False) \
+                and not self._pediu_usuario:
+            self._pediu_usuario = True
+            cred = self.janela.pedir_credenciais(
+                self.cx.nome, self.cx.destino, self.cx.usuario)
+            if cred:
+                self.cx.usuario, self.cx.senha = cred
+                self.reg("servidor exige usuário; tentando de novo com o "
+                         "usuário informado")
+                self.reconectar(manual=True)
+                return
+
         self._estado("AUTH", "erro", "autenticação recusada")
         self.reg("autenticacao recusada: %s" % msg)
         self._cancelar_auto()          # senha errada nao melhora com insistencia
@@ -6057,6 +6100,45 @@ class Janela(Gtk.Window):
         valor = ent.get_text() if resp == Gtk.ResponseType.OK else None
         dlg.destroy()
         return valor
+
+    def pedir_credenciais(self, nome, destino, usuario=""):
+        """Usuario + senha, para servidor que exige os dois.
+
+        Existe separado de pedir_senha() porque a maioria dos servidores
+        VNC autentica so com senha, e um campo de usuario ali seria ruído
+        em todas as conexões para atender uma minoria. Este diálogo só
+        aparece quando o servidor REALMENTE pediu usuário — o shim avisa
+        (ver vs_falta_usuario em vncshim.c).
+
+        Devolve (usuario, senha) ou None se cancelou."""
+        liberar_grab_gtk()
+        self.soltar_capturas()
+        import dialogo_ui
+        dlg, cx = dialogo_ui.dialogo("Usuário e senha", self)
+        dlg.set_default_size(360, -1)
+        botao_dialogo(dlg, "Cancelar", Gtk.ResponseType.CANCEL, "perigo")
+        botao_dialogo(dlg, "Conectar", Gtk.ResponseType.OK, "acao")
+
+        cx.pack_start(rotulo("%s — %s" % (nome, destino), "secundario"),
+                      False, False, 0)
+        dialogo_ui.nota(cx, "Este servidor exige usuário além da senha "
+                            "(UltraVNC MS-Logon ou VeNCrypt).", "dlg-dica")
+
+        cx.pack_start(rotulo("USUÁRIO", "rotulo"), False, False, 0)
+        ent_u = Gtk.Entry()
+        ent_u.set_text(usuario or "")
+        ent_u.connect("activate", lambda _e: dlg.response(Gtk.ResponseType.OK))
+        cx.pack_start(ent_u, False, False, 0)
+
+        ent_s = dialogo_ui.campo_senha(cx, "SENHA", dlg, Gtk.ResponseType.OK)
+        cx.show_all()
+        (ent_s if usuario else ent_u).grab_focus()
+
+        resp = dlg.run()
+        saida = ((ent_u.get_text().strip(), ent_s.get_text())
+                 if resp == Gtk.ResponseType.OK else None)
+        dlg.destroy()
+        return saida
 
     def confirmar(self, titulo, texto, ok="Confirmar", destrutivo=False):
         # Rede de seguranca generica contra gtk_grab_add() preso (ver
