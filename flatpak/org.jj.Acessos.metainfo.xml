@@ -58,6 +58,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.2.1" date="2026-09-11">
+      <description>
+        <p>Corrige o texto ilegivel na credencial selecionada ao usar "Usar do chaveiro": o fundo da linha selecionada e invertido de proposito, mas a cor do texto nao acompanhava — ficava preto sobre preto no tema claro e branco sobre branco no escuro.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-09-11">
       <description>
         <p>Chaveiro de senhas: uma credencial e cadastrada uma vez e apontada por varias conexoes com "!nome" no usuario e/ou na senha, em vez de repetida maquina a maquina. Editar a credencial no chaveiro vale para todas as conexoes que a referenciam. O cofre (sal e senha mestra) passou a morar no chaveiro.ini, com migracao automatica do conexoes.ini — mesma senha mestra, nenhuma senha recifrada.</p>
