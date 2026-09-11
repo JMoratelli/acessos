@@ -613,6 +613,16 @@ headerbar.dlg-topo button.perigo:hover {
 .lista cell:selected {
     background-color: %(sel)s; color: %(sel_txt)s;
 }
+/* O "color" acima vale para a row, mas NAO para um rotulo dentro dela que
+   tenha cor propria: ".opcao-txt" fixa "color: texto", e cor definida no
+   proprio node vence heranca, sempre. Resultado: fundo invertido (preto no
+   tema claro, branco no escuro) com o texto na cor do tema NAO invertido —
+   preto no preto, branco no branco. Todo descendente da linha selecionada
+   passa a usar sel_txt, com especificidade maior que a de uma classe so. */
+.lista row:selected label, .lista row:selected:focus label,
+.lista row:selected:backdrop label {
+    color: %(sel_txt)s;
+}
 /* Zebra (fundo alternado por linha) foi tentada e descartada: com so
    duas cores tao proximas (cartao e borda), cada linha "diferente"
    cercada por vizinhas de outra cor lia como uma CAIXA solta, nao como
