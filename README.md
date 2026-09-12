@@ -71,11 +71,14 @@ O instalador não pede administrador: instala em
 `%LOCALAPPDATA%\Acessos`, com atalho no Menu Iniciar e (opcional) na Área
 de Trabalho. O inventário fica em `%APPDATA%\acessos\conexoes.ini`.
 
-Diferenças em relação ao Linux: o teclado e a área de transferência das
-sessões remotas passam pelo próprio Gio, sem o caminho Wayland de
-`internal/grab` (e, portanto, sem inibir atalhos do sistema); a sonda de
-vida usa `IcmpSendEcho` do `iphlpapi` no lugar do socket ICMP sem
-privilégio do Linux.
+Diferenças em relação ao Linux: a sonda de vida usa `IcmpSendEcho` do
+`iphlpapi` no lugar do socket ICMP sem privilégio, e o app grava
+`log.txt`/`freerdp.log` ao lado do `conexoes.ini` (compilado como
+aplicativo gráfico, ele não tem stdout).
+
+**As sessões remotas no Windows ainda são só leitura**: tela e mouse
+funcionam, teclado e área de transferência não — o caminho de entrada
+inteiro é o do Wayland. É o item 1 do [BACKLOG.md](BACKLOG.md).
 
 ## Estrutura
 
