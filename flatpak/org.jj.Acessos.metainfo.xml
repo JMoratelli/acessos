@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.3" date="2026-09-12">
+      <description>
+        <p>Corrige a queda do aplicativo ao mexer no clipboard de uma sessao remota (Ctrl+X num RDP, ou abrir muitas telas de uma vez): quando outro programa assumia o clipboard, o objeto do Wayland era liberado mas continuava referenciado aqui, e a publicacao seguinte usava memoria ja devolvida.</p>
+        <p>O cofre agora pode ser CRIADO pelo cadeado. Num inventario novo nao existe secao [cofre], entao nenhuma senha mestra podia estar certa e o cadeado ficava fechado para sempre, sem caminho nenhum para iniciar o cofre.</p>
+        <p>Destino avulso: digitar um endereco na busca ("10.1.1.99", "zanthus@caixa02", "rdp serv-ad") mostra um card temporario com os quatro protocolos. Clicar no protocolo pede usuario e senha e abre a sessao, sem cadastrar nada. Antes isso so existia apertando Enter na busca — um atalho que ninguem descobria — e conectava sem pedir senha.</p>
+        <p>Frases de explicacao dos dialogos deixam de ser cortadas pela direita: passam a quebrar em varias linhas.</p>
+      </description>
+    </release>
     <release version="2.0.2" date="2026-09-12">
       <description>
         <p>Corrige a queda do aplicativo ao abrir muitas telas de uma vez (relatado com cerca de 30 VNCs): cada sessao anuncia o clipboard do servidor assim que conecta, e varias fazendo isso ao mesmo tempo, cada uma na sua thread, derrubavam o processo dentro da biblioteca de clipboard do Wayland. Agora a publicacao e sempre feita pelo laco da interface, e apenas pela aba que esta na tela — o que tambem impede uma sessao em segundo plano de roubar o que acabou de ser copiado.</p>

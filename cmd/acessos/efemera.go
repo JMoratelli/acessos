@@ -97,3 +97,72 @@ func interpretarAlvo(texto string) (conexoes.Conexao, conexoes.Protocolo, bool) 
 	}
 	return cx, proto, true
 }
+
+// alvoRascunho monta a conexão TEMPORÁRIA que o Painel mostra como card
+// enquanto se digita um destino que não está cadastrado.
+//
+// Diferença para interpretarAlvo: aqui os quatro protocolos nascem
+// ligados, porque o card existe justamente para o operador ESCOLHER pelo
+// ícone — o palpite do texto ("10.1.1.9:22" é shell) vira só a porta
+// daquele protocolo, não uma decisão tomada por ele.
+func alvoRascunho(texto string) (conexoes.Conexao, bool) {
+	cx, proto, ok := interpretarAlvo(texto)
+	if !ok || !ehDestinoPlausivel(texto) {
+		return conexoes.Conexao{}, false
+	}
+	usuario := ""
+	switch proto {
+	case conexoes.VNC:
+		usuario = cx.VNC.Usuario
+	case conexoes.SSH, conexoes.SFTP:
+		usuario = cx.SSH.Usuario
+	case conexoes.RDP:
+		usuario = cx.RDP.Usuario
+	}
+	porta := func(p conexoes.Protocolo, padrao int) int {
+		if proto != p {
+			return padrao
+		}
+		switch p {
+		case conexoes.VNC:
+			return cx.VNC.Porta
+		case conexoes.SSH:
+			return cx.SSH.Porta
+		case conexoes.RDP:
+			return cx.RDP.Porta
+		}
+		return padrao
+	}
+	cx.VNC = conexoes.AcessoVNC{Ligado: true, Porta: porta(conexoes.VNC, 5900),
+		Usuario: usuario, Modo: "encaixar"}
+	cx.SSH = conexoes.AcessoSSH{Ligado: true, Porta: porta(conexoes.SSH, 22), Usuario: usuario}
+	cx.RDP = conexoes.AcessoRDP{Ligado: true, Porta: porta(conexoes.RDP, 3389),
+		Usuario: usuario, Tela: "dinamico"}
+	return cx, true
+}
+
+// ehDestinoPlausivel evita o card aparecer a cada letra de uma busca
+// comum: só um texto com cara de endereço (IP, host:porta, usuário@host)
+// ou com prefixo de protocolo explícito vira destino. "caixa" é busca;
+// "10.1.1.9", "serv.local" e "rdp serv-ad" são destino.
+func ehDestinoPlausivel(texto string) bool {
+	t := strings.TrimSpace(strings.ToLower(texto))
+	if t == "" {
+		return false
+	}
+	if campos := strings.Fields(t); len(campos) == 2 {
+		switch campos[0] {
+		case "vnc", "tela", "ssh", "shell", "rdp", "sftp", "arquivos":
+			return true
+		}
+		return false
+	}
+	if strings.ContainsAny(t, "@:") {
+		return true
+	}
+	// IP ou nome com domínio: ponto entre duas partes não vazias
+	if i := strings.Index(t, "."); i > 0 && i < len(t)-1 {
+		return true
+	}
+	return false
+}
