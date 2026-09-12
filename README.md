@@ -47,6 +47,36 @@ Sem argumento ele abre o inventário padrão
 (`$XDG_CONFIG_HOME/acessos/conexoes.ini`), criando um exemplo comentado na
 primeira execução. `-ini` aponta para outro arquivo.
 
+## Windows
+
+O mesmo código-fonte gera o executável e o instalador do Windows, a partir
+do Linux, numa passada só:
+
+```bash
+scripts/build-windows.sh               # build/win/dist/ (acessos.exe + DLLs)
+scripts/build-windows.sh --instalador  # build/win/AcessosSetup-<versão>.exe
+scripts/build-windows.sh --limpar      # apaga build/win/
+```
+
+Nada precisa ser instalado no sistema e nada pede root: o script monta um
+sysroot MinGW com os pacotes binários do MSYS2 (`scripts/sysroot-msys2.py`
+— repositório `ucrt64`, a mesma ABI do `mingw-w64-gcc` do Arch), gera o
+ícone a partir do mesmo SVG do Linux, compila com cgo (VNC e RDP ligados),
+resolve **recursivamente** as DLLs de que o `.exe` depende
+(`scripts/dlls-windows.py`) e, no `--instalador`, compila
+`scripts/instalador.iss` com o Inno Setup rodando num prefixo Wine próprio,
+em `build/win/wine` — o `~/.wine` do usuário fica intocado.
+
+O instalador não pede administrador: instala em
+`%LOCALAPPDATA%\Acessos`, com atalho no Menu Iniciar e (opcional) na Área
+de Trabalho. O inventário fica em `%APPDATA%\acessos\conexoes.ini`.
+
+Diferenças em relação ao Linux: o teclado e a área de transferência das
+sessões remotas passam pelo próprio Gio, sem o caminho Wayland de
+`internal/grab` (e, portanto, sem inibir atalhos do sistema); a sonda de
+vida usa `IcmpSendEcho` do `iphlpapi` no lugar do socket ICMP sem
+privilégio do Linux.
+
 ## Estrutura
 
 ```
@@ -59,6 +89,7 @@ internal/
   cofre/ chaveiro/    senhas cifradas e credenciais reutilizáveis
   massa/              execução em lote (portado do Mass SSH Executer)
   hostkey/ vida/      identidade do servidor SSH e sonda de vida
+scripts/              build para Windows: sysroot MSYS2, DLLs, instalador
 third_party/gio/      Gio com três patches — veja PATCH.md
 flatpak/              manifesto, .desktop e metainfo
 ```

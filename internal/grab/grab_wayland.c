@@ -1,3 +1,5 @@
+//go:build linux
+
 /* grab_wayland.c — dois recursos que o Gio nao oferece, resolvidos falando
  * Wayland direto com os ponteiros crus que app.WaylandViewEvent expoe:
  *

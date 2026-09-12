@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package main
 
@@ -8,7 +8,7 @@ import (
 	"gioui.org/app"
 )
 
-// Fora do Linux, VNC e RDP ainda não existem: eles dependem de
+// Fora de Linux e Windows, VNC e RDP não existem: eles dependem de
 // libvncclient e libfreerdp3 por cgo, e essas bibliotecas precisam ser
 // compiladas para a plataforma alvo.
 //

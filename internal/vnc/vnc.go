@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 // Package vnc expõe um cliente VNC em Go por cima do shim C existente
 // (vncshim.c), que por sua vez fala com libvncclient.

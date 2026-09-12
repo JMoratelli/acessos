@@ -42,6 +42,15 @@
  * freerdp3 freerdp-client3 winpr3).
  */
 
+#ifdef _WIN32
+/* WIN32_LEAN_AND_MEAN antes de winsock2.h: sem isto, o windows.h que vem
+ * atras traz shellapi.h, cujas macros NIIF_* colidem com os enums de
+ * mesmo nome que freerdp/rail.h declara (achado testando: "expected
+ * identifier before numeric constant" em NIIF_NONE). */
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#endif
+
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/gfx.h>
@@ -65,9 +74,48 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdio.h>
+
+#ifndef _WIN32
 #include <iconv.h>
 #include <pthread.h>
+#endif
+
+/* ---- mutex do clipboard: CRITICAL_SECTION (Windows) ou pthread (Linux),
+ * atras de 4 macros — o resto do arquivo chama so MUTEX_*, nunca a API
+ * nativa direto. */
+#ifdef _WIN32
+typedef CRITICAL_SECTION rdpshim_mutex_t;
+#define MUTEX_INIT(m)    InitializeCriticalSection(m)
+#define MUTEX_LOCK(m)    EnterCriticalSection(m)
+#define MUTEX_UNLOCK(m)  LeaveCriticalSection(m)
+#define MUTEX_DESTROY(m) DeleteCriticalSection(m)
+#else
+typedef pthread_mutex_t rdpshim_mutex_t;
+#define MUTEX_INIT(m)    pthread_mutex_init(m, NULL)
+#define MUTEX_LOCK(m)    pthread_mutex_lock(m)
+#define MUTEX_UNLOCK(m)  pthread_mutex_unlock(m)
+#define MUTEX_DESTROY(m) pthread_mutex_destroy(m)
+#endif
+
+
+#include <stdio.h>
+
+/* WSAStartup — o Winsock nao se inicializa sozinho no Windows. Todo
+ * cliente FreeRDP "de verdade" (wfreerdp.exe incluso) chama isto no
+ * proprio main(); uma DLL chamada via ctypes nao tem main(), entao
+ * precisa chamar aqui. Achado testando: sem isto, getaddrinfo() falha
+ * pra QUALQUER host, ate um IP literal — sintoma enganoso, parece erro
+ * de DNS mas e so Winsock nunca inicializado. */
+#ifdef _WIN32
+static int WSA_INICIADO = 0;
+
+static void garantir_winsock(void) {
+    if (WSA_INICIADO) return;
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    WSA_INICIADO = 1;
+}
+#endif
 
 /* ---- callbacks para o lado Python (escalares/ponteiros opacos, como no
  * vncshim) ---- */
@@ -123,7 +171,7 @@ typedef struct {
     /* clipboard: canal CLIPRDR, so texto (CF_UNICODETEXT). NULL enquanto o
      * canal nao conectou (servidor pode nao anunciar RedirectClipboard). */
     CliprdrClientContext *cliprdr;
-    pthread_mutex_t clip_lock;
+    rdpshim_mutex_t clip_lock;
     /* texto do HOST, pronto para responder um ServerFormatDataRequest —
      * guardado ja convertido para UTF-16LE, formato que o CF_UNICODETEXT
      * exige na fiacao do protocolo. */
@@ -146,7 +194,7 @@ typedef struct {
      * derrubando o processo inteiro pouco depois de ligar o Display
      * Control. rs_capturar_quadro faz tudo (tamanho + cópia) com este lock
      * seguro, numa única chamada. */
-    pthread_mutex_t fb_lock;
+    rdpshim_mutex_t fb_lock;
 } Sessao;
 
 static Sessao *sessao_de(freerdp *inst) {
@@ -185,9 +233,9 @@ static BOOL hook_desktop_resize(rdpContext *context) {
     /* gdi_resize troca gdi->primary_buffer por um novo; sem o lock, uma
      * captura em andamento do lado Go podia estar olhando para o buffer
      * bem no instante em que ele e liberado/realocado aqui. */
-    if (s) pthread_mutex_lock(&s->fb_lock);
+    if (s) MUTEX_LOCK(&s->fb_lock);
     BOOL ok = gdi_resize(gdi, w, h);
-    if (s) pthread_mutex_unlock(&s->fb_lock);
+    if (s) MUTEX_UNLOCK(&s->fb_lock);
     if (!ok) return FALSE;
 
     if (s && s->ao_redimensionar) s->ao_redimensionar(s->pyctx, (int)w, (int)h);
@@ -261,6 +309,35 @@ static BOOL hook_authenticate_ex(freerdp *inst, char **usuario, char **senha,
 
 /* Conversoes UTF-16LE <-> UTF-8. CF_UNICODETEXT trafega em UTF-16LE com
  * terminador nulo — o resto do mundo (GTK) fala UTF-8. */
+#ifdef _WIN32
+/* No Windows a conversao e nativa (MultiByteToWideChar/WideCharToMultiByte),
+ * o que evita arrastar libiconv como dependencia do MSYS2 so pra isto. */
+static char *conv_utf16le_para_utf8(const uint8_t *dados, size_t bytes, size_t *tam_saida) {
+    if (bytes % 2 != 0) return NULL;
+    int n_wchars = (int)(bytes / 2);
+    int tam_utf8 = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)dados, n_wchars,
+                                       NULL, 0, NULL, NULL);
+    if (tam_utf8 <= 0) return NULL;
+    char *saida = (char *)malloc((size_t)tam_utf8);
+    if (!saida) return NULL;
+    WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)dados, n_wchars, saida, tam_utf8,
+                        NULL, NULL);
+    *tam_saida = (size_t)tam_utf8;
+    return saida;
+}
+
+static uint8_t *conv_utf8_para_utf16le(const char *utf8, size_t tam, size_t *bytes_saida) {
+    int n_wchars = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)tam, NULL, 0);
+    if (n_wchars <= 0 && tam > 0) return NULL;
+    size_t bytes = ((size_t)n_wchars + 1) * 2;    /* +1 wchar: terminador nulo */
+    uint8_t *saida = (uint8_t *)malloc(bytes);
+    if (!saida) return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, utf8, (int)tam, (LPWSTR)saida, n_wchars);
+    saida[bytes - 2] = 0; saida[bytes - 1] = 0;   /* terminador nulo UTF-16 */
+    *bytes_saida = bytes;
+    return saida;
+}
+#else
 static char *conv_utf16le_para_utf8(const uint8_t *dados, size_t bytes, size_t *tam_saida) {
     iconv_t cd = iconv_open("UTF-8", "UTF-16LE");
     if (cd == (iconv_t)-1) return NULL;
@@ -298,6 +375,7 @@ static uint8_t *conv_utf8_para_utf16le(const char *utf8, size_t tam, size_t *byt
     *bytes_saida = usado + 2;
     return saida;
 }
+#endif /* _WIN32 */
 
 static UINT hook_clip_monitor_ready(CliprdrClientContext *ctx,
                                     const CLIPRDR_MONITOR_READY *mr) {
@@ -323,9 +401,9 @@ static UINT hook_clip_monitor_ready(CliprdrClientContext *ctx,
     memset(&fl, 0, sizeof(fl));
     fl.common.msgType = CB_FORMAT_LIST;
     if (s) {
-        pthread_mutex_lock(&s->clip_lock);
+        MUTEX_LOCK(&s->clip_lock);
         int temos_texto = s->clip_local_utf16 != NULL;
-        pthread_mutex_unlock(&s->clip_lock);
+        MUTEX_UNLOCK(&s->clip_lock);
         if (temos_texto) {
             fl.numFormats = 1;
             fl.formats = &fmt;
@@ -381,7 +459,7 @@ static UINT hook_clip_server_format_data_request(
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
 
-    pthread_mutex_lock(&s->clip_lock);
+    MUTEX_LOCK(&s->clip_lock);
     uint8_t *copia = NULL;
     size_t tam = 0;
     if (s->clip_local_utf16) {
@@ -389,7 +467,7 @@ static UINT hook_clip_server_format_data_request(
         copia = (uint8_t *)malloc(tam);
         if (copia) memcpy(copia, s->clip_local_utf16, tam);
     }
-    pthread_mutex_unlock(&s->clip_lock);
+    MUTEX_UNLOCK(&s->clip_lock);
 
     if (!copia) {
         resp.common.msgFlags = CB_RESPONSE_FAIL;
@@ -573,8 +651,8 @@ Sessao *rs_criar(void *pyctx,
                  cb_disp_pronto ao_disp_pronto) {
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
-    pthread_mutex_init(&s->clip_lock, NULL);
-    pthread_mutex_init(&s->fb_lock, NULL);
+    MUTEX_INIT(&s->clip_lock);
+    MUTEX_INIT(&s->fb_lock);
 
     /* Registra o provedor de addins ESTATICOS (compilados dentro da propria
      * freerdp-client3), para o hook_load_channels achar cliprdr/rdpdr/disp
@@ -588,8 +666,8 @@ Sessao *rs_criar(void *pyctx,
 
     freerdp *inst = freerdp_new();
     if (!inst) {
-        pthread_mutex_destroy(&s->clip_lock);
-        pthread_mutex_destroy(&s->fb_lock);
+        MUTEX_DESTROY(&s->clip_lock);
+        MUTEX_DESTROY(&s->fb_lock);
         free(s);
         return NULL;
     }
@@ -607,8 +685,8 @@ Sessao *rs_criar(void *pyctx,
 
     if (!freerdp_context_new(inst)) {
         freerdp_free(inst);
-        pthread_mutex_destroy(&s->clip_lock);
-        pthread_mutex_destroy(&s->fb_lock);
+        MUTEX_DESTROY(&s->clip_lock);
+        MUTEX_DESTROY(&s->fb_lock);
         free(s);
         return NULL;
     }
@@ -637,11 +715,11 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam) {
     uint8_t *utf16 = (utf8 && tam > 0)
         ? conv_utf8_para_utf16le(utf8, (size_t)tam, &bytes) : NULL;
 
-    pthread_mutex_lock(&s->clip_lock);
+    MUTEX_LOCK(&s->clip_lock);
     free(s->clip_local_utf16);
     s->clip_local_utf16 = utf16;
     s->clip_local_utf16_bytes = bytes;
-    pthread_mutex_unlock(&s->clip_lock);
+    MUTEX_UNLOCK(&s->clip_lock);
 
     if (s->cliprdr && utf16) {
         CLIPRDR_FORMAT fmt;
@@ -835,10 +913,10 @@ int rs_stride(Sessao *s) {
  * pouco depois de um redimensionamento. */
 uint8_t *rs_capturar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out) {
     if (!s) return NULL;
-    pthread_mutex_lock(&s->fb_lock);
+    MUTEX_LOCK(&s->fb_lock);
 
     if (!s->inst || !s->inst->context || !s->inst->context->gdi) {
-        pthread_mutex_unlock(&s->fb_lock);
+        MUTEX_UNLOCK(&s->fb_lock);
         return NULL;
     }
     rdpGdi *gdi = s->inst->context->gdi;
@@ -850,7 +928,7 @@ uint8_t *rs_capturar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out) 
         if (copia) memcpy(copia, gdi->primary_buffer, n);
     }
 
-    pthread_mutex_unlock(&s->fb_lock);
+    MUTEX_UNLOCK(&s->fb_lock);
 
     if (!copia) return NULL;
     *w_out = w; *h_out = h; *stride_out = stride;
@@ -948,7 +1026,7 @@ void rs_destruir(Sessao *s) {
     free(s->senha);
     free(s->dominio);
     free(s->clip_local_utf16);
-    pthread_mutex_destroy(&s->clip_lock);
-    pthread_mutex_destroy(&s->fb_lock);
+    MUTEX_DESTROY(&s->clip_lock);
+    MUTEX_DESTROY(&s->fb_lock);
     free(s);
 }
