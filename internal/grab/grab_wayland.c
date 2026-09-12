@@ -1,4 +1,7 @@
 //go:build linux
+/* A restrição não é decoração: fora do Linux só sobram arquivos Go sem
+ * cgo neste pacote, e aí o Go recusa o pacote inteiro com "C source files
+ * not allowed when not using cgo or SWIG". */
 
 /* grab_wayland.c — dois recursos que o Gio nao oferece, resolvidos falando
  * Wayland direto com os ponteiros crus que app.WaylandViewEvent expoe:
