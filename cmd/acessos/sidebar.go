@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"os"
 	"strings"
 
 	"acessos-go/internal/conexoes"
@@ -94,7 +95,32 @@ func newSidebar() *sidebar {
 		tagPonteiro: new(int),
 	}
 	s.lista.Axis = layout.Vertical
+	// Nasce como estava quando o app foi fechado: quem trabalha com a
+	// lateral escondida não quer reabri-la toda manhã. Mesma chave (e
+	// mesmo significado) do app original: [geral] lateral = 0 | 1.
+	if lateralInicialOculta {
+		s.estado = lateralOculta
+	}
 	return s
+}
+
+// lateralInicialOculta é lido do .ini no start (ver main.go).
+var lateralInicialOculta bool
+
+// lembrarLateral grava o estado no [geral] do inventário. Grava na hora
+// do clique, e não ao sair: fechar o app pelo botão da janela — ou uma
+// queda — não pode custar a preferência.
+func lembrarLateral(oculta bool) {
+	if caminhoINI == "" {
+		return
+	}
+	v := "1"
+	if oculta {
+		v = "0"
+	}
+	if err := conexoes.SalvarGeral(caminhoINI, map[string]string{"lateral": v}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 }
 
 func (s *sidebar) clique(chave string) *widget.Clickable {
@@ -116,6 +142,7 @@ func (s *sidebar) ciclar() {
 	} else {
 		s.estado = lateralAberta
 	}
+	lembrarLateral(s.estado == lateralOculta)
 }
 
 func (s *sidebar) recolhida() bool { return s.estado == lateralRecolhida }

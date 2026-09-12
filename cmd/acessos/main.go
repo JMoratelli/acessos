@@ -158,6 +158,8 @@ func main() {
 		if arq.Geral["tema"] == "escuro" {
 			tema = temaEscuro
 		}
+		// [geral] lateral=0|1 — a lateral volta como estava (ver sidebar.go).
+		lateralInicialOculta = arq.Geral["lateral"] == "0"
 		// [geral] fonte=0|1|2 — escala da interface (ver fonte.go).
 		if n, err := strconv.Atoi(arq.Geral["fonte"]); err == nil {
 			nivelFonte = n
