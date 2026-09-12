@@ -11,6 +11,8 @@
 /vncview
 # artefatos de empacotamento
 /build/
+# recurso do Windows (ícone + versão), gerado por scripts/build-windows.sh
+/cmd/acessos/recurso_windows.syso
 /.flatpak-builder/
 # vendor é gerado pelo build.sh (go mod vendor) antes de empacotar: existe
 # para o build do Flatpak rodar OFFLINE, não para versionar 31 MB de

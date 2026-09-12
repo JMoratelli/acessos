@@ -1,0 +1,11 @@
+#!/bin/sh
+# pkg-config do build para Windows.
+#
+# O Go aceita a variável PKG_CONFIG apenas como UM executável — passar
+# "pkg-config --define-prefix" ali faz o argumento ser tratado como nome de
+# programa e o -I some, com o erro enganoso de "header não encontrado".
+# Daí este wrapper.
+#
+# --define-prefix é obrigatório: os .pc do MSYS2 trazem "prefix=/mingw64"
+# embutido, e o nosso sysroot está extraído em outro lugar.
+exec pkg-config --define-prefix "$@"
