@@ -1,9 +1,16 @@
-build/*
-!build/manifest/
-__pycache__/
-*.pyc
-*.flatpak
-# .so compilados em modo dev direto em python/ (instalar.sh normalmente os
-# poe em ~/.local/lib/acessos, fora do repo — isto cobre quem compila aqui
-# do lado do fonte para testar rapido, sem instalar)
-python/*.so
+# binários locais (o do app e os comandos de teste de cmd/)
+/acessos
+/initest
+/rdpview
+/sftptest
+/sshtest
+/sshview
+/vnctest
+/vncview
+# artefatos de empacotamento
+/build/
+/.flatpak-builder/
+# vendor é gerado pelo build.sh (go mod vendor) antes de empacotar: ele
+# existe para o build do Flatpak rodar OFFLINE, não para versionar 31 MB
+# de código de terceiros.
+/vendor/
