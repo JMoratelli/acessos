@@ -193,6 +193,17 @@ func txt(th *material.Theme, f font.Font, tam unit.Sp, s string, cor color.NRGBA
 	return l
 }
 
+// paragrafo é texto que PODE quebrar em várias linhas: explicação de
+// diálogo, não rótulo de lista. O txt() padrão corta em UMA linha com
+// reticências, que é o certo numa tabela e errado numa frase — a frase
+// simplesmente sumia pela direita.
+func paragrafo(th *material.Theme, f font.Font, tam unit.Sp, s string, cor color.NRGBA) layout.Widget {
+	l := material.Label(th, tam, s)
+	l.Font = f
+	l.Color = cor
+	return l.Layout
+}
+
 // rotuloLinha é rótulo de UMA linha só, cortado com reticências. Comando é
 // linear: quebrar um comando longo em duas linhas muda o que a pessoa lê e
 // desalinha a lista inteira.

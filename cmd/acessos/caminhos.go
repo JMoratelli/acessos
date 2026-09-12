@@ -118,9 +118,10 @@ const iniExemplo = `# conexoes.ini — inventário do Acessos.
 # Uma seção por máquina. O nome da seção é o nome que aparece no painel.
 # Subgrupos são separados por ponto e vírgula: "Loja 06;Caixas".
 #
-# As senhas podem ficar em claro (como abaixo) ou cifradas pelo cofre —
-# destranque o cofre pelo cadeado na barra de cima e o app passa a cifrar
-# o que for gravado pela interface.
+# As senhas podem ficar em claro (como abaixo) ou cifradas pelo cofre. O
+# cofre ainda não existe neste arquivo: clique no cadeado na barra de cima
+# para criar a senha mestra. A partir daí, tudo o que for gravado pela
+# interface sai cifrado.
 
 [geral]
 tema = claro

@@ -123,3 +123,53 @@ func TestCliqueNoIconeAbreSoAquele(t *testing.T) {
 		t.Fatalf("clique no ícone do SSH abriu %v — devia abrir só [ssh]", abertos)
 	}
 }
+
+// O card temporário (destino digitado que não está no inventário) não
+// abre direto: passa pelo pedido de credenciais, senão a sessão nasce sem
+// senha e morre com "autenticação recusada".
+func TestCardRascunhoPedeCredenciais(t *testing.T) {
+	d, _ := painelDeTeste(t)
+	d.filtro.SetText("10.9.9.9")
+	var r input.Router
+	var ops op.Ops
+	quadro := func(evs ...pointer.Event) {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(900, 700)), Source: r.Source(),
+		}
+		d.Layout(gtx)
+		r.Frame(gtx.Ops)
+		for _, e := range evs {
+			r.Queue(e)
+		}
+	}
+	var abertos []conexoes.Protocolo
+	var pedidos []conexoes.Protocolo
+	d.abrir = func(_ conexoes.Conexao, p conexoes.Protocolo) { abertos = append(abertos, p) }
+	d.aoRascunho = func(_ conexoes.Conexao, p conexoes.Protocolo) { pedidos = append(pedidos, p) }
+
+	quadro()
+	for y := 60; y < 700 && len(pedidos) == 0; y += 6 {
+		for x := 20; x < 900 && len(pedidos) == 0; x += 6 {
+			pos := f32.Pt(float32(x), float32(y))
+			quadro(pointer.Event{Kind: pointer.Move, Position: pos, Source: pointer.Mouse})
+			quadro()
+			if d.protoSobCursor != conexoes.RDP {
+				continue
+			}
+			quadro(pointer.Event{Kind: pointer.Press, Position: pos, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary})
+			quadro(pointer.Event{Kind: pointer.Release, Position: pos, Source: pointer.Mouse})
+			quadro()
+		}
+	}
+	if len(pedidos) == 0 {
+		t.Fatal("clicar no protocolo do card temporário não pediu credenciais")
+	}
+	if pedidos[0] != conexoes.RDP {
+		t.Fatalf("pediu credenciais para %v, esperado rdp", pedidos[0])
+	}
+	if len(abertos) > 0 {
+		t.Fatalf("abriu %v sem passar pelas credenciais", abertos)
+	}
+}

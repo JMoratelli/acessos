@@ -249,7 +249,17 @@ static void fonte_enviar(void *dados, struct wl_data_source *fonte,
     close(fd);
 }
 
+/* O compositor cancela a nossa fonte quando OUTRO programa assume o
+ * clipboard. Destruir e so isso era um ponteiro solto: g->fonte continuava
+ * apontando para o proxy ja liberado, e a publicacao seguinte fazia
+ * wl_data_source_destroy no mesmo endereco de novo — SIGSEGV dentro do
+ * cgo, derrubando o aplicativo inteiro. Apareceu de duas formas: abrindo
+ * muitas telas de uma vez (cada sessao publica ao conectar) e com Ctrl+X
+ * numa sessao RDP (o recorte remoto publica logo depois de o compositor
+ * cancelar). Dai zerar o campo ANTES de destruir. */
 static void fonte_cancelada(void *dados, struct wl_data_source *fonte) {
+    Grab *g = (Grab *)dados;
+    if (g && g->fonte == fonte) g->fonte = NULL;
     wl_data_source_destroy(fonte);
 }
 
@@ -391,6 +401,7 @@ void grab_clip_definir(Grab *g, const char *utf8, int tam) {
     }
 
     if (g->fonte) wl_data_source_destroy(g->fonte);
+    g->fonte = NULL;
     g->fonte = wl_data_device_manager_create_data_source(g->data_mgr);
     if (!g->fonte) return;
     wl_data_source_add_listener(g->fonte, &ouvinte_fonte, g);
