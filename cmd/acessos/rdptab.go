@@ -159,13 +159,13 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 			return <-resp
 		}
 		sess.OnClipboardText = func(text string) {
-			if !t.clipOn.Load() {
+			if !t.clipOn.Load() || !ehAbaAtiva(t) {
 				return
 			}
 			if !t.clip.checkAndSet(text) {
 				return
 			}
-			currentGrab.Load().SetClipboardText(text)
+			publicarClipboard(t.w, text)
 		}
 
 		reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)

@@ -377,7 +377,7 @@ func (t *sshTab) copiarSelecao() {
 	t.term.Lock()
 	texto := t.term.String()
 	t.term.Unlock()
-	currentGrab.Load().SetClipboardText(strings.TrimRight(texto, "\n \t"))
+	publicarClipboard(t.w, strings.TrimRight(texto, "\n \t"))
 	t.setEstado("tela copiada")
 }
 
