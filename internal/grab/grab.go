@@ -99,6 +99,12 @@ func (h *Handle) Inibir(ligar bool) {
 // SetClipboardText anuncia text como o clipboard atual do sistema (participa
 // da seleção do wl_data_device). Sem efeito num Handle nil ou sem suporte
 // do compositor a wl_data_device_manager.
+//
+// CHAME SÓ DA THREAD QUE DESPACHA O WAYLAND (no app, o laço de quadro).
+// O wl_data_source criado aqui é destruído e recriado a cada chamada, e as
+// callbacks dele rodam nessa mesma thread: duas goroutines publicando ao
+// mesmo tempo derrubam o processo dentro do cgo. Ver clipboard.go no app,
+// que enfileira a publicação para o quadro seguinte.
 func (h *Handle) SetClipboardText(text string) {
 	if h == nil || h.g == nil {
 		return

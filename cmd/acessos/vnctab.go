@@ -155,13 +155,13 @@ func (t *vncTab) manageSession(user, pass string) {
 		sess.OnUpdate = func(x, y, w, h int) { t.w.Invalidate() }
 		sess.OnResize = func(w, h int) { t.w.Invalidate() }
 		sess.OnCutText = func(text string) {
-			if !t.clipOn.Load() {
+			if !t.clipOn.Load() || !ehAbaAtiva(t) {
 				return
 			}
 			if !t.clip.checkAndSet(text) {
 				return
 			}
-			currentGrab.Load().SetClipboardText(text)
+			publicarClipboard(t.w, text)
 		}
 
 		reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
