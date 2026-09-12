@@ -208,6 +208,16 @@ func main() {
 		painel.aoInvalidar = w.Invalidate
 		// Conexão efêmera: destino digitado vira sessão sem passar pelo
 		// cadastro. Nada é gravado — vive enquanto a aba existir.
+		// Destino avulso: pergunta as credenciais e abre. Um destino fora
+		// do inventário não tem senha guardada em lugar nenhum — abrir
+		// direto só produzia "autenticação recusada".
+		abrirRascunho := func(cx conexoes.Conexao, p conexoes.Protocolo) {
+			pedirCredenciaisEfemeras(w, cx, p, func(cx conexoes.Conexao) {
+				abrirConexao(w, bar, arq, cx, p)
+			})
+			w.Invalidate()
+		}
+		painel.aoRascunho = abrirRascunho
 		painel.aoEfemera = func(destino string) {
 			cx, p, ok := interpretarAlvo(destino)
 			if !ok {
@@ -218,7 +228,7 @@ func main() {
 					return // é uma máquina cadastrada: o filtro já resolve
 				}
 			}
-			abrirConexao(w, bar, arq, cx, p)
+			abrirRascunho(cx, p)
 		}
 		painel.aoNova = func(grupo string) {
 			novaConexao(w, *ini, grupo, recarregarIni)

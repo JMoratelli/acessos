@@ -68,7 +68,7 @@ func (d *dlgHostKey) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(rotulo(th, fonteSans, spCorpo, texto, cor)),
+		layout.Rigid(paragrafo(th, fonteSans, spCorpo, texto, cor)),
 		espaco(10),
 		layout.Rigid(rotulo(th, fonteMono, spSecundario, d.erro.Tipo, tema.Sec)),
 		layout.Rigid(rotulo(th, fonteMono, spCorpo, d.erro.Impressao, tema.Texto)),

@@ -121,6 +121,9 @@ type dashTab struct {
 	aoMenuCard    func(cx conexoes.Conexao, pos image.Point)
 	aoNova        func(grupo string)
 	aoEfemera     func(destino string)
+	// aoRascunho abre um destino NÃO cadastrado (o card temporário da
+	// busca): quem trata pergunta as credenciais antes de conectar.
+	aoRascunho func(cx conexoes.Conexao, p conexoes.Protocolo)
 }
 
 func newDashTab(th *material.Theme, arq *conexoes.Arquivo, caminho string, abrir acaoAbrir, abertas func() int) *dashTab {
@@ -330,6 +333,9 @@ func (d *dashTab) Layout(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(d.hero),
 		layout.Rigid(d.barraFiltro),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return d.cardRascunho(gtx, termo)
+		}),
 		layout.Rigid(d.barraSelecao),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return d.lista.Layout(gtx, len(d.arvore), func(gtx layout.Context, i int) layout.Dimensions {
@@ -788,6 +794,59 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 	return dims
 }
 
+// cardRascunho é o card TEMPORÁRIO que aparece na busca quando o texto
+// digitado tem cara de destino e não de filtro ("10.1.1.99",
+// "zanthus@caixa02", "rdp serv-ad").
+//
+// Existe porque conectar num destino avulso já era possível — bastava dar
+// Enter na busca — mas ninguém descobre um atalho invisível. Como card,
+// com a MESMA fileira de ícones dos cards salvos, a ação fica onde o olho
+// já está: clica no protocolo e abre, sem cadastrar nada.
+func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensions {
+	cx, ok := alvoRascunho(termo)
+	if !ok {
+		return layout.Dimensions{}
+	}
+	larg := gtx.Dp(cardLargura)
+	return layout.Inset{Left: 14, Right: 14, Bottom: 10}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Pt(larg, larg)
+		gtx.Constraints.Max = image.Pt(larg, larg)
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Constraints.Min
+				sombra(gtx, size, cardRaio)
+				// borda na cor do assunto (e não a borda neutra dos cards
+				// salvos): é o que diz, sem legenda, que este card não
+				// está no inventário.
+				superficie(gtx, size, tema.Vidro2, tema.Azul, cardRaio)
+				return layout.Dimensions{Size: size}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = gtx.Constraints.Max
+				return layout.Inset{Top: 11, Bottom: 10, Left: 12, Right: 11}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(negrito(txt(d.th, fonteCond, spCardNome, cx.Host, tema.Texto)).Layout),
+						layout.Rigid(rotulo(d.th, fonteMono, spCardHost, "não cadastrado", tema.Sec)),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Dimensions{Size: gtx.Constraints.Min}
+						}),
+						layout.Rigid(rotulo(d.th, fonteMono, spCardMeta,
+							"sessão temporária", tema.Fraco)),
+						layout.Rigid(layout.Spacer{Height: 7}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return d.botoesCom(gtx, cx, func(p conexoes.Protocolo) {
+								if d.aoRascunho != nil {
+									d.aoRascunho(cx, p)
+								}
+							})
+						}),
+					)
+				})
+			}),
+		)
+	})
+}
+
 // meta são as linhas apagadas com o resumo de cada protocolo configurado
 // ("tela 5900 · encaixar · auto"), como no card do app original.
 func (d *dashTab) meta(gtx layout.Context, cx conexoes.Conexao) layout.Dimensions {
@@ -827,6 +886,15 @@ func (d *dashTab) meta(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 // ícone que aparece e some obriga a reler o cartão toda vez; posição fixa
 // se aprende e para de ser lida (gtk.md §6).
 func (d *dashTab) botoes(gtx layout.Context, cx conexoes.Conexao) layout.Dimensions {
+	return d.botoesCom(gtx, cx, nil)
+}
+
+// botoesCom é a fileira de ícones de protocolo. aoClicar != nil troca o
+// que o clique faz — é o que o card temporário usa para passar antes pelo
+// diálogo de credenciais, já que um destino não cadastrado não tem senha
+// guardada em lugar nenhum.
+func (d *dashTab) botoesCom(gtx layout.Context, cx conexoes.Conexao,
+	aoClicar func(conexoes.Protocolo)) layout.Dimensions {
 	var filhos []layout.FlexChild
 	for _, e := range protocolos {
 		e := e
@@ -842,7 +910,11 @@ func (d *dashTab) botoes(gtx layout.Context, cx conexoes.Conexao) layout.Dimensi
 			// tela (o protocolo padrão do corpo).
 			d.cliqueEmIcone = true
 			if d.travaAbrir == 0 {
-				d.abrirEm(cx, e.p, true)
+				if aoClicar != nil {
+					aoClicar(e.p)
+				} else {
+					d.abrirEm(cx, e.p, true)
+				}
 			}
 		}
 
