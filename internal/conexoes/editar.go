@@ -83,6 +83,27 @@ func chaveDaLinha(linha string) (chave, valor string, ok bool) {
 	return c, strings.TrimSpace(linha[i+1:]), true
 }
 
+// SalvarGeral grava chaves na seção [geral] (tema, fonte, caminho…),
+// criando a seção se ela ainda não existir. Sem cópia no histórico de
+// propósito: são preferências de interface, mexidas a cada clique, e
+// encher o histórico com elas afogaria as edições de conexão, que são o
+// que realmente importa poder desfazer.
+func SalvarGeral(caminho string, campos map[string]string) error {
+	linhas, err := lerLinhas(caminho)
+	if err != nil {
+		return err
+	}
+	if _, _, ok := faixaSecao(linhas, "geral"); !ok {
+		// [geral] vai no TOPO: é o cabeçalho do arquivo, e uma seção nova
+		// no fim ficaria depois das conexões, onde ninguém procura.
+		linhas = append([]string{"[geral]", ""}, linhas...)
+		if err := gravarAtomico(caminho, linhas); err != nil {
+			return err
+		}
+	}
+	return salvarSecao(caminho, "geral", "", campos)
+}
+
 // Remover apaga a seção inteira de uma conexão.
 func Remover(caminho, nome string) error {
 	guardarCopia(caminho, fmt.Sprintf("removeu %q", nome))
@@ -129,6 +150,12 @@ func Duplicar(caminho, nome, novoNome string) error {
 // remove a chave. Renomear a seção também é suportado (novoNome != "").
 func Salvar(caminho, nome, novoNome string, campos map[string]string) error {
 	guardarCopia(caminho, fmt.Sprintf("editou %q", nome))
+	return salvarSecao(caminho, nome, novoNome, campos)
+}
+
+// salvarSecao é o miolo do Salvar, sem o histórico — separado para o
+// SalvarGeral reusar a mesma edição linha a linha.
+func salvarSecao(caminho, nome, novoNome string, campos map[string]string) error {
 	linhas, err := lerLinhas(caminho)
 	if err != nil {
 		return err

@@ -153,6 +153,10 @@ func main() {
 		if arq.Geral["tema"] == "escuro" {
 			tema = temaEscuro
 		}
+		// [geral] fonte=0|1|2 — escala da interface (ver fonte.go).
+		if n, err := strconv.Atoi(arq.Geral["fonte"]); err == nil {
+			nivelFonte = n
+		}
 		aplicarTemaFlag()
 		destrancarCofre(arq)
 		abrir := func(cx conexoes.Conexao, p conexoes.Protocolo) {
@@ -416,6 +420,10 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			focoEmCampo.Store(false)
 			atualizarInibicao(activeTab())
 			gtx := app.NewContext(&ops, e)
+			// A escala da interface entra AQUI, antes de qualquer layout:
+			// tudo o que é medido em Dp ou Sp no quadro já nasce no
+			// tamanho escolhido, sem cada widget precisar saber disso.
+			gtx.Metric = escalaFonte(gtx.Metric)
 
 			// UM gradiente só, na janela inteira — lateral, abas e cards
 			// são translúcidos POR CIMA dele. Sem fundo variável não existe
@@ -475,6 +483,18 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 							}
 							if painel != nil && painel.arq != nil {
 								pedirCofre(w, painel.arq, caminhoINI, recarregarINI, nil)
+							}
+						},
+						// A+ cicla 0 → 1 → 2 → 0 e grava no .ini na hora:
+						// é preferência de quem usa, não da sessão.
+						trocarFonte: func() {
+							n := proximoNivelFonte()
+							if caminhoINI == "" {
+								return
+							}
+							if err := conexoes.SalvarGeral(caminhoINI,
+								map[string]string{"fonte": strconv.Itoa(n)}); err != nil {
+								fmt.Fprintln(os.Stderr, err)
 							}
 						},
 						trocarTema: func() {

@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.1" date="2026-09-12">
+      <description>
+        <p>Botao A+ na barra de titulo: tres tamanhos de interface, ciclando a cada clique e guardados no proprio conexoes.ini ([geral] fonte). Aumenta a interface inteira, nao so a letra, para quem enxerga mal poder ler os cards e os rotulos sem lupa.</p>
+        <p>Windows: o aplicativo passa a ser distribuido tambem como executavel e instalador, com VNC e RDP compilados junto. O instalador nao pede administrador e nao substitui a versao Linux, que segue sendo a principal.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-09-12">
       <description>
         <p>Aplicativo reescrito em Go, com a interface desenhada na GPU. O mesmo conexoes.ini, chaveiro.ini e snippets.ini de sempre — nada precisa ser migrado, e as duas versoes leem e escrevem os mesmos arquivos.</p>
