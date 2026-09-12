@@ -1,5 +1,7 @@
-# binários locais (o do app e os comandos de teste de cmd/)
+# binário do app. O padrão precisa da barra: sem ela, "acessos" casaria
+# também com cmd/acessos/ e o diretório do programa ficaria de fora.
 /acessos
+# binários dos comandos de teste manual de cada protocolo
 /initest
 /rdpview
 /sftptest
@@ -10,7 +12,7 @@
 # artefatos de empacotamento
 /build/
 /.flatpak-builder/
-# vendor é gerado pelo build.sh (go mod vendor) antes de empacotar: ele
-# existe para o build do Flatpak rodar OFFLINE, não para versionar 31 MB
-# de código de terceiros.
+# vendor é gerado pelo build.sh (go mod vendor) antes de empacotar: existe
+# para o build do Flatpak rodar OFFLINE, não para versionar 31 MB de
+# código de terceiros.
 /vendor/
