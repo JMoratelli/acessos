@@ -77,6 +77,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "não consegui preparar %s: %v\n", *ini, err)
 	}
 
+	// Log em arquivo: no Windows o app não tem stdout (ver log_windows.go).
+	// Vem antes de tudo o que pode falhar e depois do caminho do .ini,
+	// porque é ao lado dele que o arquivo mora.
+	iniciarLog(filepath.Dir(*ini))
+
 	filtroInicial = *filtro
 
 	w := new(app.Window)
@@ -419,6 +424,10 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
 			atualizarInibicao(activeTab())
+			// quem publica no clipboard do sistema é ESTE laço, nunca as
+			// goroutines das sessões — ver clipboard.go
+			marcarAbaAtiva(activeTab())
+			entregarClipboard()
 			gtx := app.NewContext(&ops, e)
 			// A escala da interface entra AQUI, antes de qualquer layout:
 			// tudo o que é medido em Dp ou Sp no quadro já nasce no
@@ -654,8 +663,7 @@ var (
 // Wayland que as sessões remotas usam (internal/grab) — o clipboard do
 // Gio não é confiável nesta pilha, é o mesmo motivo documentado lá.
 func gtxClipboard(w *app.Window, texto string) {
-	currentGrab.Load().SetClipboardText(texto)
-	w.Invalidate()
+	publicarClipboard(w, texto)
 }
 
 // Posição do ponteiro na JANELA, para ancorar menus abertos de qualquer

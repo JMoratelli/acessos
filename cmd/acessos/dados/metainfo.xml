@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.2" date="2026-09-12">
+      <description>
+        <p>Corrige a queda do aplicativo ao abrir muitas telas de uma vez (relatado com cerca de 30 VNCs): cada sessao anuncia o clipboard do servidor assim que conecta, e varias fazendo isso ao mesmo tempo, cada uma na sua thread, derrubavam o processo dentro da biblioteca de clipboard do Wayland. Agora a publicacao e sempre feita pelo laco da interface, e apenas pela aba que esta na tela — o que tambem impede uma sessao em segundo plano de roubar o que acabou de ser copiado.</p>
+        <p>Windows: o aplicativo passa a gravar log.txt e freerdp.log ao lado do conexoes.ini, guardando a execucao anterior em log.anterior.txt. Compilado como aplicativo grafico, o executavel nao tem para onde escrever, e uma conexao que falha vira "fica tentando e nao conecta" sem nenhuma pista — que foi exatamente o que aconteceu no primeiro teste de RDP em Windows.</p>
+      </description>
+    </release>
     <release version="2.0.1" date="2026-09-12">
       <description>
         <p>Botao A+ na barra de titulo: tres tamanhos de interface, ciclando a cada clique e guardados no proprio conexoes.ini ([geral] fonte). Aumenta a interface inteira, nao so a letra, para quem enxerga mal poder ler os cards e os rotulos sem lupa.</p>
