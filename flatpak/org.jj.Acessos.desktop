@@ -1,9 +1,14 @@
 [Desktop Entry]
 Type=Application
 Name=Acessos
-Comment=Acesso remoto às máquinas (VNC, RDP, SSH, arquivos)
-Exec=acessos.py
+GenericName=Acesso remoto a PDVs
+Comment=VNC, RDP, SSH e SFTP para o parque de PDVs
+Exec=acessos
 Icon=org.jj.Acessos
-Categories=Network;RemoteAccess;System;
 Terminal=false
-StartupNotify=true
+Categories=Network;RemoteAccess;System;
+Keywords=vnc;rdp;ssh;sftp;pdv;suporte;
+# Precisa bater com o app_id que o app publica no Wayland (app.Title/ID),
+# senão o ambiente não casa a janela com este arquivo e mostra o ícone
+# genérico de executável no dock.
+StartupWMClass=org.jj.Acessos
