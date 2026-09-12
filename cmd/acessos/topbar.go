@@ -33,6 +33,7 @@ type topBar struct {
 	cofre      widget.Clickable
 	chaveiro   widget.Clickable
 	tema       widget.Clickable
+	fonte      widget.Clickable
 	minimizar  widget.Clickable
 	maximizar  widget.Clickable
 	fechar     widget.Clickable
@@ -40,14 +41,15 @@ type topBar struct {
 }
 
 type acoesTopo struct {
-	menu       func()
-	recarregar func()
-	nova       func()
-	snippets   func()
-	ajustes    func()
-	abrirCofre func()
-	chaveiro   func()
-	trocarTema func()
+	menu        func()
+	recarregar  func()
+	nova        func()
+	snippets    func()
+	ajustes     func()
+	abrirCofre  func()
+	chaveiro    func()
+	trocarTema  func()
+	trocarFonte func()
 }
 
 func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, colunaLateral int, a acoesTopo) layout.Dimensions {
@@ -74,6 +76,9 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 	}
 	for t.tema.Clicked(gtx) {
 		a.trocarTema()
+	}
+	for t.fonte.Clicked(gtx) {
+		a.trocarFonte()
 	}
 	for t.minimizar.Clicked(gtx) {
 		w.Perform(system.ActionMinimize)
@@ -182,6 +187,13 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return pilula(gtx, th, &t.tema, icons.ImageBrightness6, "tema")
+			}),
+			// A+ fica junto do tema porque os dois são a mesma pergunta:
+			// como o app se apresenta. O rótulo mostra o nível corrente
+			// (A+, A++) para o clique não ser adivinhação — no nível 0 ele
+			// é só "A+", o convite a aumentar.
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return pilula(gtx, th, &t.fonte, icons.EditorFormatSize, rotuloFonte())
 			}),
 			layout.Rigid(layout.Spacer{Width: 10}.Layout),
 			// Botões de janela com as MESMAS métricas das pílulas — assim a
