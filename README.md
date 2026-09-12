@@ -3,90 +3,69 @@
 Gerenciador de acesso remoto às máquinas — VNC, RDP, SSH e transferência de
 arquivos, em abas.
 
+A partir da **2.0** o aplicativo é escrito em **Go**, com interface
+desenhada na GPU. O que ele lê e escreve não mudou: os mesmos
+`conexoes.ini`, `chaveiro.ini` e `snippets.ini` de sempre, no mesmo lugar.
+Instalar a 2.0 por cima da 1.x não pede migração nenhuma.
+
+## A versão em Python (1.x)
+
+Ela não foi apagada. O código continua acessível de duas formas:
+
+```bash
+git checkout v1.2.2     # a última versão publicada em Python
+git checkout 1.x        # a linha de manutenção, caso precise de correção
+```
+
+`master` segue a versão nova. É o arranjo usual quando um projeto troca de
+implementação: a linha antiga vive na sua própria branch e nas tags, sem
+uma cópia morta ocupando espaço na árvore atual — cópia duplicada envelhece
+sem ninguém perceber e não tem histórico próprio.
+
 ## Instalar
 
 ```bash
-./instalar.sh
+./build.sh --instalar     # constrói o Flatpak e instala para o usuário
 ```
 
-Funciona em **Arch** e **Fedora**. Instala tudo em `~/.local`, sem Flatpak,
-sem AppImage, sem container. Só pede `sudo` para os pacotes do sistema.
+Depois: pelo menu de aplicativos, ou `flatpak run org.jj.Acessos`.
 
-Depois: `acessos` no terminal, ou pelo menu de aplicativos.
-
-| Opção | O que faz |
+| Comando | O que faz |
 |---|---|
-| `./instalar.sh` | instala ou atualiza |
-| `./instalar.sh --sem-rdp` | pula o rdpshim; RDP fica indisponível (sem fallback) |
-| `./instalar.sh --verificar` | testa o que já está instalado |
-| `./instalar.sh --remover` | desinstala (preserva a configuração) |
+| `./build.sh` | constrói e gera `build/org.jj.Acessos-<versão>.flatpak` |
+| `./build.sh --instalar` | constrói, gera o bundle e instala ou atualiza |
+| `./build.sh --limpar` | apaga `build/` inteiro |
+
+Para desenvolver sem empacotar, com as bibliotecas do sistema
+(`libvncclient`, `freerdp3`, `wayland-client`, `xkbcommon`):
+
+```bash
+go build -o acessos ./cmd/acessos && ./acessos
+```
+
+Sem argumento ele abre o inventário padrão
+(`$XDG_CONFIG_HOME/acessos/conexoes.ini`), criando um exemplo comentado na
+primeira execução. `-ini` aponta para outro arquivo.
 
 ## Estrutura
 
 ```
-instalar.sh        instalação completa
-python/            a aplicação
-  acessos.py         principal
-  vncwidget.py       VNC próprio (libvncclient)
-  rdpwidget.py       RDP próprio (libfreerdp3)
-  rdp.py             reexporta rdpwidget como "rdp" (nome esperado pelo app)
-  sftp.py            transferência de arquivos
-  cofre.py           senhas cifradas
-src/
-  vncshim.c          ponte C entre o Python e a libvncclient
-  rdpshim.c          ponte C entre o Python e a libfreerdp3
-icones/
-  acessos.svg
+cmd/acessos/          a aplicação (interface, abas, diálogos)
+internal/
+  vnc/ rdp/           clientes próprios, cgo sobre libvncclient e libfreerdp3
+  grab/               teclado, área de transferência e inibição de atalhos
+                      por Wayland direto
+  conexoes/           leitura e gravação cirúrgica do conexoes.ini
+  cofre/ chaveiro/    senhas cifradas e credenciais reutilizáveis
+  massa/              execução em lote (portado do Mass SSH Executer)
+  hostkey/ vida/      identidade do servidor SSH e sonda de vida
+third_party/gio/      Gio com três patches — veja PATCH.md
+flatpak/              manifesto, .desktop e metainfo
 ```
 
-## O que é compilado, e por quê
+Os comandos em `cmd/` que não são `acessos` são ferramentas de teste
+manual de cada protocolo, usadas durante o porte.
 
-**vncshim** — o gtk-vnc congela a interface por 2 a 3 segundos após
-repinturas grandes. O mesmo defeito aparece no GNOME Connections (que usa a
-mesma biblioteca) e não aparece no Remmina (que usa libvncclient). Este
-projeto usa libvncclient direto, através de um shim em C.
+## Licença
 
-**rdpshim** — mesma ideia, para RDP: fala direto com a libfreerdp3, sem
-GObject Introspection e sem processo externo. Embute em qualquer backend
-(X11 ou Wayland), pede confirmação do operador para certificado novo ou
-alterado (nunca aceita calado, estilo SSH), sincroniza clipboard de texto e
-ajusta a resolução dinamicamente durante a sessão.
-
-Os dois shims precisam ser **compilados na máquina**: as structs internas
-das bibliotecas (`rfbClient`, `rdpSettings`) têm blocos condicionais de
-compilação, e um binário feito contra outra build teria os offsets
-errados — o que causa corrupção de memória silenciosa.
-
-Não há mais segundo motor de RDP como reserva (o projeto já teve dois:
-gtk-frdp e, antes disso, xfreerdp externo via `Gtk.Socket`) — sem o
-rdpshim compilado, a aba de RDP simplesmente avisa que está indisponível.
-
-## Notas de uso
-
-**Wayland nativo é a configuração recomendada.** O congelamento da interface
-do VNC só acontece sob XWayland; em Wayland nativo não ocorre.
-
-**O toggle `x11` no INI não afeta mais o RDP** (ele embute em qualquer
-backend). A escolha entre X11/Wayland passou a ser só sobre captura de
-teclado: XWayland dá captura total (Super, Alt+Tab inclusos), Wayland
-nativo é nítido em qualquer escala mas a captura pode ficar parcial,
-dependendo do compositor.
-
-**Certificado por IP:** conectar por IP em servidor cujo certificado foi
-emitido para um nome (`redemachado.local`) aciona o diálogo de confirmação
-mesmo assim (em vez de recusar direto) — confira a impressão digital antes
-de aceitar.
-
-## Diagnóstico
-
-```bash
-ACESSOS_PULSO=1 acessos          # avisa se o laço de eventos travar
-kill -USR1 $(pgrep -f acessos.py)  # despeja a pilha Python, sem matar
-```
-
-Para ver os frames C, que o `faulthandler` não mostra:
-
-```bash
-pip install --user py-spy
-py-spy dump --native --pid $(pgrep -f acessos.py)
-```
+GNU GPLv3 — veja [LICENSE](LICENSE).

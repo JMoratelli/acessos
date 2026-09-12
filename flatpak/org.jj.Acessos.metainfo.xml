@@ -18,13 +18,19 @@
     </p>
     <p>Recursos:</p>
     <ul>
-      <li>VNC, RDP e SSH em abas na mesma janela</li>
-      <li>RDP embutido em qualquer backend (X11 ou Wayland), com ajuste
-        dinamico de resolucao e clipboard de texto sincronizado</li>
-      <li>Certificado sempre confirmado pelo operador (estilo SSH),
-        nunca aceito automaticamente</li>
-      <li>Transferencia de arquivos via SFTP</li>
-      <li>Senhas salvas cifradas (cofre com Argon2/PBKDF2)</li>
+      <li>VNC, RDP, SSH e SFTP em abas na mesma janela</li>
+      <li>RDP embutido com ajuste dinamico de resolucao e clipboard de
+        texto sincronizado</li>
+      <li>Identidade do servidor sempre confirmada pelo operador —
+        certificado RDP e chave SSH pelo known_hosts, nunca aceitos
+        automaticamente</li>
+      <li>Terminal SSH embutido com biblioteca de snippets ao lado</li>
+      <li>Transferencia de arquivos via SFTP, com arrastar entre painel
+        local e remoto</li>
+      <li>Execucao de comandos em varias maquinas de uma vez, com canario
+        obrigatorio de 3 maquinas antes do lote</li>
+      <li>Senhas salvas cifradas (cofre) e credenciais reutilizaveis
+        apontadas por alias (chaveiro)</li>
     </ul>
   </description>
   <launchable type="desktop-id">org.jj.Acessos.desktop</launchable>
@@ -58,6 +64,13 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.0" date="2026-09-12">
+      <description>
+        <p>Aplicativo reescrito em Go, com a interface desenhada na GPU. O mesmo conexoes.ini, chaveiro.ini e snippets.ini de sempre — nada precisa ser migrado, e as duas versoes leem e escrevem os mesmos arquivos.</p>
+        <p>O que muda no uso: janela com decoracao propria (a barra do sistema deixa de gastar uma faixa inteira), abas com selo colorido por protocolo, painel com sonda de vida por maquina, busca que tambem conecta em destino digitado sem cadastrar, e execucao em lote com decisao tomada em faixa dentro da propria aba, sem dialogo bloqueando a lista.</p>
+        <p>Por dentro: binario unico com as fontes IBM Plex embutidas (aparencia identica em qualquer maquina), gravacao do INI linha a linha com historico das 20 ultimas versoes, e verificacao de chave SSH contra o known_hosts do proprio usuario.</p>
+      </description>
+    </release>
     <release version="1.2.2" date="2026-09-11">
       <description>
         <p>Corrige a linha nao selecionada da lista no seletor "Usar do chaveiro": nunca teve fundo definido no CSS (so :selected e :hover existiam), e ficava com o branco padrao do GTK nos dois temas — invisivel no tema claro por coincidencia, mas quase ilegivel no escuro ao lado da credencial selecionada.</p>
