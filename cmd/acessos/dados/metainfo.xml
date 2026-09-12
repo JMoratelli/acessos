@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.jj.Acessos</id>
+  <name>Acessos</name>
+  <summary>Gerenciador de acesso remoto a maquinas em abas</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.jmoratelli">
+    <name>Jurandir Moratelli</name>
+  </developer>
+  <description>
+    <p>
+      Acessos reune VNC, RDP, SSH e transferencia de arquivos por SFTP em
+      abas, com clientes proprios de RDP (sobre libfreerdp3) e VNC (sobre
+      libvncclient), ambos falando com a biblioteca C direto — sem GObject
+      Introspection nem processos externos — para evitar os congelamentos
+      de interface do gtk-vnc/gtk-frdp.
+    </p>
+    <p>Recursos:</p>
+    <ul>
+      <li>VNC, RDP, SSH e SFTP em abas na mesma janela</li>
+      <li>RDP embutido com ajuste dinamico de resolucao e clipboard de
+        texto sincronizado</li>
+      <li>Identidade do servidor sempre confirmada pelo operador —
+        certificado RDP e chave SSH pelo known_hosts, nunca aceitos
+        automaticamente</li>
+      <li>Terminal SSH embutido com biblioteca de snippets ao lado</li>
+      <li>Transferencia de arquivos via SFTP, com arrastar entre painel
+        local e remoto</li>
+      <li>Execucao de comandos em varias maquinas de uma vez, com canario
+        obrigatorio de 3 maquinas antes do lote</li>
+      <li>Senhas salvas cifradas (cofre) e credenciais reutilizaveis
+        apontadas por alias (chaveiro)</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.jj.Acessos.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/principal.png</image>
+      <caption>Painel principal com o resumo dos acessos cadastrados</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/vnc.png</image>
+      <caption>Sessao VNC embutida em aba</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/ssh.png</image>
+      <caption>Terminal SSH embutido com biblioteca de snippets</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/sftp.png</image>
+      <caption>Transferencia de arquivos via SFTP em duas colunas</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/execucao-massa.png</image>
+      <caption>Execucao de comandos em varias maquinas de uma vez</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/JMoratelli/acessos/master/screenshots/snippets.png</image>
+      <caption>Editor de snippets de comandos reutilizaveis</caption>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://github.com/JMoratelli/acessos</url>
+  <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.0.0" date="2026-09-12">
+      <description>
+        <p>Aplicativo reescrito em Go, com a interface desenhada na GPU. O mesmo conexoes.ini, chaveiro.ini e snippets.ini de sempre — nada precisa ser migrado, e as duas versoes leem e escrevem os mesmos arquivos.</p>
+        <p>O que muda no uso: janela com decoracao propria (a barra do sistema deixa de gastar uma faixa inteira), abas com selo colorido por protocolo, painel com sonda de vida por maquina, busca que tambem conecta em destino digitado sem cadastrar, e execucao em lote com decisao tomada em faixa dentro da propria aba, sem dialogo bloqueando a lista.</p>
+        <p>Por dentro: binario unico com as fontes IBM Plex embutidas (aparencia identica em qualquer maquina), gravacao do INI linha a linha com historico das 20 ultimas versoes, e verificacao de chave SSH contra o known_hosts do proprio usuario.</p>
+      </description>
+    </release>
+    <release version="1.2.2" date="2026-09-11">
+      <description>
+        <p>Corrige a linha nao selecionada da lista no seletor "Usar do chaveiro": nunca teve fundo definido no CSS (so :selected e :hover existiam), e ficava com o branco padrao do GTK nos dois temas — invisivel no tema claro por coincidencia, mas quase ilegivel no escuro ao lado da credencial selecionada.</p>
+      </description>
+    </release>
+    <release version="1.2.1" date="2026-09-11">
+      <description>
+        <p>Corrige o texto ilegivel na credencial selecionada ao usar "Usar do chaveiro": o fundo da linha selecionada e invertido de proposito, mas a cor do texto nao acompanhava — ficava preto sobre preto no tema claro e branco sobre branco no escuro.</p>
+      </description>
+    </release>
+    <release version="1.2.0" date="2026-09-11">
+      <description>
+        <p>Chaveiro de senhas: uma credencial e cadastrada uma vez e apontada por varias conexoes com "!nome" no usuario e/ou na senha, em vez de repetida maquina a maquina. Editar a credencial no chaveiro vale para todas as conexoes que a referenciam. O cofre (sal e senha mestra) passou a morar no chaveiro.ini, com migracao automatica do conexoes.ini — mesma senha mestra, nenhuma senha recifrada.</p>
+        <p>VNC: o aplicativo passa a dizer por que a conexao falhou, em vez de uma unica mensagem para tudo. Distingue host inacessivel, senha recusada e servidor que exige usuario alem da senha (UltraVNC MS-Logon, VeNCrypt) — neste caso pede o usuario e tenta de novo. Reconhece tambem a recusa por tentativas repetidas e para de reconectar sozinho, que so aumentava o tempo de bloqueio.</p>
+        <p>Correcoes: divisorias entre secoes que nunca apareciam, selecao e realce de listas sem retorno visual, vazamento de memoria a cada tentativa de conexao VNC, e a instalacao nativa que podia sair sem o modulo do cofre.</p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2026-09-10">
+      <description>
+        <p>Novo motor de RDP proprio (rdpshim), falando direto com libfreerdp3 sem GObject Introspection — substitui o gtk-frdp por completo, sem segundo motor de reserva. Embute em qualquer backend (X11 ou Wayland), ajusta a resolucao dinamicamente durante a sessao, sincroniza clipboard de texto e sempre pede confirmacao do operador para certificado novo ou alterado (nunca aceita calado). Corrige tambem o rotulo de porta errado exibido na aba de RDP.</p>
+      </description>
+    </release>
+    <release version="1.0.7" date="2026-09-09">
+      <description>
+        <p>Corrige o rodape da tela inicial, que nao mostrava a versao instalada, e reorganiza a tela de Ajustes em secoes recolhiveis.</p>
+      </description>
+    </release>
+    <release version="1.0.6" date="2026-09-09">
+      <description>
+        <p>Mostra a versao instalada no rodape da tela inicial e adiciona um dialogo Sobre, aberto ao clicar nela.</p>
+      </description>
+    </release>
+    <release version="1.0.5" date="2026-09-09">
+      <description>
+        <p>Corrige o indicador de vida das maquinas (ping), que nao funcionava dentro do Flatpak por falta do binario ping no runtime.</p>
+      </description>
+    </release>
+    <release version="1.0.4" date="2026-09-09">
+      <description>
+        <p>Muda a licenca para GNU GPLv3 e adiciona verificacao e instalacao automatica de atualizacoes via Flatpak.</p>
+      </description>
+    </release>
+    <release version="1.0.3" date="2026-09-09">
+      <description>
+        <p>Adiciona manifest para submissao ao Flathub e ajustes finais de empacotamento.</p>
+      </description>
+    </release>
+    <release version="1.0.1" date="2026-09-09">
+      <description>
+        <p>Ajustes de empacotamento para submissao ao Flathub.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-09-09">
+      <description>
+        <p>Primeira versao empacotada em Flatpak.</p>
+      </description>
+    </release>
+  </releases>
+</component>
