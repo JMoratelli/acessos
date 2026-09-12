@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 // Package rdp expõe um cliente RDP em Go por cima do shim C existente
 // (rdpshim.c), que por sua vez fala com libfreerdp3.
@@ -6,6 +6,13 @@ package rdp
 
 /*
 #cgo pkg-config: freerdp3 freerdp-client3 winpr3
+// -D__STDC_NO_THREADS__: o winpr/platform.h inclui <threads.h> quando o
+// compilador diz suportar C11 threads, e o MinGW-w64 anuncia suporte sem
+// trazer o cabeçalho. Achado no porte Windows do Carlos-Daniel-Dev, que
+// esbarrou no mesmo erro.
+// -lws2_32: o Winsock não é implícito como no Linux.
+#cgo windows CFLAGS: -D__STDC_NO_THREADS__
+#cgo windows LDFLAGS: -lws2_32
 #include <stdlib.h>
 #include "rdpshim.h"
 

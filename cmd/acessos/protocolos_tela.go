@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 package main
 
@@ -8,8 +8,8 @@ import (
 	"gioui.org/app"
 )
 
-// novaAbaTela cria a aba de tela remota. No Linux os dois protocolos
-// existem de verdade, sobre libvncclient e libfreerdp3.
+// novaAbaTela cria a aba de tela remota. Em Linux e Windows os dois
+// protocolos existem de verdade, sobre libvncclient e libfreerdp3.
 func novaAbaTela(w *app.Window, spec map[string]string) (Tab, error) {
 	switch spec["type"] {
 	case "vnc":
