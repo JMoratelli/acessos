@@ -123,11 +123,12 @@ wine "$ISCC" "/DAppVersion=$VERSAO" "/O$PWD/$SAIDA" scripts/instalador.iss >"$SA
     || { tail -20 "$SAIDA/iscc.log"; exit 1; }
 
 # 7. sha256 do instalador: o atualizador do Windows (internal/atualizador)
-#    baixa esse arquivo à parte antes de confiar no .exe. O nome segue o
-#    do próprio instalador com ".sha256" no fim — é assim que o
-#    atualizador acha os dois entre os anexos da release no GitHub.
+#    baixa o SHA256SUMS.txt anexado à release antes de confiar no .exe.
+#    Mesmo nome e formato de `sha256sum` já usados nas releases
+#    anteriores (que hoje juntam ali a soma do bundle Flatpak também —
+#    junte as duas linhas na hora de publicar).
 INSTALADOR="$SAIDA/AcessosSetup-$VERSAO.exe"
-sha256sum "$INSTALADOR" | cut -d' ' -f1 > "$INSTALADOR.sha256"
+(cd "$SAIDA" && sha256sum "$(basename "$INSTALADOR")") > "$SAIDA/SHA256SUMS.txt"
 
 echo "instalador: $INSTALADOR"
-echo "sha256:     $INSTALADOR.sha256 ($(cat "$INSTALADOR.sha256"))"
+echo "somas:      $SAIDA/SHA256SUMS.txt ($(cat "$SAIDA/SHA256SUMS.txt"))"

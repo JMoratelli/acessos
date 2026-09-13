@@ -103,29 +103,27 @@ func Checar(versaoAtual string) (*Release, error) {
 	}
 
 	if runtime.GOOS == "windows" {
-		var exeNome, exeURL, somaURL string
+		var exeNome, exeURL, somasURL string
 		for _, a := range dado.Assets {
 			if strings.HasPrefix(a.Nome, "AcessosSetup-") && strings.HasSuffix(a.Nome, ".exe") {
 				exeNome, exeURL = a.Nome, a.URL
 			}
-		}
-		if exeURL == "" {
-			return nil, nil
-		}
-		for _, a := range dado.Assets {
-			if a.Nome == exeNome+".sha256" {
-				somaURL = a.URL
+			if a.Nome == "SHA256SUMS.txt" {
+				somasURL = a.URL
 			}
 		}
-		if somaURL == "" {
-			// Sem hash publicado não há como conferir o instalador antes
-			// de rodar — melhor não oferecer do que baixar um .exe às
-			// cegas.
+		if exeURL == "" || somasURL == "" {
 			return nil, nil
 		}
-		soma, err := baixarTexto(somaURL)
+		soma, err := acharSoma(somasURL, exeNome)
 		if err != nil {
 			return nil, err
+		}
+		if soma == "" {
+			// Sem hash publicado para este arquivo não há como conferir o
+			// instalador antes de rodar — melhor não oferecer do que
+			// baixar um .exe às cegas.
+			return nil, nil
 		}
 		return &Release{Tag: dado.Tag, Bundle: exeURL, Sha256: soma, Notas: dado.Corpo}, nil
 	}
@@ -138,10 +136,12 @@ func Checar(versaoAtual string) (*Release, error) {
 	return nil, nil
 }
 
-// baixarTexto lê um anexo pequeno de texto (o .sha256 publicado junto do
-// instalador). O formato usual de `sha256sum` é "hash  nomedoarquivo" —
-// só o primeiro campo interessa.
-func baixarTexto(url string) (string, error) {
+// acharSoma lê o SHA256SUMS.txt anexado à release — uma linha por
+// arquivo, no formato do próprio `sha256sum` ("hash  nome", opcionalmente
+// com "*" antes do nome para modo binário) — e devolve o hash da linha
+// que casa com nomeArquivo. String vazia (sem erro) quando o arquivo não
+// aparece ali.
+func acharSoma(url, nomeArquivo string) (string, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", err
@@ -156,12 +156,20 @@ func baixarTexto(url string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub respondeu %s", resp.Status)
 	}
-	corpo, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	corpo, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
 		return "", err
 	}
-	campo, _, _ := strings.Cut(strings.TrimSpace(string(corpo)), " ")
-	return strings.ToLower(campo), nil
+	for _, linha := range strings.Split(string(corpo), "\n") {
+		campos := strings.Fields(linha)
+		if len(campos) != 2 {
+			continue
+		}
+		if strings.TrimPrefix(campos[1], "*") == nomeArquivo {
+			return strings.ToLower(campos[0]), nil
+		}
+	}
+	return "", nil
 }
 
 // MaisNova compara versões tolerando "v" na frente e sufixo de

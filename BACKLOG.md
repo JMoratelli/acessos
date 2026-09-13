@@ -63,8 +63,9 @@ atualizador tem o que fazer na plataforma atual.
 Mecânica no Windows:
 
 - `Checar` procura o anexo `AcessosSetup-X.Y.Z.exe` da release mais nova
-  e o `.sha256` publicado ao lado (mesmo nome + `.sha256`); sem os dois,
-  não oferece a atualização — não há como baixar o instalador às cegas;
+  e a linha correspondente no `SHA256SUMS.txt` publicado junto (mesmo
+  arquivo de somas que as releases já anexam); sem os dois, não oferece
+  a atualização — não há como baixar o instalador às cegas;
 - `Instalar` baixa para a pasta temporária do usuário, confere o sha256
   e roda `/SILENT /NORESTART`, sem esperar terminar: o instalador vai
   substituir o próprio `.exe` que está rodando, então quem tem que
@@ -73,14 +74,12 @@ Mecânica no Windows:
   `CloseApplications`/`RestartApplications` (Restart Manager fecha o
   processo, substitui o arquivo e reabre sozinho — já eram o padrão do
   Inno 6, mas ficaram explícitos);
-- `scripts/build-windows.sh` gera o `.sha256` do instalador depois de
-  compilá-lo.
+- `scripts/build-windows.sh` gera o `SHA256SUMS.txt` do instalador
+  depois de compilá-lo — junte com a linha do bundle Flatpak na hora de
+  publicar, do jeito que a release já fazia.
 
 Falta: **testar de ponta a ponta no Windows** (o Restart Manager fechando
-e reabrindo o processo é a parte que não dá pra validar do Linux) e
-lembrar de subir os dois arquivos (`AcessosSetup-X.Y.Z.exe` e o
-`.sha256`) como anexos da release no GitHub — nada automatiza esse
-upload ainda.
+e reabrindo o processo é a parte que não dá pra validar do Linux).
 
 ## 4. Ícones no Windows
 
