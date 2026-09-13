@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.4" date="2026-09-12">
+      <description>
+        <p>Terminal SSH: selecionar texto com o mouse. Arrastar marca o trecho, Ctrl+Shift+C copia so o que esta marcado (sem marcacao, segue copiando a tela inteira) e Ctrl+Shift+V cola. Antes so dava para copiar a tela toda, o que obrigava a limpar o texto na mao para mandar um erro num chamado.</p>
+        <p>SFTP: clicar num arquivo agora o marca, e o item marcado aparece destacado. Antes o clique simples nao fazia nada e so Ctrl+clique marcava — sem nenhuma pista disso na tela. Ctrl+clique continua somando e tirando da selecao, e dois cliques numa pasta entram nela.</p>
+        <p>SFTP: corrige a queda ao entrar numa pasta com menos arquivos que a anterior. A lista de botoes era trocada no meio do laco que a estava percorrendo, e a leitura da pasta remota, que roda em segundo plano, escrevia essa mesma lista enquanto a tela a lia. Agora toda troca de conteudo acontece no laco da interface.</p>
+        <p>O menu lateral volta como ficou: escondido, se estava escondido. A preferencia fica no [geral] lateral do proprio conexoes.ini, a mesma chave do aplicativo antigo — quem ja usava com a lateral fechada encontra a lateral fechada.</p>
+      </description>
+    </release>
     <release version="2.0.3" date="2026-09-12">
       <description>
         <p>Corrige a queda do aplicativo ao mexer no clipboard de uma sessao remota (Ctrl+X num RDP, ou abrir muitas telas de uma vez): quando outro programa assumia o clipboard, o objeto do Wayland era liberado mas continuava referenciado aqui, e a publicacao seguinte usava memoria ja devolvida.</p>
