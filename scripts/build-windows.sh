@@ -121,4 +121,13 @@ fi
 echo ">> compilando o instalador"
 wine "$ISCC" "/DAppVersion=$VERSAO" "/O$PWD/$SAIDA" scripts/instalador.iss >"$SAIDA/iscc.log" 2>&1 \
     || { tail -20 "$SAIDA/iscc.log"; exit 1; }
-echo "instalador: $SAIDA/AcessosSetup-$VERSAO.exe"
+
+# 7. sha256 do instalador: o atualizador do Windows (internal/atualizador)
+#    baixa esse arquivo à parte antes de confiar no .exe. O nome segue o
+#    do próprio instalador com ".sha256" no fim — é assim que o
+#    atualizador acha os dois entre os anexos da release no GitHub.
+INSTALADOR="$SAIDA/AcessosSetup-$VERSAO.exe"
+sha256sum "$INSTALADOR" | cut -d' ' -f1 > "$INSTALADOR.sha256"
+
+echo "instalador: $INSTALADOR"
+echo "sha256:     $INSTALADOR.sha256 ($(cat "$INSTALADOR.sha256"))"

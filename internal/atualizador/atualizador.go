@@ -1,19 +1,27 @@
-// Package atualizador checa se há versão nova no GitHub e instala o
-// bundle .flatpak por cima, reabrindo o app.
+// Package atualizador checa se há versão nova no GitHub e instala por
+// cima, reabrindo o app — bundle .flatpak no Linux, instalador Inno
+// Setup no Windows.
 //
-// Mecânica portada do atualizador.py, com as mesmas três decisões:
+// Mecânica portada do atualizador.py, com as mesmas decisões de fundo:
 //
-//  1. Só age DENTRO do Flatpak. Fora dele não há nem versão instalada
-//     para comparar nem pacote para reinstalar — quem instalou por outro
-//     caminho atualiza por aquele caminho.
+//  1. No Flatpak, só age DENTRO do sandbox. Fora dele não há nem versão
+//     instalada para comparar nem pacote para reinstalar — quem instalou
+//     por outro caminho atualiza por aquele caminho. No Windows não há
+//     essa distinção: qualquer instalação feita pelo instalador serve.
 //  2. Não usa "flatpak update": os releases são bundles soltos anexados à
-//     release do GitHub, não um repositório OSTree.
-//  3. O download vai para o cache do app, que é um caminho REAL do $HOME
-//     do host — tanto este processo quanto o "flatpak install" rodado no
-//     host enxergam o mesmo arquivo pelo mesmo caminho.
+//     release do GitHub, não um repositório OSTree. No Windows, da mesma
+//     forma, o anexo é o `.exe` do Inno Setup, não um feed de update.
+//  3. No Flatpak o download vai para o cache do app, um caminho REAL do
+//     $HOME do host — tanto este processo quanto o "flatpak install"
+//     rodado no host enxergam o mesmo arquivo pelo mesmo caminho. No
+//     Windows o download vai para a pasta temporária do usuário e é
+//     conferido por sha256 antes de rodar, já que ali não há sandbox
+//     nenhum policiando o que se executa.
 package atualizador
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +45,8 @@ const (
 // Release é o que a interface precisa mostrar e usar.
 type Release struct {
 	Tag    string
-	Bundle string // URL do .flatpak anexado
+	Bundle string // URL do .flatpak (Linux) ou do AcessosSetup-X.Y.Z.exe (Windows)
+	Sha256 string // só no Windows: hash publicado junto do instalador
 	Notas  string
 }
 
@@ -45,6 +55,16 @@ type Release struct {
 func EmFlatpak() bool {
 	_, err := os.Stat("/.flatpak-info")
 	return err == nil
+}
+
+// Suportado diz se este pacote sabe agir na plataforma atual: dentro do
+// Flatpak no Linux, ou em qualquer instalação no Windows — lá não existe
+// sandbox para checar, o instalador silencioso resolve sozinho.
+func Suportado() bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return EmFlatpak()
 }
 
 // Checar consulta a release mais recente. Devolve nil quando não há nada
@@ -81,12 +101,67 @@ func Checar(versaoAtual string) (*Release, error) {
 	if dado.Tag == "" || !MaisNova(dado.Tag, versaoAtual) {
 		return nil, nil
 	}
+
+	if runtime.GOOS == "windows" {
+		var exeNome, exeURL, somaURL string
+		for _, a := range dado.Assets {
+			if strings.HasPrefix(a.Nome, "AcessosSetup-") && strings.HasSuffix(a.Nome, ".exe") {
+				exeNome, exeURL = a.Nome, a.URL
+			}
+		}
+		if exeURL == "" {
+			return nil, nil
+		}
+		for _, a := range dado.Assets {
+			if a.Nome == exeNome+".sha256" {
+				somaURL = a.URL
+			}
+		}
+		if somaURL == "" {
+			// Sem hash publicado não há como conferir o instalador antes
+			// de rodar — melhor não oferecer do que baixar um .exe às
+			// cegas.
+			return nil, nil
+		}
+		soma, err := baixarTexto(somaURL)
+		if err != nil {
+			return nil, err
+		}
+		return &Release{Tag: dado.Tag, Bundle: exeURL, Sha256: soma, Notas: dado.Corpo}, nil
+	}
+
 	for _, a := range dado.Assets {
 		if strings.HasSuffix(a.Nome, ".flatpak") {
 			return &Release{Tag: dado.Tag, Bundle: a.URL, Notas: dado.Corpo}, nil
 		}
 	}
 	return nil, nil
+}
+
+// baixarTexto lê um anexo pequeno de texto (o .sha256 publicado junto do
+// instalador). O formato usual de `sha256sum` é "hash  nomedoarquivo" —
+// só o primeiro campo interessa.
+func baixarTexto(url string) (string, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Acessos-Atualizador")
+	cli := &http.Client{Timeout: tempoRede}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub respondeu %s", resp.Status)
+	}
+	corpo, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return "", err
+	}
+	campo, _, _ := strings.Cut(strings.TrimSpace(string(corpo)), " ")
+	return strings.ToLower(campo), nil
 }
 
 // MaisNova compara versões tolerando "v" na frente e sufixo de
@@ -128,9 +203,17 @@ func partes(v string) []int {
 	return out
 }
 
-// Instalar baixa o bundle e reinstala por cima, deixando uma instância
-// nova em pé. Quem chama deve encerrar a janela atual logo depois.
+// Instalar baixa o pacote da release e reinstala por cima, deixando uma
+// instância nova em pé. Quem chama deve encerrar a janela atual logo
+// depois.
 func Instalar(r *Release, progresso func(float64)) error {
+	if runtime.GOOS == "windows" {
+		return instalarWindows(r, progresso)
+	}
+	return instalarFlatpak(r, progresso)
+}
+
+func instalarFlatpak(r *Release, progresso func(float64)) error {
 	destino := filepath.Join(cacheDir(), "atualizacao.flatpak")
 	if err := os.MkdirAll(filepath.Dir(destino), 0o700); err != nil {
 		return err
@@ -151,6 +234,50 @@ func Instalar(r *Release, progresso func(float64)) error {
 
 	// A instância nova precisa sobreviver a esta, que vai sair em seguida.
 	return exec.Command("flatpak-spawn", "--host", "flatpak", "run", AppID).Start()
+}
+
+// instalarWindows baixa o AcessosSetup-X.Y.Z.exe, confere o sha256
+// publicado junto da release e dispara a instalação silenciosa.
+//
+// Não espera o instalador terminar (Start, não Run): o instalador vai
+// substituir ESTE .exe, que está em execução agora — o Inno Setup (com
+// CloseApplications/RestartApplications ligados no .iss) usa o Restart
+// Manager do Windows para fechar o processo atual, sobrescrever o
+// arquivo e reabrir sozinho. Ficar esperando aqui seria esperar o
+// processo que está esperando morrer.
+func instalarWindows(r *Release, progresso func(float64)) error {
+	destino := filepath.Join(os.TempDir(), "AcessosSetup-"+r.Tag+".exe")
+	if err := baixar(r.Bundle, destino, progresso); err != nil {
+		return fmt.Errorf("falha ao baixar a atualização: %w", err)
+	}
+
+	if err := conferirSha256(destino, r.Sha256); err != nil {
+		os.Remove(destino)
+		return err
+	}
+
+	// /SILENT (não /VERYSILENT) deixa a barra do próprio instalador
+	// visível — o app já vai fechar em seguida, então não custa mostrar
+	// o que está rodando.
+	return exec.Command(destino, "/SILENT", "/NORESTART").Start()
+}
+
+func conferirSha256(caminho, esperado string) error {
+	f, err := os.Open(caminho)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	obtido := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(obtido, esperado) {
+		return fmt.Errorf("sha256 não confere: esperado %s, obtido %s", esperado, obtido)
+	}
+	return nil
 }
 
 func baixar(url, destino string, progresso func(float64)) error {

@@ -115,7 +115,7 @@ func (d *dlgAtualizar) instalar() {
 // rede, sem release nova ou fora do Flatpak, ninguém fica sabendo — aviso
 // de atualização que aparece para dizer "está tudo certo" vira ruído.
 func checarAtualizacao(w *app.Window) {
-	if !atualizador.EmFlatpak() {
+	if !atualizador.Suportado() {
 		return
 	}
 	atual := versaoInstalada()
