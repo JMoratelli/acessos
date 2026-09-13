@@ -4,7 +4,7 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-12, com a 2.0.3 publicada.
+Atualizado em 2026-09-12, com a 2.0.4 publicada.
 
 ---
 
@@ -72,20 +72,37 @@ Falta também publicar o sha256 na release (hoje o `build-windows.sh` não
 gera nenhum). Enquanto isso não existe, atualizar no Windows é baixar o
 instalador na mão.
 
-## 4. Diálogo "Sobre"
+## 4. Ícones no Windows
+
+**Relatado no teste da 2.0.4: os ícones saem errados no Windows.** Falta
+detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
+é onde procurar:
+
+- o ícone do executável e do instalador é um `.ico` multi-resolução
+  gerado por [build-windows.sh](scripts/build-windows.sh) a partir do
+  mesmo `icones/acessos.svg` do Linux, com `rsvg-convert` + `magick`, e
+  embutido como recurso pelo `windres`. Se o problema for este, é
+  provável que seja a conversão (fundo, transparência ou tamanho que o
+  Explorer escolhe);
+- os ícones DENTRO da interface (protocolos, barra de topo, cards) são
+  vetores do pacote `gio.tools/icons`, desenhados pelo próprio Gio, e não
+  dependem de nada do sistema — se estes estiverem errados no Windows e
+  certos no Linux, o assunto é outro (escala ou tema), não o `.ico`.
+
+## 5. Diálogo "Sobre"
 
 **Estado: não existe.** A versão aparece no rodapé e nos Ajustes, mas não
 há uma tela dizendo o que é o programa, a licença (GPLv3) e o link do
 repositório. O metainfo embutido já tem tudo isso — é montar a tela.
 
-## 5. Capturas de tela do metainfo
+## 6. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 6. Assinatura do executável do Windows
+## 7. Assinatura do executável do Windows
 
 O instalador não é assinado, então o SmartScreen avisa em toda máquina
 nova. Para distribuição interna é aceitável (o aviso passa com "Mais
@@ -100,9 +117,9 @@ Ficam registradas para ninguém "descobrir" de novo:
 
 - **Terminal SSH**: sem tela alternativa (`vim`/`less` em tela cheia
   podem não desenhar direito), sem busca no scrollback e sem relato de
-  mouse. É o escopo que foi combinado para o v1 do terminal.
-- **Seleção de texto no terminal**: copiar manda a tela inteira, não uma
-  seleção de mouse.
+  mouse. É o escopo que foi combinado para o v1 do terminal. A seleção
+  com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não acompanha
+  o conteúdo se o programa remoto redesenhar por baixo.
 - **Atalhos globais**: não existem, por pedido explícito.
 - **RDP no Wine**: não conecta, e isso é limitação do Wine
   (`ucrtbase._aligned_recalloc` não implementada, e a própria FreeRDP a
