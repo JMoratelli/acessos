@@ -33,6 +33,13 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupLogging=yes
+; O atualizador roda este instalador com /SILENT enquanto o próprio
+; acessos.exe está de pé — precisa que o Setup feche e depois reabra
+; sozinho o processo que está travando o arquivo. Restart Manager faz
+; isso sem precisar de admin; ambos já são o padrão do Inno 6, mas ficam
+; explícitos aqui porque é o que faz a atualização silenciosa funcionar.
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "brportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"

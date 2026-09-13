@@ -53,24 +53,34 @@ sozinhos, e a publicação já está serializada no laço de quadro
 
 ## 3. Atualizador do Windows
 
-**Estado: não existe.** O [internal/atualizador](internal/atualizador/atualizador.go)
-de hoje é só do Flatpak: `EmFlatpak()` desliga tudo fora dele, e
-`Instalar` chama `flatpak-spawn --host flatpak install`.
+**Estado: implementado, falta testar numa máquina Windows de verdade.**
+[internal/atualizador](internal/atualizador/atualizador.go) agora tem um
+caminho para cada plataforma: `EmFlatpak()`/`instalarFlatpak` como antes,
+e `instalarWindows` cuidando do `AcessosSetup-X.Y.Z.exe`. `Suportado()`
+substitui o antigo uso direto de `EmFlatpak()` no diálogo, e decide se o
+atualizador tem o que fazer na plataforma atual.
 
-A mecânica no Windows é mais simples que a do Flatpak, e o instalador já
-foi feito pensando nela — o `AppId` do Inno Setup é fixo, então instalar
-por cima é atualizar, não duplicar:
+Mecânica no Windows:
 
-- ler a release mais nova na API do GitHub (a função `Checar` já faz, e
-  a comparação de versão já corrige o bug do `atualizador.py` com
-  `2.0.0-rc1`) e procurar o anexo `AcessosSetup-X.Y.Z.exe`;
-- baixar para `%LOCALAPPDATA%\Temp`, **conferir o sha256** publicado
-  junto da release, e só então executar com `/SILENT /NORESTART`;
-- o instalador fecha o app, substitui e reabre.
+- `Checar` procura o anexo `AcessosSetup-X.Y.Z.exe` da release mais nova
+  e o `.sha256` publicado ao lado (mesmo nome + `.sha256`); sem os dois,
+  não oferece a atualização — não há como baixar o instalador às cegas;
+- `Instalar` baixa para a pasta temporária do usuário, confere o sha256
+  e roda `/SILENT /NORESTART`, sem esperar terminar: o instalador vai
+  substituir o próprio `.exe` que está rodando, então quem tem que
+  esperar é ele, não o contrário;
+- `scripts/instalador.iss` agora liga explicitamente
+  `CloseApplications`/`RestartApplications` (Restart Manager fecha o
+  processo, substitui o arquivo e reabre sozinho — já eram o padrão do
+  Inno 6, mas ficaram explícitos);
+- `scripts/build-windows.sh` gera o `.sha256` do instalador depois de
+  compilá-lo.
 
-Falta também publicar o sha256 na release (hoje o `build-windows.sh` não
-gera nenhum). Enquanto isso não existe, atualizar no Windows é baixar o
-instalador na mão.
+Falta: **testar de ponta a ponta no Windows** (o Restart Manager fechando
+e reabrindo o processo é a parte que não dá pra validar do Linux) e
+lembrar de subir os dois arquivos (`AcessosSetup-X.Y.Z.exe` e o
+`.sha256`) como anexos da release no GitHub — nada automatiza esse
+upload ainda.
 
 ## 4. Ícones no Windows
 
