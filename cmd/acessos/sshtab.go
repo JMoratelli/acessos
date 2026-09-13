@@ -15,6 +15,7 @@ import (
 
 	"gio.tools/icons"
 	"gioui.org/app"
+	"gioui.org/f32"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -42,8 +43,8 @@ const spTerminal = unit.Sp(13)
 // células -> pixels.
 //
 // Limites assumidos nesta versão, de propósito: sem histórico de rolagem
-// (o que saiu da tela saiu), sem relatório de mouse e sem seleção com o
-// mouse. Shell, logs e edição em tela cheia funcionam.
+// (o que saiu da tela saiu) e sem relatório de mouse. Shell, logs e
+// edição em tela cheia funcionam.
 type sshTab struct {
 	th     *material.Theme
 	w      *app.Window
@@ -66,6 +67,21 @@ type sshTab struct {
 	mods       modificadores
 	foco       widget.Clickable
 
+	// Geometria do último quadro, para o ponteiro virar célula. É medida
+	// no desenho (depende da fonte e da escala da tela) e lida no evento,
+	// que chega fora do quadro — daí viver aqui sob o mesmo mutex.
+	margem    int
+	avanco    float64
+	alturaCel int
+
+	// Seleção com o mouse, em coordenadas de CÉLULA da tela visível. Ela
+	// não acompanha o conteúdo: se o programa remoto redesenhar a tela, a
+	// seleção continua onde está, marcando o que estiver ali agora. É o
+	// que um terminal sem scrollback pode prometer com honestidade.
+	selA, selB celula
+	selAtiva   bool
+	arrastando bool
+
 	// painel lateral de snippets
 	painelSnips bool
 	snips       []model.Snippet
@@ -84,6 +100,18 @@ type sshTab struct {
 	btnRec      widget.Clickable
 	btnAuto     widget.Clickable
 	btnSnip     widget.Clickable
+}
+
+// celula é uma posição na grade: coluna e linha.
+type celula struct{ x, y int }
+
+// antesDe põe a seleção em ordem de leitura, para quem desenha e quem
+// copia não precisarem saber para que lado o arrasto foi.
+func (c celula) antesDe(o celula) bool {
+	if c.y != o.y {
+		return c.y < o.y
+	}
+	return c.x < o.x
 }
 
 func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
@@ -130,6 +158,14 @@ type escritorEntrada struct{ t *sshTab }
 func (e escritorEntrada) Write(p []byte) (int, error) {
 	e.t.enviar(p)
 	return len(p), nil
+}
+
+// invalidar existe para a aba poder ser exercitada sem janela (testes):
+// o resto do código chama isto em vez de t.w.Invalidate() direto.
+func (t *sshTab) invalidar() {
+	if t.w != nil {
+		t.w.Invalidate()
+	}
 }
 
 func (t *sshTab) Title() string { return t.titulo }
@@ -370,15 +406,72 @@ func (t *sshTab) HandleKey(keysym, _ uint32, pressed bool) {
 	t.enviar(bytesDaTecla(keysym, t.mods))
 }
 
-// copiarSelecao manda a tela inteira quando não há seleção de mouse
-// (ainda não implementada): é o texto visível do terminal, que é o que
-// serve para colar num chamado.
+// copiarSelecao copia o trecho marcado com o mouse. Sem seleção, copia a
+// tela inteira — é o comportamento antigo, e continua sendo o que serve
+// para colar um erro num chamado sem ter que mirar com o mouse.
 func (t *sshTab) copiarSelecao() {
+	texto, houve := t.textoSelecionado()
+	if !houve {
+		t.term.Lock()
+		texto = t.term.String()
+		t.term.Unlock()
+		publicarClipboard(t.w, strings.TrimRight(texto, "\n \t"))
+		t.setEstado("tela copiada")
+		return
+	}
+	publicarClipboard(t.w, texto)
+	t.setEstado("seleção copiada")
+}
+
+// selecao devolve a marcação em ordem de leitura.
+func (t *sshTab) selecao() (a, b celula, ok bool) {
+	t.mu.Lock()
+	a, b, ok = t.selA, t.selB, t.selAtiva
+	t.mu.Unlock()
+	if !ok {
+		return a, b, false
+	}
+	if b.antesDe(a) {
+		a, b = b, a
+	}
+	return a, b, true
+}
+
+// textoSelecionado monta o texto da marcação, uma linha por linha da
+// tela. O espaço à direita é aparado: a grade é sempre retangular, então
+// sem isso toda linha copiada viria cheia de espaços até a borda.
+func (t *sshTab) textoSelecionado() (string, bool) {
+	a, b, ok := t.selecao()
+	if !ok {
+		return "", false
+	}
 	t.term.Lock()
-	texto := t.term.String()
-	t.term.Unlock()
-	publicarClipboard(t.w, strings.TrimRight(texto, "\n \t"))
-	t.setEstado("tela copiada")
+	defer t.term.Unlock()
+	cols, rows := t.term.Size()
+	var linhas []string
+	for y := a.y; y <= b.y && y < rows; y++ {
+		xi, xf := 0, cols-1
+		if y == a.y {
+			xi = a.x
+		}
+		if y == b.y {
+			xf = b.x
+		}
+		var sb strings.Builder
+		for x := xi; x <= xf && x < cols; x++ {
+			c := t.term.Cell(x, y).Char
+			if c == 0 {
+				c = ' '
+			}
+			sb.WriteRune(c)
+		}
+		linhas = append(linhas, strings.TrimRight(sb.String(), " "))
+	}
+	texto := strings.Join(linhas, "\n")
+	if strings.TrimSpace(texto) == "" {
+		return "", false
+	}
+	return texto, true
 }
 
 // colarDoSistema escreve o clipboard no stdin. Sem Enter: quem confirma é
@@ -401,9 +494,60 @@ func (t *sshTab) OnLocalClipboardTexto(texto string) {
 	t.mu.Unlock()
 }
 
+// celulaEm converte a posição do ponteiro (relativa à área de conteúdo)
+// na célula sob ele, presa aos limites da grade — arrastar para fora da
+// janela deve estender a seleção até a borda, não perder o evento.
+func (t *sshTab) celulaEm(p f32.Point) celula {
+	t.mu.Lock()
+	margem, avanco, ch, cols, rows := t.margem, t.avanco, t.alturaCel, t.cols, t.rows
+	t.mu.Unlock()
+	if avanco <= 0 || ch <= 0 {
+		return celula{}
+	}
+	x := int(math.Floor((float64(p.X) - float64(margem)) / avanco))
+	y := (int(p.Y) - margem) / ch
+	return celula{x: min(max(x, 0), cols-1), y: min(max(y, 0), rows-1)}
+}
+
 // HandlePointer: Ctrl+roda muda o corpo da fonte, 6 a 32, como no VTE do
 // app original. Sem Ctrl a roda não faz nada (ainda não há scrollback).
+// O botão esquerdo seleciona texto, arrastando.
 func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
+	switch ev.Kind {
+	case pointer.Press:
+		if ev.Buttons&pointer.ButtonPrimary == 0 {
+			break
+		}
+		// Um clique simples LIMPA a seleção: é o que todo terminal faz, e
+		// é a única forma de desmarcar sem precisar de outro atalho.
+		// A célula é calculada ANTES do Lock — celulaEm também tranca.
+		c := t.celulaEm(ev.Position)
+		t.mu.Lock()
+		t.selA, t.selB = c, c
+		t.selAtiva, t.arrastando = false, true
+		t.mu.Unlock()
+		t.invalidar()
+		return
+	case pointer.Drag:
+		t.mu.Lock()
+		arrastando := t.arrastando
+		t.mu.Unlock()
+		if !arrastando {
+			return
+		}
+		c := t.celulaEm(ev.Position)
+		t.mu.Lock()
+		t.selB, t.selAtiva = c, c != t.selA
+		t.mu.Unlock()
+		t.invalidar()
+		return
+	case pointer.Release:
+		t.mu.Lock()
+		t.arrastando = false
+		t.mu.Unlock()
+		t.invalidar()
+		return
+	}
 	if ev.Kind != pointer.Scroll || !(t.mods.ctrl || ctrlPressionado()) {
 		return
 	}
@@ -473,6 +617,10 @@ func (t *sshTab) layoutTerminal(gtx layout.Context) layout.Dimensions {
 	rows := max(4, (size.Y-2*margem)/alturaCel)
 	t.redimensionar(cols, rows)
 
+	t.mu.Lock()
+	t.margem, t.avanco, t.alturaCel = margem, avanco, alturaCel
+	t.mu.Unlock()
+
 	defer op.Offset(image.Pt(margem, margem)).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: image.Pt(size.X-margem, size.Y-margem)}.Push(gtx.Ops).Pop()
 	t.desenharGrade(gtx, cols, rows, avanco, alturaCel)
@@ -515,6 +663,11 @@ func (t *sshTab) redimensionar(cols, rows int) {
 	if !mudou {
 		return
 	}
+	// A marcação é em coordenadas de tela; mudou a grade, ela não quer
+	// dizer mais nada.
+	t.mu.Lock()
+	t.selAtiva, t.arrastando = false, false
+	t.mu.Unlock()
 	t.term.Resize(cols, rows)
 	if sess != nil {
 		sess.WindowChange(rows, cols)
@@ -526,6 +679,7 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 	// é desenhado a partir de px(col) e daí em diante o próprio shaper
 	// avança, então fundo, glifo e cursor caem sempre na mesma grade.
 	px := func(col int) int { return int(math.Round(float64(col) * avanco)) }
+	selA, selB, temSel := t.selecao()
 	t.term.Lock()
 	defer t.term.Unlock()
 
@@ -559,6 +713,27 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 			r := clip.Rect{Min: image.Pt(px(x), y*ch), Max: image.Pt(px(fim), (y+1)*ch)}
 			paint.FillShape(gtx.Ops, bg, r.Op())
 			x = fim
+		}
+
+		// A marcação entra DEPOIS dos fundos e ANTES dos glifos: por cima
+		// do texto, mesmo translúcida, ela suja a leitura justamente do
+		// trecho que a pessoa quer conferir antes de copiar.
+		if temSel && y >= selA.y && y <= selB.y {
+			xi, xf := 0, cols-1
+			if y == selA.y {
+				xi = selA.x
+			}
+			if y == selB.y {
+				xf = selB.x
+			}
+			if xi <= xf {
+				marca := tema.Azul
+				marca.A = 90
+				paint.FillShape(gtx.Ops, marca, clip.Rect{
+					Min: image.Pt(px(xi), y*ch),
+					Max: image.Pt(px(xf+1), (y+1)*ch),
+				}.Op())
+			}
 		}
 
 		x = 0

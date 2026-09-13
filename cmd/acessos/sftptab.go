@@ -12,11 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gio.tools/icons"
 	"gioui.org/app"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -83,9 +85,23 @@ type sftpTab struct {
 	larguraEsq int // onde termina o painel local
 }
 
+// listagem é o resultado de ler uma pasta. Ela NÃO é aplicada por quem
+// leu: fica aqui até o laço de quadro aplicar (ver aplicarListagens).
+//
+// Dois motivos, os dois vividos: a leitura remota roda em goroutine e
+// escrevia itens/btnItem/sel enquanto a interface os lia, e a leitura
+// local, por ser síncrona, trocava o btnItem NO MEIO do laço que estava
+// percorrendo o btnItem antigo — entrar numa pasta com menos arquivos
+// que a anterior derrubava o app com "index out of range".
+type listagem struct {
+	itens []itemArquivo
+	erro  string
+}
+
 // painelArquivos é um lado do navegador.
 type painelArquivos struct {
 	remoto   bool
+	pend     atomic.Pointer[listagem]
 	caminho  widget.Editor
 	filtro   widget.Editor // busca dentro da pasta atual (nunca recursiva)
 	itens    []itemArquivo
@@ -207,14 +223,14 @@ func (t *sftpTab) conectar() {
 	}
 	t.remoto.caminho.SetText(inicio)
 	t.listarRemoto()
-	t.w.Invalidate()
+	t.invalidar()
 }
 
 func (t *sftpTab) setEstado(s string) {
 	t.mu.Lock()
 	t.estado = s
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
 }
 
 func (t *sftpTab) encerrada() bool {
@@ -246,10 +262,9 @@ func (t *sftpTab) listarLocal() {
 	dir := t.local.caminho.Text()
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		t.local.erro = err.Error()
+		t.local.pend.Store(&listagem{erro: err.Error()})
 		return
 	}
-	t.local.erro = ""
 	var itens []itemArquivo
 	for _, e := range ents {
 		info, err := e.Info()
@@ -259,9 +274,7 @@ func (t *sftpTab) listarLocal() {
 		itens = append(itens, itemArquivo{nome: e.Name(), dir: e.IsDir(), tam: info.Size(), mtime: info.ModTime()})
 	}
 	ordenar(itens)
-	t.local.itens = itens
-	t.local.btnItem = make([]widget.Clickable, len(itens))
-	t.local.sel = map[string]bool{}
+	t.local.pend.Store(&listagem{itens: itens})
 }
 
 func (t *sftpTab) listarRemoto() {
@@ -272,20 +285,17 @@ func (t *sftpTab) listarRemoto() {
 	dir := t.remoto.caminho.Text()
 	ents, err := cli.ReadDir(dir)
 	if err != nil {
-		t.remoto.erro = err.Error()
-		t.w.Invalidate()
+		t.remoto.pend.Store(&listagem{erro: err.Error()})
+		t.invalidar()
 		return
 	}
-	t.remoto.erro = ""
 	var itens []itemArquivo
 	for _, e := range ents {
 		itens = append(itens, itemArquivo{nome: e.Name(), dir: e.IsDir(), tam: e.Size(), mtime: e.ModTime()})
 	}
 	ordenar(itens)
-	t.remoto.itens = itens
-	t.remoto.btnItem = make([]widget.Clickable, len(itens))
-	t.remoto.sel = map[string]bool{}
-	t.w.Invalidate()
+	t.remoto.pend.Store(&listagem{itens: itens})
+	t.invalidar()
 }
 
 func (t *sftpTab) navegar(p *painelArquivos, nome string) {
@@ -405,7 +415,7 @@ func (t *sftpTab) transferir(itens []itemArquivo, paraRemoto bool, pular map[str
 		} else {
 			t.listarLocal()
 		}
-		t.w.Invalidate()
+		t.invalidar()
 	}()
 
 	// Total a transferir, para a barra saber a fração. Pasta entra
@@ -425,7 +435,7 @@ func (t *sftpTab) transferir(itens []itemArquivo, paraRemoto bool, pular map[str
 		t.mu.Lock()
 		t.progresso = fmt.Sprintf("%s — %s de %s", a.rel, tamanhoBytes(feito), tamanhoBytes(total))
 		t.mu.Unlock()
-		t.w.Invalidate()
+		t.invalidar()
 
 		var err error
 		andou := func(n int64) {
@@ -497,7 +507,7 @@ func (t *sftpTab) definirMsg(s string, erro bool) {
 	t.mu.Lock()
 	t.msg, t.msgErro = s, erro
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
 }
 
 // levantar conta o que será apagado, recursivamente. O número é o que a
@@ -628,7 +638,35 @@ func (t *sftpTab) ApontarPara(nome, host string, porta int, usuario, senha strin
 	go t.conectar()
 }
 
+// aplicarListagens troca o conteúdo dos painéis, no laço de quadro e só
+// aqui. Depois disto, nada mais mexe em itens/btnItem/sel durante o
+// quadro — que é a condição para o laço de cliques poder confiar nos
+// índices que está percorrendo.
+// invalidar existe para a aba poder ser exercitada sem janela (testes).
+func (t *sftpTab) invalidar() {
+	if t.w != nil {
+		t.w.Invalidate()
+	}
+}
+
+func (t *sftpTab) aplicarListagens() {
+	for _, p := range []*painelArquivos{&t.local, &t.remoto} {
+		l := p.pend.Swap(nil)
+		if l == nil {
+			continue
+		}
+		p.erro = l.erro
+		if l.erro != "" {
+			continue // erro de leitura não apaga o que estava na tela
+		}
+		p.itens = l.itens
+		p.btnItem = make([]widget.Clickable, len(l.itens))
+		p.sel = map[string]bool{}
+	}
+}
+
 func (t *sftpTab) Layout(gtx layout.Context) layout.Dimensions {
+	t.aplicarListagens()
 	t.tratarBotoes(gtx)
 	defer t.arrasto(gtx)
 
@@ -652,6 +690,15 @@ func (t *sftpTab) Layout(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+// comCtrl diz se o clique veio com Ctrl. São DUAS fontes de propósito: no
+// Linux o teclado vem do Wayland cru (internal/grab), e o Modifiers do
+// Gio chega vazio nesta pilha; no Windows não há grab nenhum, e o
+// Modifiers do Gio é a única fonte. Perguntar aos dois faz o gesto
+// funcionar nos dois lugares.
+func comCtrl(ev widget.Click) bool {
+	return ctrlPressionado() || ev.Modifiers.Contain(key.ModCtrl)
+}
+
 func (t *sftpTab) tratarBotoes(gtx layout.Context) {
 	for _, p := range []*painelArquivos{&t.local, &t.remoto} {
 		p := p
@@ -666,28 +713,36 @@ func (t *sftpTab) tratarBotoes(gtx layout.Context) {
 				t.listarLocal()
 			}
 		}
-		for i := range p.btnItem {
+		botoes := p.btnItem
+		for i := range botoes {
 			if i >= len(itensVisiveis) {
 				continue
 			}
-			// Ctrl+clique marca e desmarca; clique simples só navega (em
-			// pasta, com dois cliques). É o gesto de gerenciador de
-			// arquivos: sem o Ctrl, cada clique trocaria a seleção
-			// inteira e escolher 20 arquivos viraria um exercício.
+			// Gesto de gerenciador de arquivos: clique simples marca SÓ
+			// aquele item (o resto desmarca), Ctrl+clique soma e tira da
+			// marcação, e dois cliques numa pasta entram nela.
+			//
+			// Antes o clique simples não fazia nada, e o resultado era
+			// clicar num arquivo e a tela não responder — sem pista de
+			// que faltava o Ctrl. Marcar um item com um clique não custa
+			// nada (o que abre a pasta são DOIS cliques) e dá o retorno
+			// que faltava.
 			for {
-				ev, ok := p.btnItem[i].Update(gtx)
+				ev, ok := botoes[i].Update(gtx)
 				if !ok {
 					break
 				}
 				it := itensVisiveis[i]
-				if ctrlPressionado() {
-					p.sel[it.nome] = !p.sel[it.nome]
-					continue
-				}
 				if it.dir && ev.NumClicks >= 2 {
 					t.navegar(p, it.nome)
 					break
 				}
+				if comCtrl(ev) {
+					p.sel[it.nome] = !p.sel[it.nome]
+					continue
+				}
+				clear(p.sel)
+				p.sel[it.nome] = true
 			}
 		}
 	}
