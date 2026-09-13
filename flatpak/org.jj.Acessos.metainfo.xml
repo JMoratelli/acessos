@@ -64,6 +64,11 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.6" date="2026-09-13">
+      <description>
+        <p>Corrige o atualizador do Windows nao reabrindo o app sozinho depois de instalar: a entrada do instalador que reabre no final so dispara em instalacao NAO silenciosa (a caixa "abrir agora" do fim), e o atualizador sempre roda o instalador silencioso. Agora ha uma segunda entrada so para esse caso, sem depender do Restart Manager do Windows para reabrir.</p>
+      </description>
+    </release>
     <release version="2.0.5" date="2026-09-13">
       <description>
         <p>Corrige a lateral abrindo e fechando sozinha durante sessoes SSH, RDP e VNC: o atalho Ctrl+B, usado para recolhe-la, e o mesmo prefixo padrao do tmux (e tambem usado em vim/emacs/readline), entao era engolido pelo app antes de chegar na sessao remota. O atalho de recolher a lateral passa a ser F12, que nao colide com nada usado do outro lado.</p>
