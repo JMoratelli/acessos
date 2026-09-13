@@ -38,23 +38,28 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 	if ev.Valid() && currentGrab.Load() == nil {
 		gh := grab.Start(ev.Display, ev.Surface,
 			func(keysym, keycodeX11 uint32, pressed bool) {
-				// Ctrl+B recolhe a lateral, Ctrl+W fecha a aba
-				// ativa — atalhos do PRÓPRIO app, do jeito que
-				// um navegador reserva Ctrl+W independente da
-				// página. Ainda repassamos Ctrl em si pro remoto
-				// logo abaixo (Ctrl+C etc. têm que continuar
-				// funcionando); só a tecla B/W some quando
-				// combinada com Ctrl.
+				// F12 recolhe a lateral — atalho do PRÓPRIO app,
+				// que não depende de Ctrl e não colide com nada
+				// usado dentro de uma sessão remota (tmux, vim,
+				// readline etc. não usam F12), diferente do
+				// antigo Ctrl+B. Ctrl+W fecha a aba ativa — esse
+				// ainda é reservado do jeito que um navegador
+				// reserva Ctrl+W independente da página. Ainda
+				// repassamos Ctrl em si pro remoto logo abaixo
+				// (Ctrl+C etc. têm que continuar funcionando); só
+				// a tecla W some quando combinada com Ctrl.
 				const ctrlL, ctrlR = 0xffe3, 0xffe4
+				const f12 = 0xffc9
 				if keysym == ctrlL || keysym == ctrlR {
 					ctrlDown.Store(pressed)
 				}
+				if keysym == f12 && pressed {
+					pendingToggleSidebar.Store(true)
+					w.Invalidate()
+					return
+				}
 				if ctrlDown.Load() && pressed {
 					switch keysym {
-					case 'b', 'B':
-						pendingToggleSidebar.Store(true)
-						w.Invalidate()
-						return
 					case 'w', 'W':
 						pendingCloseActive.Store(true)
 						w.Invalidate()

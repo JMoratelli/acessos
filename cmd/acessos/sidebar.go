@@ -291,7 +291,7 @@ func (s *sidebar) item(gtx layout.Context, th *material.Theme, it *itemLateral, 
 
 func (s *sidebar) botaoRecolher(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	ic := icons.NavigationChevronLeft
-	rot := "Recolher  Ctrl+B"
+	rot := "Recolher  F12"
 	if s.recolhida() {
 		ic = icons.NavigationChevronRight
 		rot = ""
