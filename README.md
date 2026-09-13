@@ -1,3 +1,10 @@
+# Disclaimer
+Desenvolvido com IA, revisado por mim
+  Este repositório utiliza inteligência artificial no processo criativo (vibecoding). No entanto, todo o código é revisado, testado e mantido 100% manualmente por mim, garantindo cuidado em cada detalhe como único mantenedor do projeto (por enquanto).
+
+AI-Assisted, Human-Crafted
+  This repository leverages artificial intelligence during the creative process (vibecoding). However, all code is 100% manually reviewed, tested, and maintained by me, ensuring care and quality as a solo maintainer (for now).
+  
 # Acessos
 
 Gerenciador de acesso remoto às máquinas — VNC, RDP, SSH e transferência de
