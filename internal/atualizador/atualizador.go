@@ -248,11 +248,13 @@ func instalarFlatpak(r *Release, progresso func(float64)) error {
 // publicado junto da release e dispara a instalação silenciosa.
 //
 // Não espera o instalador terminar (Start, não Run): o instalador vai
-// substituir ESTE .exe, que está em execução agora — o Inno Setup (com
-// CloseApplications/RestartApplications ligados no .iss) usa o Restart
-// Manager do Windows para fechar o processo atual, sobrescrever o
-// arquivo e reabrir sozinho. Ficar esperando aqui seria esperar o
-// processo que está esperando morrer.
+// substituir ESTE .exe, que está em execução agora — quem chama fecha a
+// janela atual logo em seguida (CloseApplications no .iss é só a rede de
+// segurança caso o processo ainda esteja de pé nesse instante). Reabrir
+// depois de instalar é o [Run] do instalador.iss com a flag
+// skipifnotsilent, não o Restart Manager: como o processo já saiu
+// sozinho antes da hora de sobrescrever o arquivo, nunca haveria nada
+// para o Restart Manager reabrir.
 func instalarWindows(r *Release, progresso func(float64)) error {
 	destino := filepath.Join(os.TempDir(), "AcessosSetup-"+r.Tag+".exe")
 	if err := baixar(r.Bundle, destino, progresso); err != nil {

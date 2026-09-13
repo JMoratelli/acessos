@@ -34,12 +34,16 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupLogging=yes
 ; O atualizador roda este instalador com /SILENT enquanto o próprio
-; acessos.exe está de pé — precisa que o Setup feche e depois reabra
-; sozinho o processo que está travando o arquivo. Restart Manager faz
-; isso sem precisar de admin; ambos já são o padrão do Inno 6, mas ficam
-; explícitos aqui porque é o que faz a atualização silenciosa funcionar.
+; acessos.exe está de pé — CloseApplications é a rede de segurança que
+; fecha o processo via Restart Manager SE ele ainda estiver travando o
+; arquivo na hora de sobrescrever (já é o padrão do Inno 6, mas fica
+; explícito aqui). Reabrir depois é o [Run] logo abaixo, não
+; RestartApplications: esse só reabre o que o PRÓPRIO Restart Manager
+; fechou, e na prática o processo já saiu sozinho antes disso (o
+; atualizador fecha a janela assim que dispara o instalador), então
+; nunca havia o que reabrir.
 CloseApplications=yes
-RestartApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "brportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -57,7 +61,13 @@ Name: "{autodesktop}\Acessos"; Filename: "{app}\acessos.exe"; WorkingDir: "{app}
 Name: "desktopicon"; Description: "Criar um atalho na Área de Trabalho"; GroupDescription: "Atalhos adicionais:"
 
 [Run]
+; skipifsilent: some quando a instalação é silenciosa — é o caso normal,
+; interativo, com a caixa "abrir agora" ao final.
 Filename: "{app}\acessos.exe"; Description: "Abrir o Acessos agora"; Flags: nowait postinstall skipifsilent
+; skipifnotsilent: o complemento, para o atualizador (que SEMPRE roda
+; silencioso) — reabre sem perguntar nada, já que não há tela para
+; perguntar.
+Filename: "{app}\acessos.exe"; Flags: nowait skipifnotsilent
 
 [UninstallDelete]
 ; o desinstalador só remove o que ele mesmo instalou; o log que o APP
