@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image"
 	"os"
 	"strconv"
 
@@ -164,28 +163,22 @@ func abrirConexao(w *app.Window, bar *tabBar, arq *conexoes.Arquivo, cx conexoes
 	// A aba SFTP sabe trocar de máquina sem fechar: o menu vem daqui,
 	// onde a lista de conexões está à mão.
 	if sf, ok := t.(*sftpTab); ok {
-		sf.trocarHost = func(pos image.Point) {
-			var itens []*itemMenu
+		sf.trocarHost = func() {
+			var opcoes []conexoes.Conexao
 			for _, outra := range arq.Conexoes {
-				outra := outra
-				if !outra.Tem(conexoes.SSH) {
-					continue
+				if outra.Tem(conexoes.SSH) {
+					opcoes = append(opcoes, outra)
 				}
-				itens = append(itens, &itemMenu{
-					rotulo: outra.Nome + "  (" + outra.Host + ")",
-					acao: func() {
-						senha, err := segredo(outra.SSH.Senha)
-						if err != nil {
-							fmt.Fprintln(os.Stderr, err)
-							return
-						}
-						sf.ApontarPara(outra.Nome, outra.Host, outra.SSH.Porta,
-							chaveiroAtual.Resolver(outra.SSH.Usuario, "usuario"), senha)
-					},
-				})
 			}
-			abrirMenu(pos, itens)
-			w.Invalidate()
+			abrirTrocarHost(w, opcoes, func(outra conexoes.Conexao) {
+				senha, err := segredo(outra.SSH.Senha)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return
+				}
+				sf.ApontarPara(outra.Nome, outra.Host, outra.SSH.Porta,
+					chaveiroAtual.Resolver(outra.SSH.Usuario, "usuario"), senha)
+			})
 		}
 	}
 

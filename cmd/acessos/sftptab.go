@@ -65,7 +65,7 @@ type sftpTab struct {
 	btnExcluir, btnNovaDir widget.Clickable
 	btnRec                 widget.Clickable
 	btnHost                widget.Clickable
-	trocarHost             func(pos image.Point)
+	trocarHost             func()
 
 	progresso string
 	ocupado   bool
@@ -610,7 +610,7 @@ func (t *sftpTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout
 		go t.conectar()
 	}
 	if t.btnHost.Clicked(gtx) && t.trocarHost != nil {
-		t.trocarHost(ultimaPosPonteiro())
+		t.trocarHost()
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
