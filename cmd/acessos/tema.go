@@ -118,11 +118,12 @@ var temaEscuro = Tema{
 	// um degrau mais claro, só pra texto que fica sobre o card.
 	CardFraco: hex(0x8a97a3),
 	Fundo1: hex(0x1a212b), Fundo2: hex(0x10141a), Fundo3: hex(0x080b0f),
-	// As luzes vão com ~55% do alfa do tema.py (0.16/0.10 lá). O Gio
+	// As luzes vão bem abaixo do alfa do tema.py (0.16/0.10 lá). O Gio
 	// compõe em espaço LINEAR, o GTK/cairo em sRGB: a mesma rgba() sobre
-	// um fundo quase preto sai bem mais forte aqui — o verde do canto
-	// virava um borrão. Compensado na alfa, não na cor, pra manter o matiz.
-	Luz1: rgba(0x748ffc, 0.09), Luz2: rgba(0x38d9a9, 0.055),
+	// um fundo quase preto sai bem mais forte aqui. Uma primeira redução
+	// (~55% do original) ainda deixava o verde tomar a metade da tela
+	// num teste real — cortado bem mais forte agora.
+	Luz1: rgba(0x748ffc, 0.045), Luz2: rgba(0x38d9a9, 0.02),
 	// Preenchimento do card: DE VOLTA ao valor original. Subir o alfa
 	// aqui pareceu seguro pela conta em sRGB, mas o Gio compõe em linear
 	// (mesmo aviso do Luz1/Luz2 acima) — o resultado real saiu bem mais
@@ -407,6 +408,17 @@ func fundoCircuito(gtx layout.Context, size image.Point) {
 	dobraE := f32.Pt(w*0.50, h*0.90)
 	linha(f32.Pt(w*0.50, h), dobraE, f32.Pt(w*0.58, h*0.90))
 	ponto(dobraE)
+
+	// os dois pedidos por último: mesma posição das marcas vermelhas do
+	// teste, só que em ângulo reto em vez de diagonal.
+	dobraF := f32.Pt(w*0.25, h*0.10)
+	linha(f32.Pt(w*0.25, 0), dobraF, f32.Pt(w*0.33, h*0.10))
+	ponto(dobraF)
+
+	dobraG1, dobraG2 := f32.Pt(w*0.90, h*0.10), f32.Pt(w*0.80, h*0.10)
+	linha(f32.Pt(w*0.90, 0), dobraG1, dobraG2, f32.Pt(w*0.80, h*0.26))
+	ponto(dobraG1)
+	ponto(dobraG2)
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
