@@ -140,7 +140,7 @@ func layoutTrocarHost(gtx layout.Context, th *material.Theme) layout.Dimensions 
 						return d.btnFechar.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							cor := tema.Fraco
 							if d.btnFechar.Hovered() {
-								cor = tema.Texto
+								cor = tema.ErroFg
 							}
 							return layout.UniformInset(2).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return icone(gtx, icons.NavigationClose, cor, 16)
