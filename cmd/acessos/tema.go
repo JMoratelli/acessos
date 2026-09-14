@@ -51,9 +51,10 @@ type Tema struct {
 	RoxoFraco                                   color.NRGBA
 	Hero1, Hero2, HeroTxt                       color.NRGBA
 	HeroSec                                     color.NRGBA
-	// MarcaFundo é o ícone-marca-d'água do fundo da janela (fundoMarca) —
-	// baixíssima opacidade de propósito, é decoração, não conteúdo.
-	MarcaFundo color.NRGBA
+	// MarcaFundo é o ícone-marca-d'água do fundo da janela (fundoMarca);
+	// LinhaFundo são os traços de circuito (fundoCircuito). Baixíssima
+	// opacidade de propósito — é decoração, não conteúdo.
+	MarcaFundo, LinhaFundo color.NRGBA
 	// SombraBase/SombraPasso calibram sombra(): preto puro em baixa alfa,
 	// que basta pra "levantar" um cartão claro do fundo claro, é
 	// invisível sobre um fundo já quase preto — o escuro precisa de bem
@@ -99,7 +100,10 @@ var temaClaro = Tema{
 	// do tema claro (#5b6976) sobre um hero quase preto é o mesmo erro da
 	// "faixa preta acidental" que a skill descreve, só que invertido.
 	HeroSec: hex(0x9aa6b2),
-	MarcaFundo: rgba(0x11161a, 0.035),
+	// Não é linear-por-baixo-do-branco aqui (o overlay é ESCURO sobre
+	// fundo CLARO — o caso "normal" que a conta em sRGB já acerta), por
+	// isso o alfa pode ser mais alto que no escuro sem medo de exagerar.
+	MarcaFundo: rgba(0x11161a, 0.09), LinhaFundo: rgba(0x11161a, 0.16),
 	SombraBase: 6, SombraPasso: 3,
 }
 
@@ -151,7 +155,7 @@ var temaEscuro = Tema{
 	// um branco translúcido sobre fundo escuro sai mais forte do que a
 	// conta prevê. Alfa bem baixo de propósito; testar no app antes de
 	// considerar calibrado.
-	MarcaFundo: rgba(0xffffff, 0.03),
+	MarcaFundo: rgba(0xffffff, 0.045), LinhaFundo: rgba(0xffffff, 0.07),
 	// ~4x o do tema claro: preto de baixa alfa não registra sobre um
 	// fundo que já está perto do preto — sem isso a sombra existia só no
 	// código, o cartão escuro nunca teve pista de elevação nenhuma.
@@ -317,6 +321,7 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	gradCSS(gtx, size, 150, tema.Luz1, 0, transparente, 0.55)
 	gradCSS(gtx, size, 15, tema.Luz2, 0, transparente, 0.45)
 	fundoMarca(gtx, size)
+	fundoCircuito(gtx, size)
 }
 
 // fundoMarca desenha o próprio ícone do app (as duas telas sobrepostas,
@@ -325,9 +330,10 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 // decoração pura: baixa o suficiente pra nunca competir com um card ou
 // texto de verdade por cima. Aprovado por prévia antes de entrar aqui.
 func fundoMarca(gtx layout.Context, size image.Point) {
-	// ~85% da altura da janela — grande o bastante pra dar identidade
-	// sem caber inteira na tela (ela nasce cortada no canto, de propósito).
-	esc := float32(size.Y) * 0.85 / 64
+	// ~50% da altura da janela — dá identidade no canto sem tomar meia
+	// tela (0.85 ocupava demais e não deixava espaço pros traços do
+	// fundoCircuito não cruzarem por cima dela).
+	esc := float32(size.Y) * 0.5 / 64
 	if esc <= 0 {
 		return
 	}
@@ -345,6 +351,62 @@ func fundoMarca(gtx layout.Context, size image.Point) {
 	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr1.Op(gtx.Ops))
 	rr2 := clip.UniformRRect(image.Rect(20, 24, 58, 56), raioIcone)
 	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr2.Op(gtx.Ops))
+}
+
+// fundoCircuito desenha alguns traços em ângulo reto — a mesma ideia de
+// "placa de circuito" do banner (icones/banner-*.svg), bem mais discreta
+// aqui porque fica atrás de conteúdo de verdade, não numa imagem estática.
+// Coordenadas em FRAÇÃO da janela, não unidade do ícone: assim o desenho
+// acompanha a proporção da tela em vez de vazar pra fora em janelas
+// muito largas ou muito estreitas.
+func fundoCircuito(gtx layout.Context, size image.Point) {
+	w, h := float32(size.X), float32(size.Y)
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	linha := func(pts ...f32.Point) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(pts[0])
+		for _, pt := range pts[1:] {
+			p.LineTo(pt)
+		}
+		paint.FillShape(gtx.Ops, tema.LinhaFundo, clip.Stroke{Path: p.End(), Width: 1.2}.Op())
+	}
+	ponto := func(p f32.Point) {
+		r := 2.4
+		rr := clip.Ellipse{
+			Min: image.Pt(int(p.X-float32(r)), int(p.Y-float32(r))),
+			Max: image.Pt(int(p.X+float32(r)), int(p.Y+float32(r))),
+		}
+		paint.FillShape(gtx.Ops, tema.LinhaFundo, rr.Op(gtx.Ops))
+	}
+
+	// Só ângulo reto (horizontal + vertical, nunca diagonal), sempre
+	// NASCENDO na borda da janela — um traço solto no meio do nada não
+	// lê como circuito, lê como risco perdido (relatado em teste real).
+	// E nunca cruzando por cima do canto onde a marca-d'água mora
+	// (bottom-right, grosso modo x>0.7w e y>0.55h).
+	dobraA := f32.Pt(w*0.07, h*0.14)
+	linha(f32.Pt(0, h*0.14), dobraA, f32.Pt(w*0.07, h*0.24))
+	ponto(dobraA)
+
+	dobraB := f32.Pt(w*0.30, h*0.10)
+	linha(f32.Pt(w*0.30, 0), dobraB, f32.Pt(w*0.38, h*0.10))
+	ponto(dobraB)
+
+	dobraC := f32.Pt(w*0.09, h*0.55)
+	linha(f32.Pt(0, h*0.55), dobraC, f32.Pt(w*0.09, h*0.66))
+	ponto(dobraC)
+
+	dobraD := f32.Pt(w*0.05, h*0.90)
+	linha(f32.Pt(w*0.05, h), dobraD, f32.Pt(w*0.13, h*0.90))
+	ponto(dobraD)
+
+	dobraE := f32.Pt(w*0.50, h*0.90)
+	linha(f32.Pt(w*0.50, h), dobraE, f32.Pt(w*0.58, h*0.90))
+	ponto(dobraE)
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
