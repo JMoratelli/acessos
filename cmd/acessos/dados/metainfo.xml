@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.8" date="2026-09-14">
+      <description>
+        <p>Fundo decorativo da janela: texto maior e mais perto da linha lateral, campo de busca sempre solido (nunca deixa o fundo aparecer por baixo do que esta sendo digitado).</p>
+        <p>Correcoes internas: trava a opacidade de algumas cores do fundo para nunca estourar por engano, e as formas do fundo (faixas, grade de pontos, linha lateral) passam a ser desenhadas uma unica vez e reaproveitadas, em vez de recalculadas a cada quadro.</p>
+      </description>
+    </release>
     <release version="2.0.7" date="2026-09-14">
       <description>
         <p>Clicar no corpo do card (nome, host, o vazio) nao abre mais nada — abrir conexao passa a ser so pelos quatro icones de protocolo. Clicar na caixa de selecao em lote abria uma conexao por engano, ja que o clique do card cobria a caixa tambem.</p>
