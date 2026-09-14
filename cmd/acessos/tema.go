@@ -10,7 +10,6 @@ import (
 	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -325,117 +324,6 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	// duas luzes de acento, ângulos opostos
 	gradCSS(gtx, size, 150, tema.Luz1, 0, transparente, 0.55)
 	gradCSS(gtx, size, 15, tema.Luz2, 0, transparente, 0.45)
-	fundoMarca(gtx, size)
-	fundoCircuito(gtx, size)
-}
-
-// fundoMarca desenha o próprio ícone do app (as duas telas sobrepostas,
-// sem a seta — em silhueta ela só confundiria com o conteúdo por cima)
-// gigante e quase invisível, ancorado no canto inferior direito. É
-// decoração pura: baixa o suficiente pra nunca competir com um card ou
-// texto de verdade por cima. Aprovado por prévia antes de entrar aqui.
-func fundoMarca(gtx layout.Context, size image.Point) {
-	// ~50% da altura da janela — dá identidade no canto sem tomar meia
-	// tela (0.85 ocupava demais e não deixava espaço pros traços do
-	// fundoCircuito não cruzarem por cima dela).
-	esc := float32(size.Y) * 0.5 / 64
-	if esc <= 0 {
-		return
-	}
-	tr := op.Affine(f32.Affine2D{}.
-		Scale(f32.Point{}, f32.Point{X: esc, Y: esc}).
-		Offset(f32.Point{X: float32(size.X) - 58*esc, Y: float32(size.Y) - 58*esc}),
-	).Push(gtx.Ops)
-	defer tr.Pop()
-
-	// raio em unidades do PRÓPRIO ícone (mesmo rx=7 do viewBox 64x64 de
-	// icones/acessos.svg), não Dp — a escala acima já cuida de converter
-	// para pixel de tela junto com o resto da forma.
-	const raioIcone = 7
-	rr1 := clip.UniformRRect(image.Rect(6, 8, 44, 38), raioIcone)
-	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr1.Op(gtx.Ops))
-	rr2 := clip.UniformRRect(image.Rect(20, 24, 58, 56), raioIcone)
-	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr2.Op(gtx.Ops))
-}
-
-// fundoCircuito desenha alguns traços em ângulo reto — a mesma ideia de
-// "placa de circuito" do banner (icones/banner-*.svg), bem mais discreta
-// aqui porque fica atrás de conteúdo de verdade, não numa imagem estática.
-// Coordenadas em FRAÇÃO da janela, não unidade do ícone: assim o desenho
-// acompanha a proporção da tela em vez de vazar pra fora em janelas
-// muito largas ou muito estreitas.
-func fundoCircuito(gtx layout.Context, size image.Point) {
-	w, h := float32(size.X), float32(size.Y)
-	if w <= 0 || h <= 0 {
-		return
-	}
-
-	linha := func(pts ...f32.Point) {
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		p.MoveTo(pts[0])
-		for _, pt := range pts[1:] {
-			p.LineTo(pt)
-		}
-		paint.FillShape(gtx.Ops, tema.LinhaFundo, clip.Stroke{Path: p.End(), Width: 1.2}.Op())
-	}
-	ponto := func(p f32.Point) {
-		r := 2.4
-		rr := clip.Ellipse{
-			Min: image.Pt(int(p.X-float32(r)), int(p.Y-float32(r))),
-			Max: image.Pt(int(p.X+float32(r)), int(p.Y+float32(r))),
-		}
-		paint.FillShape(gtx.Ops, tema.LinhaFundo, rr.Op(gtx.Ops))
-	}
-
-	// Só ângulo reto (horizontal + vertical, nunca diagonal), sempre
-	// NASCENDO na borda da janela — um traço solto no meio do nada não
-	// lê como circuito, lê como risco perdido (relatado em teste real).
-	// E nunca cruzando por cima do canto onde a marca-d'água mora
-	// (bottom-right, grosso modo x>0.7w e y>0.55h).
-	dobraA := f32.Pt(w*0.07, h*0.14)
-	linha(f32.Pt(0, h*0.14), dobraA, f32.Pt(w*0.07, h*0.24))
-	ponto(dobraA)
-
-	dobraB := f32.Pt(w*0.30, h*0.10)
-	linha(f32.Pt(w*0.30, 0), dobraB, f32.Pt(w*0.38, h*0.10))
-	ponto(dobraB)
-
-	dobraC := f32.Pt(w*0.09, h*0.55)
-	linha(f32.Pt(0, h*0.55), dobraC, f32.Pt(w*0.09, h*0.66))
-	ponto(dobraC)
-
-	dobraD := f32.Pt(w*0.05, h*0.90)
-	linha(f32.Pt(w*0.05, h), dobraD, f32.Pt(w*0.13, h*0.90))
-	ponto(dobraD)
-
-	dobraE := f32.Pt(w*0.50, h*0.90)
-	linha(f32.Pt(w*0.50, h), dobraE, f32.Pt(w*0.58, h*0.90))
-	ponto(dobraE)
-
-	// os dois pedidos por último: mesma posição das marcas vermelhas do
-	// teste, só que em ângulo reto em vez de diagonal.
-	dobraF := f32.Pt(w*0.25, h*0.10)
-	linha(f32.Pt(w*0.25, 0), dobraF, f32.Pt(w*0.33, h*0.10))
-	ponto(dobraF)
-
-	dobraG1, dobraG2 := f32.Pt(w*0.90, h*0.10), f32.Pt(w*0.80, h*0.10)
-	linha(f32.Pt(w*0.90, 0), dobraG1, dobraG2, f32.Pt(w*0.80, h*0.26))
-	ponto(dobraG1)
-	ponto(dobraG2)
-
-	// mais três, nos pontos marcados na rodada seguinte de teste.
-	dobraH1, dobraH2 := f32.Pt(w*0.87, h*0.20), f32.Pt(w*0.87, h*0.30)
-	linha(f32.Pt(w, h*0.20), dobraH1, dobraH2)
-	ponto(dobraH1)
-
-	dobraI := f32.Pt(w*0.15, h*0.78)
-	linha(f32.Pt(0, h*0.78), dobraI, f32.Pt(w*0.15, h*0.90))
-	ponto(dobraI)
-
-	dobraJ := f32.Pt(w*0.55, h*0.72)
-	linha(f32.Pt(w*0.55, h), dobraJ, f32.Pt(w*0.45, h*0.72))
-	ponto(dobraJ)
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
