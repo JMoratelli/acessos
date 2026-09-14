@@ -100,6 +100,3 @@ Ficam registradas para ninguém "descobrir" de novo:
   com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não acompanha
   o conteúdo se o programa remoto redesenhar por baixo.
 - **Atalhos globais**: não existem, por pedido explícito.
-- **RDP no Wine**: não conecta, e isso é limitação do Wine
-  (`ucrtbase._aligned_recalloc` não implementada, e a própria FreeRDP a
-  usa). No Windows de verdade funciona — validado.
