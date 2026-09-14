@@ -320,123 +320,111 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	fundoCanto(gtx, size)
 }
 
-// fundoCanto desenha, no canto inferior direito, os quatro ícones de
-// protocolo (mesmas cores de dashtab.go — RDP roxo, SSH verde, VNC azul,
-// SFTP âmbar) ligados por linha ao ícone do próprio app. Composição
-// copiada da referência à risca, aprovada por mockup antes de entrar
-// aqui: NÃO reinventar layout/ângulo se for ajustar de novo, só cor e
-// opacidade — as vezes que isso foi ignorado é o motivo de já ter três
-// tentativas descartadas antes desta.
-//
-// Coordenadas num espaço local de ~460x460 "unidades", igual ao mockup;
-// um Affine só escala+posiciona tudo de uma vez pro canto da janela.
+// fundoCanto desenha, sobre a janela inteira, faixas diagonais
+// translúcidas, uma grade de pontos no canto superior esquerdo, uma
+// linha com nós subindo pela borda direita e dois blocos de texto com
+// barra de gradiente — composição copiada à risca da segunda referência
+// aprovada por mockup (a primeira, com badges de protocolo, foi
+// descartada). NÃO reinventar layout se for ajustar de novo, só
+// cor/opacidade: são já a quinta tentativa nesta sessão de acertar o
+// fundo, as anteriores falharam por inventar em vez de copiar.
 func fundoCanto(gtx layout.Context, size image.Point) {
-	const bbox = 460
-	esc := float32(size.X) * 0.30 / bbox
-	if esc <= 0 {
+	w, h := float32(size.X), float32(size.Y)
+	if w <= 0 || h <= 0 {
 		return
 	}
-	margem := 16 * esc
-	tr := op.Affine(f32.Affine2D{}.
-		Scale(f32.Point{}, f32.Point{X: esc, Y: esc}).
-		Offset(f32.Point{
-			X: float32(size.X) - bbox*esc - margem,
-			Y: float32(size.Y) - bbox*esc - margem,
-		}),
-	).Push(gtx.Ops)
-	defer tr.Pop()
 
-	// Opacidade do CONJUNTO: aplicada em cada cor abaixo, não um alfa
-	// de grupo (Gio não tem). Tema escuro fica bem mais baixo de
-	// propósito — overlay translúcido sobre fundo quase preto sai mais
-	// forte aqui do que a conta em sRGB prevê (mesmo aviso de sempre
-	// nesta sessão: LuzB, Luz1/Luz2, a marca-d'água antiga).
-	opac := 0.16
+	// Opacidade das faixas/grade/linha. Tema escuro entra bem mais
+	// baixo de propósito — overlay translúcido sobre fundo quase preto
+	// sai mais forte do que a conta em sRGB prevê (mesmo aviso de
+	// sempre nesta sessão: LuzB, Luz1/Luz2, as tentativas anteriores
+	// de fundoCanto).
+	faixaOp, faixaOp2, pontoOp, linhaOp := 0.35, 0.20, 0.55, 0.5
 	if tema.Escuro {
-		opac = 0.05
+		faixaOp, faixaOp2, pontoOp, linhaOp = 0.05, 0.03, 0.4, 0.3
 	}
 
-	linha := func(pts ...f32.Point) {
+	faixa := comAlfa(hex(0xffffff), faixaOp)
+	faixa2 := comAlfa(hex(0xffffff), faixaOp2)
+	poligono := func(cor color.NRGBA, pts ...f32.Point) {
 		var p clip.Path
 		p.Begin(gtx.Ops)
 		p.MoveTo(pts[0])
 		for _, pt := range pts[1:] {
 			p.LineTo(pt)
 		}
-		paint.FillShape(gtx.Ops, comAlfa(tema.Fraco, opac), clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+		p.Close()
+		paint.FillShape(gtx.Ops, cor, clip.Outline{Path: p.End()}.Op())
 	}
-	ponto := func(p f32.Point) {
-		r := float32(3)
-		rr := clip.Ellipse{Min: image.Pt(int(p.X-r), int(p.Y-r)), Max: image.Pt(int(p.X+r), int(p.Y+r))}
-		paint.FillShape(gtx.Ops, comAlfa(tema.Fraco, opac), rr.Op(gtx.Ops))
-	}
-	badge := func(x, y float32, cor color.NRGBA, glifo func(cx, cy float32)) {
-		rr := clip.UniformRRect(image.Rect(int(x), int(y), int(x)+64, int(y)+64), 14)
-		paint.FillShape(gtx.Ops, comAlfa(cor, opac*0.8), rr.Op(gtx.Ops))
-		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 2}.Op())
-		glifo(x+32, y+31)
-	}
-	tracoAberto := func(cor color.NRGBA, pts ...f32.Point) {
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		p.MoveTo(pts[0])
-		for _, pt := range pts[1:] {
-			p.LineTo(pt)
-		}
-		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: p.End(), Width: 2}.Op())
-	}
-	monitor := func(cx, cy float32, cor color.NRGBA) {
-		rr := clip.UniformRRect(image.Rect(int(cx-11), int(cy-9), int(cx+11), int(cy+6)), 2)
-		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 2}.Op())
-		tracoAberto(cor, f32.Pt(cx-6, cy+9.5), f32.Pt(cx+6, cy+9.5))
-		tracoAberto(cor, f32.Pt(cx, cy+6), f32.Pt(cx, cy+9.5))
-	}
+	poligono(faixa, f32.Pt(w*-0.06, h*0.29), f32.Pt(w*0.29, h*-0.08), f32.Pt(w*0.46, h*-0.08), f32.Pt(w*0.12, h*0.29))
+	poligono(faixa, f32.Pt(w*0.17, h*0.48), f32.Pt(w*0.58, h*-0.08), f32.Pt(w*0.72, h*-0.08), f32.Pt(w*0.31, h*0.48))
+	poligono(faixa, f32.Pt(w*0.40, h*0.73), f32.Pt(w*0.87, h*0.03), f32.Pt(w*0.98, h*0.03), f32.Pt(w*0.52, h*0.73))
+	poligono(faixa2, f32.Pt(w*0.0, h*0.68), f32.Pt(w*0.35, h*0.19), f32.Pt(w*0.44, h*0.19), f32.Pt(w*0.09, h*0.68))
 
-	// linhas + dobras, ligando os 4 badges ao centro onde o ícone mora
-	linha(f32.Pt(60, 60), f32.Pt(140, 60), f32.Pt(170, 90))
-	linha(f32.Pt(270, 60), f32.Pt(200, 60), f32.Pt(180, 90))
-	linha(f32.Pt(60, 220), f32.Pt(140, 220), f32.Pt(170, 190))
-	linha(f32.Pt(270, 220), f32.Pt(200, 220), f32.Pt(185, 190))
-	ponto(f32.Pt(140, 60))
-	ponto(f32.Pt(200, 60))
-	ponto(f32.Pt(140, 220))
-	ponto(f32.Pt(200, 220))
-
-	// grade de pontos no canto extremo, parcialmente cortada pela borda
-	for r := 0; r < 8; r++ {
+	// grade de pontos, canto superior esquerdo
+	pontoCor := comAlfa(tema.Sec, pontoOp)
+	if tema.Escuro {
+		pontoCor = comAlfa(tema.Fraco, pontoOp)
+	}
+	ponto := func(x, y, r float32) {
+		rr := clip.Ellipse{Min: image.Pt(int(x-r), int(y-r)), Max: image.Pt(int(x+r), int(y+r))}
+		paint.FillShape(gtx.Ops, pontoCor, rr.Op(gtx.Ops))
+	}
+	for r := 0; r < 4; r++ {
 		for c := 0; c < 8; c++ {
-			if r+c > 5 {
-				ponto(f32.Pt(330+float32(c)*16, 330+float32(r)*16))
-			}
+			ponto(15+float32(c)*17, 100+float32(r)*17, 1.6)
 		}
 	}
 
-	badge(28, 28, tema.Roxo, func(cx, cy float32) { monitor(cx, cy, tema.Roxo) })
-	badge(238, 28, tema.Verde, func(cx, cy float32) {
-		tracoAberto(tema.Verde, f32.Pt(cx-4, cy-4), f32.Pt(cx, cy), f32.Pt(cx-4, cy+4))
-		tracoAberto(tema.Verde, f32.Pt(cx+1, cy), f32.Pt(cx+6, cy))
-	})
-	badge(28, 188, tema.Azul, func(cx, cy float32) { monitor(cx, cy, tema.Azul) })
-	badge(238, 188, tema.AtencaoFg, func(cx, cy float32) {
-		rr := clip.UniformRRect(image.Rect(int(cx-9), int(cy-11), int(cx+9), int(cy+11)), 2)
-		paint.FillShape(gtx.Ops, comAlfa(tema.AtencaoFg, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.8}.Op())
-		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy), f32.Pt(cx+5, cy))
-		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy+4), f32.Pt(cx+5, cy+4))
-		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy+8), f32.Pt(cx+1, cy+8))
-	})
-
-	// hub: o próprio ícone do app (icones/acessos.svg), mesma geometria
-	{
-		htr := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Point{X: 1.15, Y: 1.15}).Offset(f32.Pt(133, 90))).Push(gtx.Ops)
-		rrT := clip.UniformRRect(image.Rect(6, 8, 44, 38), 7)
-		paint.FillShape(gtx.Ops, comAlfa(tema.Sec, opac*1.6), rrT.Op(gtx.Ops))
-		rrF := clip.UniformRRect(image.Rect(20, 24, 58, 56), 7)
-		paint.FillShape(gtx.Ops, comAlfa(tema.Roxo, opac*2.2), clip.Stroke{Path: rrF.Path(gtx.Ops), Width: 2.2}.Op())
-		paint.FillShape(gtx.Ops, comAlfa(tema.Texto, opac*1.6), rrF.Op(gtx.Ops))
-		tracoAberto(tema.Verde, f32.Pt(29, 40), f32.Pt(42, 40))
-		tracoAberto(tema.Verde, f32.Pt(42, 34), f32.Pt(48, 40), f32.Pt(42, 46))
-		htr.Pop()
+	// linha lateral direita, com nós
+	linhaCor := comAlfa(tema.Sec, linhaOp)
+	if tema.Escuro {
+		linhaCor = comAlfa(tema.Fraco, linhaOp)
 	}
+	{
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(w*0.98, h*0.016))
+		p.LineTo(f32.Pt(w*0.965, h*0.19))
+		p.LineTo(f32.Pt(w*0.975, h*0.39))
+		p.LineTo(f32.Pt(w*0.96, h*0.58))
+		p.LineTo(f32.Pt(w*0.968, h*0.77))
+		p.LineTo(f32.Pt(w*0.958, h*0.97))
+		paint.FillShape(gtx.Ops, linhaCor, clip.Stroke{Path: p.End(), Width: 1.2}.Op())
+	}
+	for _, n := range []f32.Point{
+		{X: w * 0.958, Y: h * 0.089}, {X: w * 0.964, Y: h * 0.242}, {X: w * 0.953, Y: h * 0.435},
+		{X: w * 0.965, Y: h * 0.629}, {X: w * 0.948, Y: h * 0.806},
+	} {
+		rr := clip.UniformRRect(image.Rect(int(n.X), int(n.Y), int(n.X)+9, int(n.Y)+9), 2)
+		paint.FillShape(gtx.Ops, linhaCor, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.2}.Op())
+	}
+	for _, n := range []f32.Point{
+		{X: w * 0.965, Y: h * 0.19}, {X: w * 0.975, Y: h * 0.39}, {X: w * 0.96, Y: h * 0.58}, {X: w * 0.968, Y: h * 0.77},
+	} {
+		ponto(n.X, n.Y, 2.2)
+	}
+
+	// blocos de texto, com barra de gradiente (roxo -> verde, mesmo
+	// acento do resto do app) por baixo de cada um.
+	if temaApp == nil {
+		return
+	}
+	txtCor := comAlfa(tema.Sec, 0.85)
+	bloco := func(y float32, linhas []string) {
+		x := w * 0.745
+		for i, s := range linhas {
+			pos := op.Offset(image.Pt(int(x), int(y)+i*16)).Push(gtx.Ops)
+			txt(temaApp, fonteMono, unit.Sp(12), s, txtCor).Layout(gtx)
+			pos.Pop()
+		}
+		by := y + float32(len(linhas))*16 + 4
+		pos := op.Offset(image.Pt(int(x), int(by))).Push(gtx.Ops)
+		gradCSS(gtx, image.Pt(42, 3), 90, tema.Roxo, 0, tema.Verde, 1)
+		pos.Pop()
+	}
+	bloco(h*0.234, []string{"CONECTE", "GERENCIE", "ACESSE", "CONTROLE"})
+	bloco(h*0.677, []string{"ACESSO", "REMOTO", "SEM LIMITES"})
 }
 
 func comAlfa(c color.NRGBA, a float64) color.NRGBA {
