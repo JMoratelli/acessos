@@ -4,7 +4,7 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-14, com a 2.0.6 publicada.
+Atualizado em 2026-09-14.
 
 ---
 
@@ -68,20 +68,14 @@ detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
   dependem de nada do sistema — se estes estiverem errados no Windows e
   certos no Linux, o assunto é outro (escala ou tema), não o `.ico`.
 
-## 4. Diálogo "Sobre"
-
-**Estado: não existe.** A versão aparece no rodapé e nos Ajustes, mas não
-há uma tela dizendo o que é o programa, a licença (GPLv3) e o link do
-repositório. O metainfo embutido já tem tudo isso — é montar a tela.
-
-## 5. Capturas de tela do metainfo
+## 4. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 6. Assinatura do executável do Windows
+## 5. Assinatura do executável do Windows
 
 O instalador não é assinado, então o SmartScreen avisa em toda máquina
 nova. Para distribuição interna é aceitável (o aviso passa com "Mais
