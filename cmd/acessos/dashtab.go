@@ -91,6 +91,7 @@ type dashTab struct {
 	btnMassa      widget.Clickable
 	btnLimparSel  widget.Clickable
 	btnExcluirSel widget.Clickable
+	btnSobre      widget.Clickable
 
 	// seleção para execução em massa. A chave é grupo|nome, a mesma dos
 	// Clickables — o card é identificado pelo par, porque nome se repete
@@ -532,9 +533,19 @@ func (d *dashTab) rodape(gtx layout.Context) layout.Dimensions {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return layout.Inset{Top: 5, Bottom: 5, Left: 14, Right: 14}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if d.btnSobre.Clicked(gtx) {
+					abrirSobre()
+				}
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(rotulo(d.th, fonteMono, spRodape,
-						"Acessos "+versaoInstalada(), tema.Fraco)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return d.btnSobre.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							cor := tema.Fraco
+							if d.btnSobre.Hovered() {
+								cor = tema.Sec
+							}
+							return rotulo(d.th, fonteMono, spRodape, "Acessos "+versaoInstalada(), cor)(gtx)
+						})
+					}),
 					layout.Rigid(layout.Spacer{Width: 12}.Layout),
 					layout.Flexed(1, rotulo(d.th, fonteMono, spRodape, d.caminho, tema.Fraco)),
 					layout.Rigid(rotulo(d.th, fonteMono, spRodape,
