@@ -7,6 +7,11 @@ AI-Assisted, Human-Crafted
   
 # Acessos
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="icones/banner-escuro.svg">
+  <img src="icones/banner-claro.svg" alt="Acessos — VNC, RDP, SSH e SFTP em abas, numa janela só">
+</picture>
+
 Gerenciador de acesso remoto às máquinas — VNC, RDP, SSH e transferência de
 arquivos, em abas.
 
