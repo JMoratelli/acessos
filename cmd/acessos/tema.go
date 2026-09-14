@@ -412,7 +412,7 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 	}
 	txtCor := comAlfa(tema.Sec, 0.85)
 	bloco := func(y float32, linhas []string) {
-		x := w * 0.84
+		x := w * 0.895
 		for i, s := range linhas {
 			pos := op.Offset(image.Pt(int(x), int(y)+i*16)).Push(gtx.Ops)
 			txt(temaApp, fonteMono, unit.Sp(12), s, txtCor).Layout(gtx)
