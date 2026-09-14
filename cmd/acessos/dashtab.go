@@ -90,13 +90,15 @@ type dashTab struct {
 	btnNova       widget.Clickable
 	btnMassa      widget.Clickable
 	btnLimparSel  widget.Clickable
+	btnExcluirSel widget.Clickable
 
 	// seleção para execução em massa. A chave é grupo|nome, a mesma dos
 	// Clickables — o card é identificado pelo par, porque nome se repete
 	// entre lojas.
-	selecao     map[string]conexoes.Conexao
-	aoExecMassa func([]conexoes.Conexao)
-	recarregar  func()
+	selecao        map[string]conexoes.Conexao
+	aoExecMassa    func([]conexoes.Conexao)
+	aoExcluirMassa func([]conexoes.Conexao)
+	recarregar     func()
 	aoInvalidar func()
 
 	// menu de contexto: onde o ponteiro está (para ancorar o menu) e a
@@ -1007,6 +1009,9 @@ func (d *dashTab) barraSelecao(gtx layout.Context) layout.Dimensions {
 	if d.btnMassa.Clicked(gtx) && d.aoExecMassa != nil {
 		d.aoExecMassa(d.listaSelecionada())
 	}
+	if d.btnExcluirSel.Clicked(gtx) && d.aoExcluirMassa != nil {
+		d.aoExcluirMassa(d.listaSelecionada())
+	}
 
 	return layout.Inset{Top: 2, Bottom: 6, Left: 14, Right: 14}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Background{}.Layout(gtx,
@@ -1023,6 +1028,10 @@ func (d *dashTab) barraSelecao(gtx layout.Context) layout.Dimensions {
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return layout.Dimensions{Size: gtx.Constraints.Min}
 						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return botaoIconePerigo(gtx, &d.btnExcluirSel, icons.ActionDelete)
+						}),
+						layout.Rigid(layout.Spacer{Width: 6}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return botaoBarra(gtx, d.th, &d.btnLimparSel, "limpar seleção")
 						}),

@@ -113,6 +113,26 @@ func botaoSutil(gtx layout.Context, th *material.Theme, b *widget.Clickable, rot
 	return botao(gtx, th, b, rot, pesoSutil, false)
 }
 
+// botaoIconePerigo é o botaoPerigo sem rótulo, para quando só cabe um
+// ícone (ex: lixeira numa barra estreita) — mesmo vermelho SÓLIDO,
+// sempre, não só no hover; a regra de peso não muda por faltar o texto.
+func botaoIconePerigo(gtx layout.Context, b *widget.Clickable, ic *widget.Icon) layout.Dimensions {
+	fundo, _, cor := pesoPerigo.cores(b.Hovered())
+	return b.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Background{}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				superficie(gtx, gtx.Constraints.Min, fundo, transparente, 7)
+				return layout.Dimensions{Size: gtx.Constraints.Min}
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(7).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return icone(gtx, ic, cor, 14)
+				})
+			},
+		)
+	})
+}
+
 // botaoLargura força uma largura fixa — usado onde o rótulo muda (a
 // contagem regressiva das ações destrutivas) e o botão não pode pular.
 func botaoLargura(gtx layout.Context, larg unit.Dp) layout.Context {
