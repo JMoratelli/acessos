@@ -603,6 +603,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			layoutModal(gtx, th)
 			rastrearPonteiroGlobal(gtx)
 			layoutMenu(gtx, th)
+			layoutTrocarHost(gtx, th)
 
 			regua(gtx, sb.largura(gtx))
 			recorte.Pop()
