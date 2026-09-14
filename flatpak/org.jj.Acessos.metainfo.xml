@@ -71,7 +71,7 @@
         <p>Exclusao em lote: uma lixeira vermelha na barra de selecao, com a mesma confirmacao com contagem de 3 segundos das outras acoes destrutivas.</p>
         <p>Novo dialogo "Sobre", aberto clicando na versao no rodape — nome, versao, resumo, licenca e link do repositorio (clicavel).</p>
         <p>Botao "procurar..." nos Ajustes, para achar o conexoes.ini navegando em vez de colar o caminho na mao.</p>
-        <p>Icone do app redesenhado: mais claro, com profundidade, no mesmo estilo do VSCode.</p>
+        <p>Icone do app redesenhado: mais claro e com profundidade.</p>
         <p>Melhorias de visibilidade da interface: bordas do tema claro que quase desapareciam contra o fundo, cards do tema escuro sem contraste (texto quase ilegivel, sem sombra de elevacao), e um novo fundo decorativo na janela.</p>
       </description>
     </release>
