@@ -116,8 +116,7 @@ type dashTab struct {
 	naFila        map[string]bool
 	ultimoAviso   time.Time
 	fila          chan conexoes.Conexao
-	cliqueEmIcone bool // o clique deste quadro foi num ícone de protocolo
-	travaAbrir    int  // quadros em que clique não abre (gesto do botão direito)
+	travaAbrir    int // quadros em que clique não abre (gesto do botão direito)
 	aoMenuCard    func(cx conexoes.Conexao, pos image.Point)
 	aoNova        func(grupo string)
 	aoEfemera     func(destino string)
@@ -701,14 +700,6 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 		d.sobCursor = &cx
 	}
 
-	// Clique no corpo do card (nome, host, o vazio) abre no protocolo
-	// padrão. É lido ANTES do layout, mas só decidido DEPOIS: o Clickable
-	// do card cobre o card inteiro, inclusive os quatro ícones, então
-	// clicar em "shell" disparava os dois e a aba que abria era a do
-	// protocolo padrão — não a do ícone clicado.
-	clicouCorpo := hov.Clicked(gtx)
-	d.cliqueEmIcone = false
-
 	dims := hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -786,11 +777,6 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 		)
 	})
 
-	if clicouCorpo && !d.cliqueEmIcone && d.travaAbrir == 0 {
-		if p, ok := protocoloPadrao(cx); ok {
-			d.abrirEm(cx, p, true)
-		}
-	}
 	return dims
 }
 
@@ -904,11 +890,6 @@ func (d *dashTab) botoesCom(gtx layout.Context, cx conexoes.Conexao,
 			d.protoSobCursor = e.p
 		}
 		if ligado && btn.Clicked(gtx) {
-			// AVISA que o clique foi num ícone: o Clickable do card cobre
-			// o card inteiro, inclusive os quatro ícones, e sem esta marca
-			// os dois disparavam — clicar em "shell" abria o shell E a
-			// tela (o protocolo padrão do corpo).
-			d.cliqueEmIcone = true
 			if d.travaAbrir == 0 {
 				if aoClicar != nil {
 					aoClicar(e.p)
