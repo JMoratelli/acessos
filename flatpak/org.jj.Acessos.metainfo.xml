@@ -64,6 +64,17 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.7" date="2026-09-14">
+      <description>
+        <p>Clicar no corpo do card (nome, host, o vazio) nao abre mais nada — abrir conexao passa a ser so pelos quatro icones de protocolo. Clicar na caixa de selecao em lote abria uma conexao por engano, ja que o clique do card cobria a caixa tambem.</p>
+        <p>"Trocar maquina" do SFTP ganha busca e rolagem, sempre em ordem alfabetica — era um menu simples despejando todas as conexoes SSH cadastradas de uma vez. Corrige tambem um travamento da interface ao trocar de maquina com a conexao anterior pendurada numa rede lenta.</p>
+        <p>Exclusao em lote: uma lixeira vermelha na barra de selecao, com a mesma confirmacao com contagem de 3 segundos das outras acoes destrutivas.</p>
+        <p>Novo dialogo "Sobre", aberto clicando na versao no rodape — nome, versao, resumo, licenca e link do repositorio (clicavel).</p>
+        <p>Botao "procurar..." nos Ajustes, para achar o conexoes.ini navegando em vez de colar o caminho na mao.</p>
+        <p>Icone do app redesenhado: mais claro, com profundidade, no mesmo estilo do VSCode.</p>
+        <p>Melhorias de visibilidade da interface: bordas do tema claro que quase desapareciam contra o fundo, cards do tema escuro sem contraste (texto quase ilegivel, sem sombra de elevacao), e um novo fundo decorativo na janela.</p>
+      </description>
+    </release>
     <release version="2.0.6" date="2026-09-13">
       <description>
         <p>Corrige o atualizador do Windows nao reabrindo o app sozinho depois de instalar: a entrada do instalador que reabre no final so dispara em instalacao NAO silenciosa (a caixa "abrir agora" do fim), e o atualizador sempre roda o instalador silencioso. Agora ha uma segunda entrada so para esse caso, sem depender do Restart Manager do Windows para reabrir.</p>
