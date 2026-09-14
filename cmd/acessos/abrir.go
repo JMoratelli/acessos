@@ -10,6 +10,7 @@ import (
 	"acessos-go/internal/conexoes"
 
 	"gioui.org/app"
+	"gioui.org/x/explorer"
 )
 
 // caminhoINI e recarregarINI são preenchidos no main: o diálogo do cofre
@@ -28,6 +29,13 @@ var (
 	// ainda não existe — instalação antiga, com o cofre dentro do
 	// conexoes.ini). É dele que saem as credenciais por alias "!nome".
 	chaveiroAtual *chaveiro.Arquivo
+
+	// explorerAcessos é o diálogo nativo de escolher arquivo (botão
+	// "procurar…" dos Ajustes), um só para a janela inteira — a própria
+	// biblioteca pede isso. Métodos com receiver nil são seguros (a
+	// lib devolve ErrNotAvailable), então não dá pânico se algum
+	// diálogo abrir antes do runApp criar a instância de verdade.
+	explorerAcessos *explorer.Explorer
 )
 
 // paramsCofre devolve de onde vêm salt/kdf/verificador: o chaveiro tem
