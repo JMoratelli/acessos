@@ -25,6 +25,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/widget/material"
+	"gioui.org/x/explorer"
 )
 
 // connSpecs é o valor de um -conn repetido: "chave=valor,chave=valor,...".
@@ -362,6 +363,7 @@ var (
 
 func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), painel *dashTab) error {
 	var ops op.Ops
+	explorerAcessos = explorer.NewExplorer(w)
 	sb := newSidebar()
 	sb.painel = painel // a lateral mostra a MESMA árvore do painel
 	if painel != nil {
@@ -441,6 +443,10 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			// Entrada específica de plataforma (no Linux, o grab de
 			// teclado/clipboard por Wayland) — ver entrada_*.go.
 			tratarEventoPlataforma(w, e, activeTab)
+			// O explorer de arquivos (botão "procurar…" dos Ajustes)
+			// precisa do handle nativo da janela para abrir o diálogo
+			// já ancorado nela — ele mesmo ignora o que não reconhece.
+			explorerAcessos.ListenEvents(e)
 
 		case app.ConfigEvent:
 			// O Gio nunca manda zxdg_toplevel_decoration_v1.set_mode, então

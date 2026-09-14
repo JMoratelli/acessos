@@ -1,15 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"gioui.org/app"
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"gioui.org/x/explorer"
 )
 
 // dlgAjustes mostra ONDE o app está lendo cada coisa e deixa apontar para
@@ -17,15 +20,26 @@ import (
 // no Drive/Insync e existem duas cópias: sem ver o caminho, ninguém
 // descobre que está editando o inventário errado.
 type dlgAjustes struct {
-	w       *app.Window
-	ini     widget.Editor
-	btnOk   widget.Clickable
-	btnCanc widget.Clickable
-	verDiag widget.Clickable
-	diagOn  bool
-	lista   widget.List
-	erro    string
-	aviso   string
+	w           *app.Window
+	ini         widget.Editor
+	btnOk       widget.Clickable
+	btnCanc     widget.Clickable
+	btnProcurar widget.Clickable
+	verDiag     widget.Clickable
+	diagOn      bool
+	lista       widget.List
+	erro        string
+	aviso       string
+
+	// procurar() roda em goroutine (ChooseFile bloqueia até o usuário
+	// decidir) — o resultado só é aplicado no editor dentro do Corpo,
+	// que é o laço de quadro; tocar no widget.Editor de outra goroutine
+	// não é seguro.
+	mu          sync.Mutex
+	procurando  bool
+	pendCaminho string
+	pendErro    string
+	pendPronto  bool
 }
 
 func abrirAjustes(w *app.Window, ini string) {
@@ -48,6 +62,25 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.verDiag.Clicked(gtx) {
 		d.diagOn = !d.diagOn
 	}
+	if d.btnProcurar.Clicked(gtx) {
+		d.mu.Lock()
+		ja := d.procurando
+		d.procurando = true
+		d.mu.Unlock()
+		if !ja {
+			go d.procurar()
+		}
+	}
+	d.mu.Lock()
+	if d.pendPronto {
+		d.ini.SetText(d.pendCaminho)
+		d.pendPronto = false
+	}
+	if d.pendErro != "" {
+		d.erro = d.pendErro
+		d.pendErro = ""
+	}
+	d.mu.Unlock()
 	d.lista.Axis = layout.Vertical
 
 	dir := filepath.Dir(d.ini.Text())
@@ -70,7 +103,15 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		layout.Rigid(rotulo(th, fonteMono, spSecundario, "conexões (arquivo em uso)", tema.Sec)),
 		espaco(4),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return caixaEditor(gtx, th, &d.ini, "caminho do conexoes.ini", 0)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return caixaEditor(gtx, th, &d.ini, "caminho do conexoes.ini", 0)
+				}),
+				layout.Rigid(layout.Spacer{Width: 6}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return botaoSutil(gtx, th, &d.btnProcurar, "procurar…")
+				}),
+			)
 		}),
 		espaco(12),
 		linhaInfo("snippets", caminhoSnippets(d.ini.Text())),
@@ -148,6 +189,38 @@ func (d *dlgAjustes) aplicar() {
 	d.erro = ""
 	d.aviso = fmt.Sprintf("lendo de %s", novo)
 	d.w.Invalidate()
+}
+
+// procurar abre o diálogo nativo do sistema (portal do xdg-desktop no
+// Linux, comdlg32 no Windows) para escolher o conexoes.ini navegando em
+// vez de copiar e colar o caminho. É bloqueante — daí rodar em goroutine
+// própria, sinalizada por procurando para não abrir dois de uma vez.
+func (d *dlgAjustes) procurar() {
+	defer func() {
+		d.mu.Lock()
+		d.procurando = false
+		d.mu.Unlock()
+		d.w.Invalidate()
+	}()
+
+	f, err := explorerAcessos.ChooseFile(".ini")
+	if err != nil {
+		if !errors.Is(err, explorer.ErrUserDecline) {
+			d.mu.Lock()
+			d.pendErro = err.Error()
+			d.mu.Unlock()
+		}
+		return
+	}
+	defer f.Close()
+
+	osf, ok := f.(*os.File)
+	if !ok {
+		return
+	}
+	d.mu.Lock()
+	d.pendCaminho, d.pendPronto = osf.Name(), true
+	d.mu.Unlock()
 }
 
 // trocarArquivoINI é preenchido no main: recarrega o painel a partir de
