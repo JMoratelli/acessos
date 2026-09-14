@@ -67,7 +67,7 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName", "Machadao"
+      VALUE "CompanyName", "Jurandir Moratelli"
       VALUE "FileDescription", "Acessos - gerenciador de acesso remoto"
       VALUE "FileVersion", "$VERSAO"
       VALUE "InternalName", "acessos"
