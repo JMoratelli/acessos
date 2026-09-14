@@ -10,6 +10,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -26,6 +27,10 @@ import (
 type Tema struct {
 	Fundo, Cartao, Borda, Borda2                color.NRGBA
 	Texto, Sec, Fraco                           color.NRGBA
+	// CardFraco é o Fraco QUANDO o texto está por cima do preenchimento
+	// translúcido do card (Vidro2/Vidro3), não do fundo da janela — ver
+	// comentário no valor de cada tema.
+	CardFraco color.NRGBA
 	Fundo1, Fundo2, Fundo3                      color.NRGBA
 	Luz1, Luz2                                  color.NRGBA
 	Vidro1, Vidro2, Vidro3                      color.NRGBA
@@ -46,15 +51,27 @@ type Tema struct {
 	RoxoFraco                                   color.NRGBA
 	Hero1, Hero2, HeroTxt                       color.NRGBA
 	HeroSec                                     color.NRGBA
+	// MarcaFundo é o ícone-marca-d'água do fundo da janela (fundoMarca) —
+	// baixíssima opacidade de propósito, é decoração, não conteúdo.
+	MarcaFundo color.NRGBA
+	// SombraBase/SombraPasso calibram sombra(): preto puro em baixa alfa,
+	// que basta pra "levantar" um cartão claro do fundo claro, é
+	// invisível sobre um fundo já quase preto — o escuro precisa de bem
+	// mais alfa pra registrar a mesma diferença perceptível.
+	SombraBase, SombraPasso uint8
 }
 
 var temaClaro = Tema{
-	Fundo: hex(0xd9e2ee), Cartao: hex(0xffffff), Borda: hex(0xe3e8ec), Borda2: hex(0xcfd6dd),
+	Fundo: hex(0xd9e2ee), Cartao: hex(0xffffff), Borda: hex(0xc7cfd8), Borda2: hex(0xacb6c2),
 	Texto: hex(0x1b232b), Sec: hex(0x5b6976), Fraco: hex(0x94a1ad),
+	// Sem relato de baixo contraste no card claro — mesmo valor do Fraco.
+	CardFraco: hex(0x94a1ad),
 	Fundo1: hex(0xe7edf6), Fundo2: hex(0xd9e2ee), Fundo3: hex(0xc7d3e3),
 	Luz1: rgba(0x4c6ef5, 0.10), Luz2: rgba(0x0ca678, 0.07),
 	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.86), Vidro3: rgba(0xffffff, 1.00),
-	LuzB:     rgba(0x11161a, 0.11),
+	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
+	// ver o relato de bordas "dissolvendo" no tema claro.
+	LuzB:     rgba(0x11161a, 0.17),
 	Barra:    rgba(0xe8edf3, 0.86),
 	HeroLuz1: rgba(0x748ffc, 0.30), HeroLuz2: rgba(0x38d9a9, 0.20),
 	Topo1: hex(0xf2f5f9), Topo2: hex(0xe6ecf3),
@@ -82,19 +99,37 @@ var temaClaro = Tema{
 	// do tema claro (#5b6976) sobre um hero quase preto é o mesmo erro da
 	// "faixa preta acidental" que a skill descreve, só que invertido.
 	HeroSec: hex(0x9aa6b2),
+	MarcaFundo: rgba(0x11161a, 0.035),
+	SombraBase: 6, SombraPasso: 3,
 }
 
 var temaEscuro = Tema{
 	Fundo: hex(0x10141a), Cartao: hex(0x171b21), Borda: hex(0x242a32), Borda2: hex(0x333b45),
 	Texto: hex(0xd6dde5), Sec: hex(0x94a1ae), Fraco: hex(0x68757f),
+	// Fraco foi calibrado contra Fundo (quase preto). O preenchimento
+	// translúcido do card (Vidro2/Vidro3) sai mais claro que a conta em
+	// sRGB prevê — o Gio compõe em linear, mesmo aviso do Luz1/Luz2 mais
+	// abaixo — e Fraco quase desaparecia em cima dele, pior ainda no
+	// hover/selecionado (Vidro3, translúcido a mais ainda). CardFraco é
+	// um degrau mais claro, só pra texto que fica sobre o card.
+	CardFraco: hex(0x8a97a3),
 	Fundo1: hex(0x1a212b), Fundo2: hex(0x10141a), Fundo3: hex(0x080b0f),
 	// As luzes vão com ~55% do alfa do tema.py (0.16/0.10 lá). O Gio
 	// compõe em espaço LINEAR, o GTK/cairo em sRGB: a mesma rgba() sobre
 	// um fundo quase preto sai bem mais forte aqui — o verde do canto
 	// virava um borrão. Compensado na alfa, não na cor, pra manter o matiz.
 	Luz1: rgba(0x748ffc, 0.09), Luz2: rgba(0x38d9a9, 0.055),
+	// Preenchimento do card: DE VOLTA ao valor original. Subir o alfa
+	// aqui pareceu seguro pela conta em sRGB, mas o Gio compõe em linear
+	// (mesmo aviso do Luz1/Luz2 acima) — o resultado real saiu bem mais
+	// claro que a conta previa, um cinza lavado que atropelava até o
+	// contraste do texto secundário em cima do card.
 	Vidro1: rgba(0xffffff, 0.045), Vidro2: rgba(0xffffff, 0.075), Vidro3: rgba(0xffffff, 0.13),
-	LuzB:     rgba(0xffffff, 0.10),
+	// A borda do card em repouso era branco puro translúcido — sobre fundo
+	// quase preto isso lê como BRILHO, não como borda de material. Um
+	// azul-acinzentado neutro em vez de branco resolve isso sem mudar o
+	// matiz frio do resto da paleta escura.
+	LuzB: rgba(0x8fa0b8, 0.16),
 	Barra:    rgba(0x10141a, 0.86),
 	HeroLuz1: rgba(0x748ffc, 0.13), HeroLuz2: rgba(0x38d9a9, 0.08),
 	Topo1: hex(0x080a0d), Topo2: hex(0x12171d),
@@ -111,6 +146,16 @@ var temaEscuro = Tema{
 	AzulFraco: rgba(0x748ffc, 0.16), VerdeFraco: rgba(0x38d9a9, 0.16), RoxoFraco: rgba(0xb197fc, 0.16),
 	Hero1: hex(0x0b0e12), Hero2: hex(0x1c2733), HeroTxt: hex(0xffffff),
 	HeroSec: hex(0x9aa6b2),
+	// Branco em vez de escuro (o fundo já é quase preto) — mas com o
+	// MESMO cuidado do LuzB/Vidro logo acima: o Gio compõe em linear, e
+	// um branco translúcido sobre fundo escuro sai mais forte do que a
+	// conta prevê. Alfa bem baixo de propósito; testar no app antes de
+	// considerar calibrado.
+	MarcaFundo: rgba(0xffffff, 0.03),
+	// ~4x o do tema claro: preto de baixa alfa não registra sobre um
+	// fundo que já está perto do preto — sem isso a sombra existia só no
+	// código, o cartão escuro nunca teve pista de elevação nenhuma.
+	SombraBase: 26, SombraPasso: 12,
 }
 
 // Foco em campo de texto.
@@ -271,6 +316,35 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	// duas luzes de acento, ângulos opostos
 	gradCSS(gtx, size, 150, tema.Luz1, 0, transparente, 0.55)
 	gradCSS(gtx, size, 15, tema.Luz2, 0, transparente, 0.45)
+	fundoMarca(gtx, size)
+}
+
+// fundoMarca desenha o próprio ícone do app (as duas telas sobrepostas,
+// sem a seta — em silhueta ela só confundiria com o conteúdo por cima)
+// gigante e quase invisível, ancorado no canto inferior direito. É
+// decoração pura: baixa o suficiente pra nunca competir com um card ou
+// texto de verdade por cima. Aprovado por prévia antes de entrar aqui.
+func fundoMarca(gtx layout.Context, size image.Point) {
+	// ~85% da altura da janela — grande o bastante pra dar identidade
+	// sem caber inteira na tela (ela nasce cortada no canto, de propósito).
+	esc := float32(size.Y) * 0.85 / 64
+	if esc <= 0 {
+		return
+	}
+	tr := op.Affine(f32.Affine2D{}.
+		Scale(f32.Point{}, f32.Point{X: esc, Y: esc}).
+		Offset(f32.Point{X: float32(size.X) - 58*esc, Y: float32(size.Y) - 58*esc}),
+	).Push(gtx.Ops)
+	defer tr.Pop()
+
+	// raio em unidades do PRÓPRIO ícone (mesmo rx=7 do viewBox 64x64 de
+	// icones/acessos.svg), não Dp — a escala acima já cuida de converter
+	// para pixel de tela junto com o resto da forma.
+	const raioIcone = 7
+	rr1 := clip.UniformRRect(image.Rect(6, 8, 44, 38), raioIcone)
+	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr1.Op(gtx.Ops))
+	rr2 := clip.UniformRRect(image.Rect(20, 24, 58, 56), raioIcone)
+	paint.FillShape(gtx.Ops, tema.MarcaFundo, rr2.Op(gtx.Ops))
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
@@ -340,7 +414,11 @@ func sombra(gtx layout.Context, size image.Point, raioDp unit.Dp) {
 		d := gtx.Dp(unit.Dp(float32(i)))
 		r := image.Rect(-d/2, 0, size.X+d/2, size.Y+d)
 		rr := clip.UniformRRect(r, raio+d)
-		paint.FillShape(gtx.Ops, color.NRGBA{A: uint8(6 + 3*(3-i))}, rr.Op(gtx.Ops))
+		alfa := int(tema.SombraBase) + int(tema.SombraPasso)*(3-i)
+		if alfa > 255 {
+			alfa = 255
+		}
+		paint.FillShape(gtx.Ops, color.NRGBA{A: uint8(alfa)}, rr.Op(gtx.Ops))
 	}
 }
 

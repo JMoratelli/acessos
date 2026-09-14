@@ -851,7 +851,7 @@ func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensio
 func (d *dashTab) meta(gtx layout.Context, cx conexoes.Conexao) layout.Dimensions {
 	var linhas []layout.FlexChild
 	add := func(s string) {
-		linhas = append(linhas, layout.Rigid(rotulo(d.th, fonteMono, spCardMeta, s, tema.Fraco)))
+		linhas = append(linhas, layout.Rigid(rotulo(d.th, fonteMono, spCardMeta, s, tema.CardFraco)))
 	}
 	if cx.Tem(conexoes.VNC) {
 		s := fmt.Sprintf("tela %d · %s", cx.VNC.Porta, cx.VNC.Modo)
