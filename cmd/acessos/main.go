@@ -283,6 +283,21 @@ func main() {
 				chaveiroAtual = ch
 			}
 			painel.recarregarCom(novo)
+
+			// Grava a escolha em [geral] caminho, no arquivo PADRÃO: sem
+			// isto, "Usar este arquivo" só valia pra sessão atual — na
+			// próxima vez que o app abrisse, caminhoINIPadrao() voltava a
+			// resolver pro padrão, como se nada tivesse sido escolhido.
+			padrao := filepath.Join(dirPadrao(), "conexoes.ini")
+			apontar := ""
+			if caminho != padrao {
+				apontar = filepath.Dir(caminho)
+			}
+			if err := garantirINI(padrao); err != nil {
+				fmt.Fprintln(os.Stderr, "não foi possível lembrar o novo caminho:", err)
+			} else if err := conexoes.SalvarGeral(padrao, map[string]string{"caminho": apontar}); err != nil {
+				fmt.Fprintln(os.Stderr, "não foi possível lembrar o novo caminho:", err)
+			}
 			return nil
 		}
 		recarregarIni = func() {

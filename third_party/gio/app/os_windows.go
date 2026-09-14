@@ -244,7 +244,15 @@ func (w *window) update() {
 		w.config.Mode = Windowed
 	}
 	w.ProcessEvent(ConfigEvent{Config: w.config})
-	w.draw(true)
+	// Minimizado não tem o que desenhar, e pedir um frame SÍNCRONO
+	// mesmo assim trava o app: w.config.Size continua sendo o
+	// tamanho de ANTES de minimizar (o bloco acima só atualiza Size
+	// quando !p.IsMinimized()), então draw()'s única guarda (Size ==
+	// 0) não pega, e um frame síncrono é pedido pra uma janela que o
+	// compositor não vai apresentar — o pedido nunca retorna.
+	if !p.IsMinimized() {
+		w.draw(true)
+	}
 }
 
 func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
