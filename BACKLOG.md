@@ -94,9 +94,13 @@ code signing — custo e decisão sua, não técnica.
 
 Ficam registradas para ninguém "descobrir" de novo:
 
-- **Terminal SSH**: sem tela alternativa (`vim`/`less` em tela cheia
-  podem não desenhar direito), sem busca no scrollback e sem relato de
-  mouse. É o escopo que foi combinado para o v1 do terminal. A seleção
-  com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não acompanha
-  o conteúdo se o programa remoto redesenhar por baixo.
+- **Terminal SSH**: sem busca no scrollback (não existe scrollback:
+  o que sai da tela sai) e sem relato de mouse (programas que capturam
+  clique/scroll dentro do terminal, tipo `htop` ou um menu TUI, não
+  recebem o evento). É o escopo que foi combinado para o v1 do terminal.
+  A seleção com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não
+  acompanha o conteúdo se o programa remoto redesenhar por baixo.
+  (Tela alternativa — o modo que `vim`/`less`/`nano` usam para tela
+  cheia — já é tratada pela biblioteca de terminal por baixo; testado
+  com `nano` sem problema.)
 - **Atalhos globais**: não existem, por pedido explícito.
