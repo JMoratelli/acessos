@@ -67,7 +67,11 @@ var temaClaro = Tema{
 	Texto: hex(0x1b232b), Sec: hex(0x5b6976), Fraco: hex(0x94a1ad),
 	// Sem relato de baixo contraste no card claro — mesmo valor do Fraco.
 	CardFraco: hex(0x94a1ad),
-	Fundo1: hex(0xe7edf6), Fundo2: hex(0xd9e2ee), Fundo3: hex(0xc7d3e3),
+	// Fundo1/Fundo3 são as pontas do gradiente da janela (fundoJanela) —
+	// eram próximos demais (diff de ~40 por canal) e o degradê saía
+	// quase plano num teste real. Vão mais afastados, do jeito
+	// acentuado que o tema escuro já tinha.
+	Fundo1: hex(0xeef2f9), Fundo2: hex(0xd9e2ee), Fundo3: hex(0x9aabc4),
 	Luz1: rgba(0x4c6ef5, 0.10), Luz2: rgba(0x0ca678, 0.07),
 	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.86), Vidro3: rgba(0xffffff, 1.00),
 	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
@@ -419,6 +423,19 @@ func fundoCircuito(gtx layout.Context, size image.Point) {
 	linha(f32.Pt(w*0.90, 0), dobraG1, dobraG2, f32.Pt(w*0.80, h*0.26))
 	ponto(dobraG1)
 	ponto(dobraG2)
+
+	// mais três, nos pontos marcados na rodada seguinte de teste.
+	dobraH1, dobraH2 := f32.Pt(w*0.87, h*0.20), f32.Pt(w*0.87, h*0.30)
+	linha(f32.Pt(w, h*0.20), dobraH1, dobraH2)
+	ponto(dobraH1)
+
+	dobraI := f32.Pt(w*0.15, h*0.78)
+	linha(f32.Pt(0, h*0.78), dobraI, f32.Pt(w*0.15, h*0.90))
+	ponto(dobraI)
+
+	dobraJ := f32.Pt(w*0.55, h*0.72)
+	linha(f32.Pt(w*0.55, h), dobraJ, f32.Pt(w*0.45, h*0.72))
+	ponto(dobraJ)
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
