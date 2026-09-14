@@ -627,14 +627,27 @@ func (t *sftpTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout
 }
 
 // ApontarPara troca o destino desta aba e reconecta.
+//
+// Fecha a conexão ANTERIOR em segundo plano, não aqui: isto é chamado do
+// laço de quadro (o clique na lista de "trocar máquina" dispara direto
+// dali), e cli.Close()/sc.Close() são chamadas de rede — se a máquina
+// antiga estiver com a conexão pendurada (inalcançável, mas o TCP ainda
+// não percebeu), a interface inteira congelava até a chamada retornar.
 func (t *sftpTab) ApontarPara(nome, host string, porta int, usuario, senha string) {
-	t.Close()
 	t.mu.Lock()
+	cli, sc := t.cli, t.ssh
+	t.cli, t.ssh = nil, nil
 	t.fechado = false
 	t.host, t.porta, t.user, t.senha = host, porta, usuario, senha
 	t.titulo = nome
 	t.estado = "conectando…"
 	t.mu.Unlock()
+	if cli != nil {
+		go cli.Close()
+	}
+	if sc != nil {
+		go sc.Close()
+	}
 	go t.conectar()
 }
 

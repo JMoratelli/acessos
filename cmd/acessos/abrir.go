@@ -170,7 +170,7 @@ func abrirConexao(w *app.Window, bar *tabBar, arq *conexoes.Arquivo, cx conexoes
 					opcoes = append(opcoes, outra)
 				}
 			}
-			abrirTrocarHost(w, opcoes, func(outra conexoes.Conexao) {
+			abrirTrocarHost(w, ultimaPosPonteiro(), opcoes, func(outra conexoes.Conexao) {
 				senha, err := segredo(outra.SSH.Senha)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, err)
