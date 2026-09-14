@@ -10,6 +10,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -50,10 +51,10 @@ type Tema struct {
 	RoxoFraco                                   color.NRGBA
 	Hero1, Hero2, HeroTxt                       color.NRGBA
 	HeroSec                                     color.NRGBA
-	// MarcaFundo é o ícone-marca-d'água do fundo da janela (fundoMarca);
-	// LinhaFundo são os traços de circuito (fundoCircuito). Baixíssima
-	// opacidade de propósito — é decoração, não conteúdo.
-	MarcaFundo, LinhaFundo color.NRGBA
+	// Escuro diz qual paleta é esta — fundoCanto usa pra saber que o
+	// Gio compõe overlay translúcido mais forte sobre fundo escuro
+	// (espaço linear, não sRGB) e precisa de alfa bem mais baixo ali.
+	Escuro bool
 	// SombraBase/SombraPasso calibram sombra(): preto puro em baixa alfa,
 	// que basta pra "levantar" um cartão claro do fundo claro, é
 	// invisível sobre um fundo já quase preto — o escuro precisa de bem
@@ -103,10 +104,7 @@ var temaClaro = Tema{
 	// do tema claro (#5b6976) sobre um hero quase preto é o mesmo erro da
 	// "faixa preta acidental" que a skill descreve, só que invertido.
 	HeroSec: hex(0x9aa6b2),
-	// Não é linear-por-baixo-do-branco aqui (o overlay é ESCURO sobre
-	// fundo CLARO — o caso "normal" que a conta em sRGB já acerta), por
-	// isso o alfa pode ser mais alto que no escuro sem medo de exagerar.
-	MarcaFundo: rgba(0x11161a, 0.09), LinhaFundo: rgba(0x11161a, 0.16),
+	Escuro:  false,
 	SombraBase: 6, SombraPasso: 3,
 }
 
@@ -154,12 +152,7 @@ var temaEscuro = Tema{
 	AzulFraco: rgba(0x748ffc, 0.16), VerdeFraco: rgba(0x38d9a9, 0.16), RoxoFraco: rgba(0xb197fc, 0.16),
 	Hero1: hex(0x0b0e12), Hero2: hex(0x1c2733), HeroTxt: hex(0xffffff),
 	HeroSec: hex(0x9aa6b2),
-	// Branco em vez de escuro (o fundo já é quase preto) — mas com o
-	// MESMO cuidado do LuzB/Vidro logo acima: o Gio compõe em linear, e
-	// um branco translúcido sobre fundo escuro sai mais forte do que a
-	// conta prevê. Alfa bem baixo de propósito; testar no app antes de
-	// considerar calibrado.
-	MarcaFundo: rgba(0xffffff, 0.045), LinhaFundo: rgba(0xffffff, 0.07),
+	Escuro:  true,
 	// ~4x o do tema claro: preto de baixa alfa não registra sobre um
 	// fundo que já está perto do preto — sem isso a sombra existia só no
 	// código, o cartão escuro nunca teve pista de elevação nenhuma.
@@ -324,6 +317,131 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	// duas luzes de acento, ângulos opostos
 	gradCSS(gtx, size, 150, tema.Luz1, 0, transparente, 0.55)
 	gradCSS(gtx, size, 15, tema.Luz2, 0, transparente, 0.45)
+	fundoCanto(gtx, size)
+}
+
+// fundoCanto desenha, no canto inferior direito, os quatro ícones de
+// protocolo (mesmas cores de dashtab.go — RDP roxo, SSH verde, VNC azul,
+// SFTP âmbar) ligados por linha ao ícone do próprio app. Composição
+// copiada da referência à risca, aprovada por mockup antes de entrar
+// aqui: NÃO reinventar layout/ângulo se for ajustar de novo, só cor e
+// opacidade — as vezes que isso foi ignorado é o motivo de já ter três
+// tentativas descartadas antes desta.
+//
+// Coordenadas num espaço local de ~460x460 "unidades", igual ao mockup;
+// um Affine só escala+posiciona tudo de uma vez pro canto da janela.
+func fundoCanto(gtx layout.Context, size image.Point) {
+	const bbox = 460
+	esc := float32(size.X) * 0.30 / bbox
+	if esc <= 0 {
+		return
+	}
+	margem := 16 * esc
+	tr := op.Affine(f32.Affine2D{}.
+		Scale(f32.Point{}, f32.Point{X: esc, Y: esc}).
+		Offset(f32.Point{
+			X: float32(size.X) - bbox*esc - margem,
+			Y: float32(size.Y) - bbox*esc - margem,
+		}),
+	).Push(gtx.Ops)
+	defer tr.Pop()
+
+	// Opacidade do CONJUNTO: aplicada em cada cor abaixo, não um alfa
+	// de grupo (Gio não tem). Tema escuro fica bem mais baixo de
+	// propósito — overlay translúcido sobre fundo quase preto sai mais
+	// forte aqui do que a conta em sRGB prevê (mesmo aviso de sempre
+	// nesta sessão: LuzB, Luz1/Luz2, a marca-d'água antiga).
+	opac := 0.16
+	if tema.Escuro {
+		opac = 0.05
+	}
+
+	linha := func(pts ...f32.Point) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(pts[0])
+		for _, pt := range pts[1:] {
+			p.LineTo(pt)
+		}
+		paint.FillShape(gtx.Ops, comAlfa(tema.Fraco, opac), clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+	}
+	ponto := func(p f32.Point) {
+		r := float32(3)
+		rr := clip.Ellipse{Min: image.Pt(int(p.X-r), int(p.Y-r)), Max: image.Pt(int(p.X+r), int(p.Y+r))}
+		paint.FillShape(gtx.Ops, comAlfa(tema.Fraco, opac), rr.Op(gtx.Ops))
+	}
+	badge := func(x, y float32, cor color.NRGBA, glifo func(cx, cy float32)) {
+		rr := clip.UniformRRect(image.Rect(int(x), int(y), int(x)+64, int(y)+64), 14)
+		paint.FillShape(gtx.Ops, comAlfa(cor, opac*0.8), rr.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 2}.Op())
+		glifo(x+32, y+31)
+	}
+	tracoAberto := func(cor color.NRGBA, pts ...f32.Point) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(pts[0])
+		for _, pt := range pts[1:] {
+			p.LineTo(pt)
+		}
+		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: p.End(), Width: 2}.Op())
+	}
+	monitor := func(cx, cy float32, cor color.NRGBA) {
+		rr := clip.UniformRRect(image.Rect(int(cx-11), int(cy-9), int(cx+11), int(cy+6)), 2)
+		paint.FillShape(gtx.Ops, comAlfa(cor, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 2}.Op())
+		tracoAberto(cor, f32.Pt(cx-6, cy+9.5), f32.Pt(cx+6, cy+9.5))
+		tracoAberto(cor, f32.Pt(cx, cy+6), f32.Pt(cx, cy+9.5))
+	}
+
+	// linhas + dobras, ligando os 4 badges ao centro onde o ícone mora
+	linha(f32.Pt(60, 60), f32.Pt(140, 60), f32.Pt(170, 90))
+	linha(f32.Pt(270, 60), f32.Pt(200, 60), f32.Pt(180, 90))
+	linha(f32.Pt(60, 220), f32.Pt(140, 220), f32.Pt(170, 190))
+	linha(f32.Pt(270, 220), f32.Pt(200, 220), f32.Pt(185, 190))
+	ponto(f32.Pt(140, 60))
+	ponto(f32.Pt(200, 60))
+	ponto(f32.Pt(140, 220))
+	ponto(f32.Pt(200, 220))
+
+	// grade de pontos no canto extremo, parcialmente cortada pela borda
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			if r+c > 5 {
+				ponto(f32.Pt(330+float32(c)*16, 330+float32(r)*16))
+			}
+		}
+	}
+
+	badge(28, 28, tema.Roxo, func(cx, cy float32) { monitor(cx, cy, tema.Roxo) })
+	badge(238, 28, tema.Verde, func(cx, cy float32) {
+		tracoAberto(tema.Verde, f32.Pt(cx-4, cy-4), f32.Pt(cx, cy), f32.Pt(cx-4, cy+4))
+		tracoAberto(tema.Verde, f32.Pt(cx+1, cy), f32.Pt(cx+6, cy))
+	})
+	badge(28, 188, tema.Azul, func(cx, cy float32) { monitor(cx, cy, tema.Azul) })
+	badge(238, 188, tema.AtencaoFg, func(cx, cy float32) {
+		rr := clip.UniformRRect(image.Rect(int(cx-9), int(cy-11), int(cx+9), int(cy+11)), 2)
+		paint.FillShape(gtx.Ops, comAlfa(tema.AtencaoFg, opac*2.2), clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.8}.Op())
+		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy), f32.Pt(cx+5, cy))
+		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy+4), f32.Pt(cx+5, cy+4))
+		tracoAberto(tema.AtencaoFg, f32.Pt(cx-5, cy+8), f32.Pt(cx+1, cy+8))
+	})
+
+	// hub: o próprio ícone do app (icones/acessos.svg), mesma geometria
+	{
+		htr := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Point{X: 1.15, Y: 1.15}).Offset(f32.Pt(133, 90))).Push(gtx.Ops)
+		rrT := clip.UniformRRect(image.Rect(6, 8, 44, 38), 7)
+		paint.FillShape(gtx.Ops, comAlfa(tema.Sec, opac*1.6), rrT.Op(gtx.Ops))
+		rrF := clip.UniformRRect(image.Rect(20, 24, 58, 56), 7)
+		paint.FillShape(gtx.Ops, comAlfa(tema.Roxo, opac*2.2), clip.Stroke{Path: rrF.Path(gtx.Ops), Width: 2.2}.Op())
+		paint.FillShape(gtx.Ops, comAlfa(tema.Texto, opac*1.6), rrF.Op(gtx.Ops))
+		tracoAberto(tema.Verde, f32.Pt(29, 40), f32.Pt(42, 40))
+		tracoAberto(tema.Verde, f32.Pt(42, 34), f32.Pt(48, 40), f32.Pt(42, 46))
+		htr.Pop()
+	}
+}
+
+func comAlfa(c color.NRGBA, a float64) color.NRGBA {
+	c.A = uint8(math.Round(a * 255))
+	return c
 }
 
 // fundoHero: faixa escura que ancora a página (.hero).
