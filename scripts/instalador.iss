@@ -18,7 +18,7 @@
 AppId={{ed9d32b6-0a74-44b1-9fbe-32becd35bdba}
 AppName=Acessos
 AppVersion={#AppVersion}
-AppPublisher=Machadão
+AppPublisher=Jurandir Moratelli
 ; sem admin: instala no perfil do usuário, como a versão Python fazia.
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Acessos
