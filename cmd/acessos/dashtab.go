@@ -496,7 +496,10 @@ func (d *dashTab) caixaBusca(gtx layout.Context, ed *widget.Editor) layout.Dimen
 	return layout.Inset{}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				superficie(gtx, gtx.Constraints.Min, tema.Vidro2, tema.LuzB, 8)
+				// Campo SÓLIDO, não vidro: com o fundo mais cheio de
+				// desenho (faixas diagonais), transparência aqui deixava
+				// o texto digitado difícil de ler por cima.
+				superficie(gtx, gtx.Constraints.Min, tema.Campo, tema.LuzB, 8)
 				return layout.Dimensions{Size: gtx.Constraints.Min}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
