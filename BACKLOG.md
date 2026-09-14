@@ -4,7 +4,7 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-12, com a 2.0.4 publicada.
+Atualizado em 2026-09-14, com a 2.0.6 publicada.
 
 ---
 
@@ -51,37 +51,7 @@ a ponte com o clipboard do sistema. O ponto de entrada é o mesmo do item
 sozinhos, e a publicação já está serializada no laço de quadro
 (ver [clipboard.go](cmd/acessos/clipboard.go)).
 
-## 3. Atualizador do Windows
-
-**Estado: implementado, falta testar numa máquina Windows de verdade.**
-[internal/atualizador](internal/atualizador/atualizador.go) agora tem um
-caminho para cada plataforma: `EmFlatpak()`/`instalarFlatpak` como antes,
-e `instalarWindows` cuidando do `AcessosSetup-X.Y.Z.exe`. `Suportado()`
-substitui o antigo uso direto de `EmFlatpak()` no diálogo, e decide se o
-atualizador tem o que fazer na plataforma atual.
-
-Mecânica no Windows:
-
-- `Checar` procura o anexo `AcessosSetup-X.Y.Z.exe` da release mais nova
-  e a linha correspondente no `SHA256SUMS.txt` publicado junto (mesmo
-  arquivo de somas que as releases já anexam); sem os dois, não oferece
-  a atualização — não há como baixar o instalador às cegas;
-- `Instalar` baixa para a pasta temporária do usuário, confere o sha256
-  e roda `/SILENT /NORESTART`, sem esperar terminar: o instalador vai
-  substituir o próprio `.exe` que está rodando, então quem tem que
-  esperar é ele, não o contrário;
-- `scripts/instalador.iss` agora liga explicitamente
-  `CloseApplications`/`RestartApplications` (Restart Manager fecha o
-  processo, substitui o arquivo e reabre sozinho — já eram o padrão do
-  Inno 6, mas ficaram explícitos);
-- `scripts/build-windows.sh` gera o `SHA256SUMS.txt` do instalador
-  depois de compilá-lo — junte com a linha do bundle Flatpak na hora de
-  publicar, do jeito que a release já fazia.
-
-Falta: **testar de ponta a ponta no Windows** (o Restart Manager fechando
-e reabrindo o processo é a parte que não dá pra validar do Linux).
-
-## 4. Ícones no Windows
+## 3. Ícones no Windows
 
 **Relatado no teste da 2.0.4: os ícones saem errados no Windows.** Falta
 detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
@@ -98,20 +68,20 @@ detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
   dependem de nada do sistema — se estes estiverem errados no Windows e
   certos no Linux, o assunto é outro (escala ou tema), não o `.ico`.
 
-## 5. Diálogo "Sobre"
+## 4. Diálogo "Sobre"
 
 **Estado: não existe.** A versão aparece no rodapé e nos Ajustes, mas não
 há uma tela dizendo o que é o programa, a licença (GPLv3) e o link do
 repositório. O metainfo embutido já tem tudo isso — é montar a tela.
 
-## 6. Capturas de tela do metainfo
+## 5. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 7. Assinatura do executável do Windows
+## 6. Assinatura do executável do Windows
 
 O instalador não é assinado, então o SmartScreen avisa em toda máquina
 nova. Para distribuição interna é aceitável (o aviso passa com "Mais
