@@ -186,7 +186,7 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 				return botaoIcone(gtx, &t.ajustes, icons.ActionSettings, tema.TopoSec, tema.TopoTxt)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return pilula(gtx, th, &t.tema, icons.ImageBrightness6, "tema")
+				return botaoIcone(gtx, &t.tema, icons.ImageBrightness6, tema.TopoSec, tema.TopoTxt)
 			}),
 			// A+ fica junto do tema porque os dois são a mesma pergunta:
 			// como o app se apresenta. O rótulo mostra o nível corrente
