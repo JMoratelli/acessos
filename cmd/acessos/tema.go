@@ -328,11 +328,71 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 // descartada). NÃO reinventar layout se for ajustar de novo, só
 // cor/opacidade: são já a quinta tentativa nesta sessão de acertar o
 // fundo, as anteriores falharam por inventar em vez de copiar.
+//
+// As formas (faixas, grade, linha+nós) não mudam quadro a quadro — só
+// quando a janela muda de tamanho ou o tema troca — então ficam
+// gravadas uma vez (cantoOps/cantoCall) e só são reconstruídas quando
+// necessário; texto é a única parte redesenhada a cada quadro, porque
+// cachear texto entre quadros é mais delicado (shaping, cor do tema) e
+// sete linhas curtas não pesam o bastante pra valer o risco.
+var (
+	cantoOps     op.Ops
+	cantoCall    op.CallOp
+	cantoValido  bool
+	cantoTamanho image.Point
+	cantoEscuro  bool
+)
+
 func fundoCanto(gtx layout.Context, size image.Point) {
 	w, h := float32(size.X), float32(size.Y)
 	if w <= 0 || h <= 0 {
 		return
 	}
+
+	if !cantoValido || cantoTamanho != size || cantoEscuro != tema.Escuro {
+		cantoOps.Reset()
+		m := op.Record(&cantoOps)
+		fundoCantoFormas(&cantoOps, size)
+		cantoCall = m.Stop()
+		cantoValido, cantoTamanho, cantoEscuro = true, size, tema.Escuro
+	}
+	cantoCall.Add(gtx.Ops)
+
+	// blocos de texto, com barra de gradiente (roxo -> verde, mesmo
+	// acento do resto do app) por baixo de cada um.
+	if temaApp == nil {
+		return
+	}
+	txtCor := comAlfa(tema.Sec, 0.85)
+	// ~2x o original (era 12/16/42/3) — 3x vazava pra fora da janela.
+	const (
+		tamFonte  = 24
+		altLinha  = 32
+		largBarra = 84
+		altBarra  = 6
+	)
+	bloco := func(y float32, linhas []string) {
+		x := w * 0.87
+		for i, s := range linhas {
+			pos := op.Offset(image.Pt(int(x), int(y)+i*altLinha)).Push(gtx.Ops)
+			txt(temaApp, fonteMono, unit.Sp(tamFonte), s, txtCor).Layout(gtx)
+			pos.Pop()
+		}
+		by := y + float32(len(linhas))*altLinha + 12
+		pos := op.Offset(image.Pt(int(x), int(by))).Push(gtx.Ops)
+		gradCSS(gtx, image.Pt(largBarra, altBarra), 90, tema.Roxo, 0, tema.Verde, 1)
+		pos.Pop()
+	}
+	bloco(h*0.234, []string{"CONECTE", "GERENCIE", "ACESSE", "CONTROLE"})
+	bloco(h*0.677, []string{"ACESSO", "REMOTO", "SEM LIMITES"})
+}
+
+// fundoCantoFormas desenha só as formas (faixas, grade, linha+nós) num
+// *op.Ops qualquer — não precisa de layout.Context porque nenhuma delas
+// é texto. Separada de fundoCanto para poder ser gravada uma vez em
+// cantoOps e reaproveitada nos quadros seguintes.
+func fundoCantoFormas(o *op.Ops, size image.Point) {
+	w, h := float32(size.X), float32(size.Y)
 
 	// Opacidade das faixas/grade/linha. Tema escuro entra bem mais
 	// baixo de propósito — overlay translúcido sobre fundo quase preto
@@ -348,13 +408,13 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 	faixa2 := comAlfa(hex(0xffffff), faixaOp2)
 	poligono := func(cor color.NRGBA, pts ...f32.Point) {
 		var p clip.Path
-		p.Begin(gtx.Ops)
+		p.Begin(o)
 		p.MoveTo(pts[0])
 		for _, pt := range pts[1:] {
 			p.LineTo(pt)
 		}
 		p.Close()
-		paint.FillShape(gtx.Ops, cor, clip.Outline{Path: p.End()}.Op())
+		paint.FillShape(o, cor, clip.Outline{Path: p.End()}.Op())
 	}
 	poligono(faixa, f32.Pt(w*-0.06, h*0.29), f32.Pt(w*0.29, h*-0.08), f32.Pt(w*0.46, h*-0.08), f32.Pt(w*0.12, h*0.29))
 	poligono(faixa, f32.Pt(w*0.17, h*0.48), f32.Pt(w*0.58, h*-0.08), f32.Pt(w*0.72, h*-0.08), f32.Pt(w*0.31, h*0.48))
@@ -368,7 +428,7 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 	}
 	ponto := func(x, y, r float32) {
 		rr := clip.Ellipse{Min: image.Pt(int(x-r), int(y-r)), Max: image.Pt(int(x+r), int(y+r))}
-		paint.FillShape(gtx.Ops, pontoCor, rr.Op(gtx.Ops))
+		paint.FillShape(o, pontoCor, rr.Op(o))
 	}
 	for r := 0; r < 4; r++ {
 		for c := 0; c < 8; c++ {
@@ -383,51 +443,40 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 	}
 	{
 		var p clip.Path
-		p.Begin(gtx.Ops)
+		p.Begin(o)
 		p.MoveTo(f32.Pt(w*0.98, h*0.016))
 		p.LineTo(f32.Pt(w*0.965, h*0.19))
 		p.LineTo(f32.Pt(w*0.975, h*0.39))
 		p.LineTo(f32.Pt(w*0.96, h*0.58))
 		p.LineTo(f32.Pt(w*0.968, h*0.77))
 		p.LineTo(f32.Pt(w*0.958, h*0.97))
-		paint.FillShape(gtx.Ops, linhaCor, clip.Stroke{Path: p.End(), Width: 1.2}.Op())
+		paint.FillShape(o, linhaCor, clip.Stroke{Path: p.End(), Width: 1.2}.Op())
 	}
 	for _, n := range []f32.Point{
 		{X: w * 0.958, Y: h * 0.089}, {X: w * 0.964, Y: h * 0.242}, {X: w * 0.953, Y: h * 0.435},
 		{X: w * 0.965, Y: h * 0.629}, {X: w * 0.948, Y: h * 0.806},
 	} {
 		rr := clip.UniformRRect(image.Rect(int(n.X), int(n.Y), int(n.X)+9, int(n.Y)+9), 2)
-		paint.FillShape(gtx.Ops, linhaCor, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.2}.Op())
+		paint.FillShape(o, linhaCor, clip.Stroke{Path: rr.Path(o), Width: 1.2}.Op())
 	}
 	for _, n := range []f32.Point{
 		{X: w * 0.965, Y: h * 0.19}, {X: w * 0.975, Y: h * 0.39}, {X: w * 0.96, Y: h * 0.58}, {X: w * 0.968, Y: h * 0.77},
 	} {
 		ponto(n.X, n.Y, 2.2)
 	}
-
-	// blocos de texto, com barra de gradiente (roxo -> verde, mesmo
-	// acento do resto do app) por baixo de cada um.
-	if temaApp == nil {
-		return
-	}
-	txtCor := comAlfa(tema.Sec, 0.85)
-	bloco := func(y float32, linhas []string) {
-		x := w * 0.895
-		for i, s := range linhas {
-			pos := op.Offset(image.Pt(int(x), int(y)+i*16)).Push(gtx.Ops)
-			txt(temaApp, fonteMono, unit.Sp(12), s, txtCor).Layout(gtx)
-			pos.Pop()
-		}
-		by := y + float32(len(linhas))*16 + 4
-		pos := op.Offset(image.Pt(int(x), int(by))).Push(gtx.Ops)
-		gradCSS(gtx, image.Pt(42, 3), 90, tema.Roxo, 0, tema.Verde, 1)
-		pos.Pop()
-	}
-	bloco(h*0.234, []string{"CONECTE", "GERENCIE", "ACESSE", "CONTROLE"})
-	bloco(h*0.677, []string{"ACESSO", "REMOTO", "SEM LIMITES"})
 }
 
+// comAlfa devolve c com a alfa recalculada a partir de uma fração
+// 0..1. a é sempre travado nesse intervalo: sem isso, uma fração maior
+// que 1 (um multiplicador aplicado sem pensar, por exemplo) estoura o
+// uint8 em silêncio — dá a volta em vez de saturar — e produz uma cor
+// errada sem erro nenhum pra rastrear.
 func comAlfa(c color.NRGBA, a float64) color.NRGBA {
+	if a < 0 {
+		a = 0
+	} else if a > 1 {
+		a = 1
+	}
 	c.A = uint8(math.Round(a * 255))
 	return c
 }
