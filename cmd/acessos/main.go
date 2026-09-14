@@ -244,6 +244,25 @@ func main() {
 			bar.appendCom(t, fmt.Sprintf("massa|%d|%s", len(sel), sel[0].Nome))
 			w.Invalidate()
 		}
+		painel.aoExcluirMassa = func(sel []conexoes.Conexao) {
+			if len(sel) == 0 {
+				return
+			}
+			itens := make([]string, len(sel))
+			for i, cx := range sel {
+				itens[i] = cx.Nome + "  (" + cx.Host + ")"
+			}
+			confirmarDestrutivo(w, fmt.Sprintf("Remover %d conexões", len(sel)), itens,
+				"Remover definitivamente", func() {
+					for _, cx := range sel {
+						if err := conexoes.Remover(caminhoINI, cx.Nome); err != nil {
+							fmt.Fprintln(os.Stderr, err)
+						}
+					}
+					painel.selecao = map[string]conexoes.Conexao{}
+					recarregarINI()
+				})
+		}
 		painelRef = painel
 		bar.prependPinned(painel)
 		recarregarINI = func() { recarregarIni() }
