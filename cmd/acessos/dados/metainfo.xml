@@ -64,6 +64,13 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.0.10" date="2026-09-15">
+      <description>
+        <p>Terminal SSH: repeticao de tecla ao segurar (setas, backspace etc.), historico de rolagem (roda do mouse sem Ctrl), colar (Ctrl+Shift+V) passa a funcionar entre abas diferentes e preserva quebra de linha em editores como o nano, Ctrl+Delete apaga a palavra a frente do cursor, e a tela comeca limpa numa reconexao em vez de embaralhar com o conteudo da sessao anterior.</p>
+        <p>Corrige um atraso as vezes de varios segundos para a saida de um comando aparecer na tela do terminal SSH.</p>
+        <p>SFTP: Enter no campo de caminho entra na pasta digitada — antes inseria um espaco e nao fazia nada.</p>
+      </description>
+    </release>
     <release version="2.0.9" date="2026-09-14">
       <description>
         <p>Corrige o travamento ao minimizar no Windows: o app pedia um redesenho sincrono da janela mesmo ja minimizada, e o Windows nunca chegava a atender esse pedido.</p>
