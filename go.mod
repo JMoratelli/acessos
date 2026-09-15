@@ -30,3 +30,5 @@ require (
 )
 
 replace gioui.org => ./third_party/gio
+
+replace github.com/hinshun/vt10x => ./third_party/vt10x
