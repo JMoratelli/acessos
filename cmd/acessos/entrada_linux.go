@@ -87,6 +87,11 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				}
 			},
 			func(text string) {
+				// SEMPRE grava, não só na aba ativa: é o que faz colar
+				// (Ctrl+Shift+V) no terminal SSH funcionar em qualquer aba,
+				// não só na que por acaso estava em foco quando o Wayland
+				// avisou que o clipboard mudou (ver clipboard.go).
+				registrarClipboardSistema(text)
 				if h, ok := activeTab().(clipboardReceiver); ok {
 					h.OnLocalClipboard(text)
 				}

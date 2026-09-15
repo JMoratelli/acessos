@@ -49,6 +49,11 @@ var clipPendente atomic.Pointer[string]
 
 // publicarClipboard pode ser chamada de QUALQUER goroutine.
 func publicarClipboard(w *app.Window, texto string) {
+	// grava JÁ no cache global, sem esperar o Wayland avisar que o
+	// clipboard mudou: nada garante que esse aviso volte pra quem
+	// acabou de publicar (depende do compositor), e sem isto colar logo
+	// em seguida — mesmo na mesma aba — podia devolver o texto antigo.
+	registrarClipboardSistema(texto)
 	t := texto
 	clipPendente.Store(&t)
 	if w != nil {
@@ -61,6 +66,33 @@ func entregarClipboard() {
 	if p := clipPendente.Swap(nil); p != nil {
 		currentGrab.Load().SetClipboardText(*p)
 	}
+}
+
+// ---- último clipboard do sistema conhecido ----
+//
+// O terminal SSH cola (Ctrl+Shift+V) o que estiver aqui. Guardar
+// INDEPENDENTE de qual aba estava ativa é o que faz "copiar na aba 101,
+// colar na 102" funcionar: o aviso de "clipboard mudou" do Wayland chega
+// só UMA vez, para quem estiver em foco NAQUELE instante exato — sem este
+// cache global, uma aba que não estava em foco nesse instante (a maioria
+// delas, na prática) nunca fica sabendo do que foi copiado, e Ctrl+Shift+V
+// nela ou não faz nada ou cola um texto antigo, de uma cópia anterior.
+var clipboardSistemaAtual atomic.Pointer[string]
+
+// registrarClipboardSistema é chamado do grab do Wayland toda vez que o
+// clipboard do sistema muda, não importa qual aba está ativa.
+func registrarClipboardSistema(texto string) {
+	t := texto
+	clipboardSistemaAtual.Store(&t)
+}
+
+// clipboardSistema devolve o último texto conhecido do clipboard do
+// sistema ("" se nada foi visto ainda nesta sessão do app).
+func clipboardSistema() string {
+	if p := clipboardSistemaAtual.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 
 // ---- aba ativa ----

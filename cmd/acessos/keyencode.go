@@ -74,6 +74,18 @@ var especiais = map[uint32]string{
 // bytesDaTecla traduz um keysym (com os modificadores correntes) para os
 // bytes a mandar. Devolve nil quando a tecla não produz nada.
 func bytesDaTecla(keysym uint32, m modificadores) []byte {
+	// Ctrl+Delete apaga a PALAVRA à frente do cursor — a sequência que
+	// xterm/gnome-terminal mandam de verdade para Delete com um
+	// modificador (aqui, 5 = Ctrl; ver a convenção CSI-com-modificador do
+	// xterm). Testado na prática contra os dois alvos que importam: o
+	// nano tem bind de fábrica pra ela ("chopwordright"), e o bash
+	// moderno (readline ≥ 8.1) também já reconhece de fábrica, sem
+	// precisar de nada no .inputrc remoto. "\x1bd" (Meta-d, kill-word do
+	// readline) foi a primeira tentativa, mas o nano ignora — só entende
+	// a sequência de terminal de verdade.
+	if keysym == ksDelete && m.ctrl {
+		return []byte("\x1b[3;5~")
+	}
 	if s, ok := especiais[keysym]; ok {
 		if m.alt {
 			return append([]byte{0x1b}, s...)
