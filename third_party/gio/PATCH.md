@@ -57,6 +57,22 @@ de lista/aba a mão em qualquer hover ficava irritante — o app agora soma
 sentido como clicáveis discretos (ver cmd/acessos/topbar.go e
 cmd/acessos/tabbar.go), não mais no Clickable genérico do Gio.)
 
+Um sétimo patch, em `app/os_wayland.go` (`gio_onToplevelConfigure`): o Gio
+de origem recebia o array de estados (`states *C.struct_wl_array`) desse
+callback do `xdg_toplevel` e o descartava por completo, só lendo
+width/height. Na prática: arrastar a titlebar até o topo/canto da tela
+aciona o snap-to-maximize do KWin, que manda um `configure` com
+`XDG_TOPLEVEL_STATE_MAXIMIZED` no array de estados — só que, como o Gio
+ignorava esse array, `w.config.Mode` nunca saía de `Windowed`. O app
+ficava do tamanho da tela mas achando que estava em modo janela: o ícone
+de maximizar/restaurar da nossa topbar não trocava, e um clique nele
+mandava `ActionMaximize` de novo numa janela que já estava maximizada. O
+patch lê o array (um `wl_array` de `uint32_t`, valores do enum
+`xdg_toplevel_state`) e atualiza `w.config.Mode` (`Maximized`/
+`Fullscreen`/`Windowed`) e dispara `ConfigEvent` quando muda. Confirmado
+na prática: o KWin manda `[MAXIMIZED, ACTIVATED]` nesse array ao encostar
+a janela no topo da tela.
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).

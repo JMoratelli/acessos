@@ -606,6 +606,39 @@ func gio_onToplevelConfigure(data unsafe.Pointer, topLvl *C.struct_xdg_toplevel,
 		w.size = image.Pt(int(width), int(height))
 		w.updateOpaqueRegion()
 	}
+
+	// --- patch acessos (ver third_party/gio/PATCH.md) ---
+	// O Gio de origem recebia o array de estados deste evento e o
+	// descartava por completo. Resultado: um snap de borda do compositor
+	// (arrastar a titlebar até o topo/canto da tela, fora de qualquer
+	// clique nos nossos botões) redimensionava a janela pro tamanho da
+	// tela SEM avisar o app — w.config.Mode continuava "Windowed", então
+	// o ícone de maximizar/restaurar e o arredondamento dos cantos
+	// ficavam errados até o usuário mexer manualmente no botão.
+	if states != nil && w.config.Mode != Minimized {
+		maximized, fullscreen := false, false
+		n := int(states.size) / int(unsafe.Sizeof(C.uint32_t(0)))
+		for _, v := range unsafe.Slice((*C.uint32_t)(states.data), n) {
+			switch v {
+			case C.XDG_TOPLEVEL_STATE_MAXIMIZED:
+				maximized = true
+			case C.XDG_TOPLEVEL_STATE_FULLSCREEN:
+				fullscreen = true
+			}
+		}
+		mode := Windowed
+		switch {
+		case fullscreen:
+			mode = Fullscreen
+		case maximized:
+			mode = Maximized
+		}
+		if w.config.Mode != mode {
+			w.config.Mode = mode
+			w.ProcessEvent(ConfigEvent{Config: w.config})
+		}
+	}
+	// --- fim do patch ---
 }
 
 //export gio_onToplevelDecorationConfigure

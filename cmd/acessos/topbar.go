@@ -35,10 +35,9 @@ type topBar struct {
 	chaveiro   widget.Clickable
 	tema       widget.Clickable
 	fonte      widget.Clickable
-	minimizar  widget.Clickable
-	maximizar  widget.Clickable
-	fechar     widget.Clickable
-	maximizada bool
+	minimizar widget.Clickable
+	maximizar widget.Clickable
+	fechar    widget.Clickable
 }
 
 type acoesTopo struct {
@@ -85,12 +84,16 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 		w.Perform(system.ActionMinimize)
 	}
 	for t.maximizar.Clicked(gtx) {
-		if t.maximizada {
+		// janelaMaximizada vem do app.ConfigEvent (main.go), não de um
+		// toggle próprio: encostar a janela numa borda da tela aciona o
+		// snap-to-maximize do compositor sem passar por este botão, e um
+		// bool só nosso ficava dessincronizado — o ícone continuava
+		// mostrando "maximizar" numa janela já maximizada pelo KWin.
+		if janelaMaximizada {
 			w.Perform(system.ActionUnmaximize)
 		} else {
 			w.Perform(system.ActionMaximize)
 		}
-		t.maximizada = !t.maximizada
 	}
 	for t.fechar.Clicked(gtx) {
 		w.Perform(system.ActionClose)
@@ -205,7 +208,7 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				ic := icons.ActionOpenInNew
-				if t.maximizada {
+				if janelaMaximizada {
 					ic = icons.ActionFlipToFront
 				}
 				return botaoIcone(gtx, &t.maximizar, ic, tema.TopoSec, tema.TopoTxt)
