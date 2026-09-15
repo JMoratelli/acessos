@@ -144,6 +144,12 @@ func newSFTPTab(w *app.Window, spec map[string]string) (Tab, error) {
 	t.remoto.remoto = true
 	t.local.caminho.SingleLine = true
 	t.remoto.caminho.SingleLine = true
+	// Submit: sem isto o Enter no campo de caminho vira um '\n' que o
+	// próprio Editor, por ser SingleLine, troca por um ESPAÇO (ver
+	// widget.Editor.processKey) — o campo nunca soltava um SubmitEvent
+	// para a aba entrar na pasta digitada.
+	t.local.caminho.Submit = true
+	t.remoto.caminho.Submit = true
 	t.local.filtro.SingleLine = true
 	t.remoto.filtro.SingleLine = true
 	if lar, err := os.UserHomeDir(); err == nil {
@@ -724,6 +730,22 @@ func (t *sftpTab) tratarBotoes(gtx layout.Context) {
 				go t.listarRemoto()
 			} else {
 				t.listarLocal()
+			}
+		}
+		// Enter no campo de caminho: recarrega com o texto TAL QUAL foi
+		// digitado (sem juntar com nome nenhum, diferente de navegar()) —
+		// é o mesmo caminho que o botão ⟳ usa.
+		for {
+			ev, ok := p.caminho.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, submeteu := ev.(widget.SubmitEvent); submeteu {
+				if p.remoto {
+					go t.listarRemoto()
+				} else {
+					t.listarLocal()
+				}
 			}
 		}
 		botoes := p.btnItem
