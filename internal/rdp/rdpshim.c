@@ -54,6 +54,8 @@
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/gfx.h>
+#include <freerdp/graphics.h>
+#include <freerdp/codec/color.h>
 #include <freerdp/channels/rdpgfx.h>
 #include <freerdp/input.h>
 #include <freerdp/scancode.h>
@@ -139,6 +141,11 @@ typedef void (*cb_clip_texto)(void *ctx, const char *utf8, int tam);
 /* canal Display Control pronto para receber pedidos de resize (depois de
  * DisplayControlCaps) — antes disso rs_pedir_resize so devolve 0 calado */
 typedef void (*cb_disp_pronto)(void *ctx);
+/* forma de cursor nova (ou "voltou ao padrão", com w=h=0 e mask=NULL).
+ * mask: 1 byte por pixel (w*h bytes), o canal alfa decodificado do
+ * XOR+AND mask do RDP — 0 = transparente, != 0 = opaco. */
+typedef void (*cb_cursor)(void *ctx, int xhot, int yhot, int w, int h,
+                          const uint8_t *mask);
 
 /* nosso rdpContext estendido — o padrao da lib e crescer freerdp_context com
  * campos proprios no final, e usar ContextSize/ContextNew para isso */
@@ -157,6 +164,7 @@ typedef struct {
     cb_certificado_mudou ao_certificado_mudou;
     cb_clip_texto ao_clip_texto;
     cb_disp_pronto ao_disp_pronto;
+    cb_cursor ao_cursor;
 
     char *host;
     int porta;
@@ -239,6 +247,98 @@ static BOOL hook_desktop_resize(rdpContext *context) {
     if (!ok) return FALSE;
 
     if (s && s->ao_redimensionar) s->ao_redimensionar(s->pyctx, (int)w, (int)h);
+    return TRUE;
+}
+
+/* ---- cursor remoto ----
+ *
+ * Sem registrar nada aqui, a rdpPointer da libfreerdp fica no protótipo
+ * "padrão" de graphics_new() — que não faz nada com as formas de cursor
+ * que o servidor manda, nem as desenha no framebuffer. É por isso que o
+ * cursor no RDP nunca mudava: a lib recebia PointerNew/PointerCached/
+ * PointerSet do servidor e simplesmente descartava.
+ *
+ * Não desenhamos o bitmap (mesma decisão do vncshim.c pro cursor VNC):
+ * só extraímos o canal alfa (via freerdp_image_copy_from_pointer_data,
+ * que decodifica o XOR+AND mask da RDPBCGR) e mandamos pro lado Go pra
+ * aproximar um pointer.Cursor do Gio a partir da FORMA.
+ *
+ * Struct customizada com rdpPointer EMBUTIDA NO INÍCIO: é o padrão da
+ * lib (mesmo esquema do RdpCtx acima) — graphics_register_pointer recebe
+ * o tamanho via .size e a lib aloca isto, não um rdpPointer puro. */
+typedef struct {
+    rdpPointer pointer;
+    uint8_t *mascara; /* w*h bytes, canal alfa; NULL se não decodificou */
+    UINT32 w, h;
+} MeuPonteiro;
+
+static BOOL hook_pointer_new(rdpContext *context, rdpPointer *ptr) {
+    (void)context;
+    MeuPonteiro *mp = (MeuPonteiro *)ptr;
+    mp->mascara = NULL;
+    mp->w = ptr->width;
+    mp->h = ptr->height;
+    if (mp->w == 0 || mp->h == 0) return TRUE;
+
+    size_t n = (size_t)mp->w * (size_t)mp->h;
+    BYTE *rgba = (BYTE *)malloc(n * 4);
+    if (!rgba) return TRUE;
+    BOOL ok = freerdp_image_copy_from_pointer_data(
+        rgba, PIXEL_FORMAT_BGRA32, 0, 0, 0, mp->w, mp->h,
+        ptr->xorMaskData, ptr->lengthXorMask, ptr->andMaskData,
+        ptr->lengthAndMask, ptr->xorBpp, NULL);
+    if (ok) {
+        mp->mascara = (uint8_t *)malloc(n);
+        if (mp->mascara) {
+            for (size_t i = 0; i < n; i++)
+                mp->mascara[i] = rgba[i * 4 + 3]; /* BGRA: alfa é o 4o byte */
+        }
+    }
+    if (getenv("RS_LOG"))
+        fprintf(stderr, "[rdp] pointer new: %ux%u xorBpp=%u decode=%s\n",
+                mp->w, mp->h, ptr->xorBpp, ok ? "ok" : "falhou");
+    free(rgba);
+    return TRUE;
+}
+
+static void hook_pointer_free(rdpContext *context, rdpPointer *ptr) {
+    (void)context;
+    MeuPonteiro *mp = (MeuPonteiro *)ptr;
+    free(mp->mascara);
+    mp->mascara = NULL;
+}
+
+static BOOL hook_pointer_set(rdpContext *context, rdpPointer *ptr) {
+    MeuPonteiro *mp = (MeuPonteiro *)ptr;
+    Sessao *s = sessao_de(context->instance);
+    if (getenv("RS_LOG"))
+        fprintf(stderr, "[rdp] pointer set: %ux%u hot=(%u,%u) mascara=%p\n",
+                mp->w, mp->h, ptr->xPos, ptr->yPos, (void *)mp->mascara);
+    if (s && s->ao_cursor && mp->mascara)
+        s->ao_cursor(s->pyctx, (int)ptr->xPos, (int)ptr->yPos,
+                     (int)mp->w, (int)mp->h, mp->mascara);
+    return TRUE;
+}
+
+/* SetNull (cursor escondido) e SetDefault (seta padrão do sistema): os
+ * dois casos em que o lado Go deve voltar pro cursor local comum — mesmo
+ * sinal que "w=0" já significa pro classificador do lado Go. */
+static BOOL hook_pointer_set_null(rdpContext *context) {
+    Sessao *s = sessao_de(context->instance);
+    if (getenv("RS_LOG")) fprintf(stderr, "[rdp] pointer set null\n");
+    if (s && s->ao_cursor) s->ao_cursor(s->pyctx, 0, 0, 0, 0, NULL);
+    return TRUE;
+}
+
+static BOOL hook_pointer_set_default(rdpContext *context) {
+    Sessao *s = sessao_de(context->instance);
+    if (getenv("RS_LOG")) fprintf(stderr, "[rdp] pointer set default\n");
+    if (s && s->ao_cursor) s->ao_cursor(s->pyctx, 0, 0, 0, 0, NULL);
+    return TRUE;
+}
+
+static BOOL hook_pointer_set_position(rdpContext *context, UINT32 x, UINT32 y) {
+    (void)context; (void)x; (void)y;
     return TRUE;
 }
 
@@ -619,6 +719,17 @@ static BOOL hook_post_connect(freerdp *inst) {
     context->update->BeginPaint = hook_begin_paint;
     context->update->EndPaint = hook_end_paint;
     context->update->DesktopResize = hook_desktop_resize;
+
+    rdpPointer funcoesPonteiro = { 0 };
+    funcoesPonteiro.size = sizeof(MeuPonteiro);
+    funcoesPonteiro.New = hook_pointer_new;
+    funcoesPonteiro.Free = hook_pointer_free;
+    funcoesPonteiro.Set = hook_pointer_set;
+    funcoesPonteiro.SetNull = hook_pointer_set_null;
+    funcoesPonteiro.SetDefault = hook_pointer_set_default;
+    funcoesPonteiro.SetPosition = hook_pointer_set_position;
+    graphics_register_pointer(context->graphics, &funcoesPonteiro);
+
     /* primeiro quadro: framebuffer ja existe, avisa o tamanho de uma vez */
     Sessao *s = sessao_de(inst);
     if (s && s->ao_redimensionar)
@@ -648,7 +759,8 @@ Sessao *rs_criar(void *pyctx,
                  cb_certificado_novo ao_certificado_novo,
                  cb_certificado_mudou ao_certificado_mudou,
                  cb_clip_texto ao_clip_texto,
-                 cb_disp_pronto ao_disp_pronto) {
+                 cb_disp_pronto ao_disp_pronto,
+                 cb_cursor ao_cursor) {
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
     MUTEX_INIT(&s->clip_lock);
@@ -701,6 +813,7 @@ Sessao *rs_criar(void *pyctx,
     s->ao_certificado_mudou = ao_certificado_mudou;
     s->ao_clip_texto = ao_clip_texto;
     s->ao_disp_pronto = ao_disp_pronto;
+    s->ao_cursor = ao_cursor;
     return s;
 }
 

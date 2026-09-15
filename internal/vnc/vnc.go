@@ -12,6 +12,7 @@ package vnc
 extern void goAoAtualizar(void *ctx, int x, int y, int w, int h);
 extern void goAoRedimensionar(void *ctx, int w, int h);
 extern void goAoReceberTexto(void *ctx, char *texto, int tam);
+extern void goAoCursor(void *ctx, int xhot, int yhot, int w, int h, uint8_t *mask);
 */
 import "C"
 
@@ -35,6 +36,10 @@ type Session struct {
 	OnUpdate  func(x, y, w, h int)
 	OnResize  func(w, h int)
 	OnCutText func(text string)
+	// OnCursor é chamado quando o servidor manda uma nova forma de
+	// cursor. mask é 1 byte por pixel (0/255), w*h bytes — uma CÓPIA,
+	// válida além do escopo do callback.
+	OnCursor func(xhot, yhot, w, h int, mask []byte)
 }
 
 var (
@@ -59,6 +64,7 @@ func New() *Session {
 		C.cb_atualizou(C.goAoAtualizar),
 		C.cb_redimensionou(C.goAoRedimensionar),
 		C.cb_texto(C.goAoReceberTexto),
+		C.cb_cursor(C.goAoCursor),
 	)
 	return sess
 }
@@ -244,4 +250,20 @@ func goAoReceberTexto(ctx unsafe.Pointer, texto *C.char, tam C.int) {
 	if sess != nil && sess.OnCutText != nil {
 		sess.OnCutText(C.GoStringN(texto, tam))
 	}
+}
+
+//export goAoCursor
+func goAoCursor(ctx unsafe.Pointer, xhot, yhot, w, h C.int, mask *C.uint8_t) {
+	sess := sessionFromHandle(ctx)
+	if sess == nil || sess.OnCursor == nil || mask == nil {
+		return
+	}
+	n := int(w) * int(h)
+	if n <= 0 {
+		return
+	}
+	src := unsafe.Slice((*byte)(unsafe.Pointer(mask)), n)
+	buf := make([]byte, n)
+	copy(buf, src)
+	sess.OnCursor(int(xhot), int(yhot), int(w), int(h), buf)
 }

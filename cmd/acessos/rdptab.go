@@ -78,6 +78,9 @@ type rdpTab struct {
 	caiu        atomic.Bool
 	fw, fh      atomic.Int32
 	nomeConexao string
+	// cursor remoto (ver cursorforma.go), mesmo esquema do vncTab.
+	classCursor classificadorCursor
+	cursorAtual atomic.Uint32
 	btnRec      widget.Clickable
 	btnTeclas   widget.Clickable
 	btnAuto     widget.Clickable
@@ -139,6 +142,10 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 		sess.SetCredentials(user, pass, domain)
 		sess.OnUpdate = func(x, y, w, h int) { t.w.Invalidate() }
 		sess.OnResize = func(w, h int) { t.w.Invalidate() }
+		sess.OnCursor = func(_, _, w, h int, mask []byte) {
+			t.cursorAtual.Store(uint32(t.classCursor.classificar(w, h, mask)))
+			t.w.Invalidate()
+		}
 		// Certificado: o callback roda NA THREAD DE REDE do FreeRDP e
 		// bloqueia o handshake — é isso que dá sentido à pergunta. A
 		// resposta vem da interface por um canal.
@@ -307,6 +314,7 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	// preenchimento preto de fundo pinta por cima da barra de abas.
 	area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
 	defer area.Pop()
+	pointer.Cursor(t.cursorAtual.Load()).Add(gtx.Ops)
 
 	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)

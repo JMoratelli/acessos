@@ -11,11 +11,15 @@ typedef struct Sessao Sessao;
 typedef void (*cb_atualizou)(void *ctx, int x, int y, int w, int h);
 typedef void (*cb_redimensionou)(void *ctx, int w, int h);
 typedef void (*cb_texto)(void *ctx, const char *texto, int tam);
+/* mask: 1 byte por pixel (w*h bytes), 0 = transparente, != 0 = opaco. */
+typedef void (*cb_cursor)(void *ctx, int xhot, int yhot, int w, int h,
+                           const uint8_t *mask);
 
 Sessao *vs_criar(void *ctx,
                   cb_atualizou ao_atualizar,
                   cb_redimensionou ao_redimensionar,
-                  cb_texto ao_receber_texto);
+                  cb_texto ao_receber_texto,
+                  cb_cursor ao_cursor);
 
 void vs_definir_senha(Sessao *s, const char *senha);
 void vs_definir_usuario(Sessao *s, const char *usuario);
