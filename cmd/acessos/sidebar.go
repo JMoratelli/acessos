@@ -11,6 +11,7 @@ import (
 
 	"gio.tools/icons"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -168,10 +169,16 @@ func (s *sidebar) layout(gtx layout.Context, th *material.Theme, ativo string,
 	for _, it := range s.itens {
 		if it.btn.Clicked(gtx) {
 			aoAbrir(it.sid)
+			// Sem isto, o botão continua com o foco de teclado do Gio: um
+			// Enter/Espaço digitado depois (num comando dentro de uma
+			// sessão SSH/VNC, por exemplo) é lido como um novo clique
+			// nele, reabrindo a aba por baixo dos panos.
+			gtx.Execute(key.FocusCmd{Tag: nil})
 		}
 	}
 	for s.collapseBtn.Clicked(gtx) {
 		s.ciclar()
+		gtx.Execute(key.FocusCmd{Tag: nil})
 	}
 
 	s.sobCursor, s.grupoSob = nil, nil

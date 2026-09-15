@@ -16,6 +16,7 @@ import (
 	"gio.tools/icons"
 	"gioui.org/app"
 	"gioui.org/f32"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -294,13 +295,27 @@ func (t *sshTab) sessao() error {
 		if ec := erroDeChave(err); ec != nil {
 			// PARA e espera a resposta. Sem isso o laço tentava de novo a
 			// cada segundo e reabria o diálogo por cima do anterior.
+			//
+			// O sinal de aceitação usa um canal PRÓPRIO (não t.religar): se
+			// usasse t.religar, o sinal mandado por Reconectar() seria
+			// consumido bem aqui, e o select externo em laco() (que é quem
+			// de fato dispara a reconexão) nunca veria nada — a aba ficava
+			// presa em "sessão encerrada — parada" à espera de um segundo
+			// clique manual do operador.
 			t.setEstado(ec.Error() + " — aguardando sua decisão")
-			pedirConfiancaHostKey(t.w, ec, func() { t.Reconectar() })
+			aceito := make(chan struct{}, 1)
+			pedirConfiancaHostKey(t.w, ec, func() {
+				select {
+				case aceito <- struct{}{}:
+				default:
+				}
+			})
 			select {
-			case <-t.religar:
+			case <-aceito:
+				return t.sessao()
 			case <-t.paradaPorChave():
+				return nil
 			}
-			return nil
 		}
 		return fmt.Errorf("%w", err)
 	}
@@ -1006,12 +1021,22 @@ func (t *sshTab) EstadoSessao() estadoSessao {
 }
 
 func (t *sshTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	// Os três botões abaixo ficam LOGO ACIMA do terminal, e o operador
+	// volta a digitar comandos assim que clica em qualquer um deles. Sem
+	// tirar o foco de teclado do Gio depois do clique, o botão continua
+	// focado e um Enter/Espaço do próprio comando SSH (super comum) é lido
+	// como um novo clique nele — reconectando, religando auto-reconexão ou
+	// reabrindo o painel de snippets sozinho, mesmo com o texto chegando
+	// certinho na sessão remota (que recebe a tecla por um caminho à
+	// parte, ver internal/grab).
 	if t.btnRec.Clicked(gtx) {
 		t.Reconectar()
+		gtx.Execute(key.FocusCmd{Tag: nil})
 	}
 	if t.btnAuto.Clicked(gtx) {
 		t.auto.Store(!t.auto.Load())
 		gravarPreferencia(t.nomeConexao, "ssh_auto", simNao(t.auto.Load()))
+		gtx.Execute(key.FocusCmd{Tag: nil})
 	}
 	if t.btnSnip.Clicked(gtx) {
 		// Painel LATERAL, não janela: um modal em cima do terminal tapa
@@ -1021,6 +1046,7 @@ func (t *sshTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 		if t.painelSnips && t.snips == nil {
 			t.recarregarSnips()
 		}
+		gtx.Execute(key.FocusCmd{Tag: nil})
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
