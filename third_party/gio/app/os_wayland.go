@@ -5,6 +5,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -13,8 +14,10 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -376,12 +379,24 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
 
 	cursorTheme := C.CString(os.Getenv("XCURSOR_THEME"))
 	defer C.free(unsafe.Pointer(cursorTheme))
-	cursorSize := 32
+	// --- patch acessos (ver third_party/gio/PATCH.md) ---
+	// 32 não é um tamanho "neutro": é maior que o padrão de praticamente
+	// todo desktop Linux atual (24, o default do libXcursor desde 2013 —
+	// GNOME e KDE Plasma seguem ele). Sem XCURSOR_SIZE no ambiente (comum:
+	// nem todo compositor exporta essa variável pros processos que sobem,
+	// mesmo tendo o tamanho configurado em algum lugar), TODOS os cursores
+	// do app — inclusive o de "mão" que passamos a usar nos botões — saíam
+	// visivelmente maiores que o resto do desktop. gtk-cursor-theme-size
+	// em ~/.config/gtk-3.0/settings.ini reflete o tamanho de verdade
+	// configurado no ambiente (GTK grava esse arquivo também em sessões
+	// KDE, pra manter apps GTK consistentes) — vale mais que chutar 32.
+	cursorSize := 24
 	if envSize, ok := os.LookupEnv("XCURSOR_SIZE"); ok && envSize != "" {
-		size, err := strconv.Atoi(envSize)
-		if err == nil {
+		if size, err := strconv.Atoi(envSize); err == nil {
 			cursorSize = size
 		}
+	} else if size, ok := gtkCursorThemeSize(); ok {
+		cursorSize = size
 	}
 
 	w.cursor.theme = C.wl_cursor_theme_load(cursorTheme, C.int(cursorSize*w.scale), d.shm)
@@ -412,6 +427,34 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
 	}
 	w.updateOpaqueRegion()
 	return w, nil
+}
+
+// gtkCursorThemeSize: --- patch acessos (ver third_party/gio/PATCH.md) ---
+// lê gtk-cursor-theme-size de ~/.config/gtk-3.0/settings.ini, usado como
+// aproximação do tamanho de cursor configurado no ambiente quando
+// XCURSOR_SIZE não está no processo (ver chamada em newWaylandWindow).
+func gtkCursorThemeSize() (int, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, false
+	}
+	f, err := os.Open(filepath.Join(home, ".config", "gtk-3.0", "settings.ini"))
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != "gtk-cursor-theme-size" {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 func (w *window) loadCursors() {
@@ -911,10 +954,23 @@ func gio_onPointerButton(data unsafe.Pointer, p *C.struct_wl_pointer, serial, t,
 			return
 		}
 		act, ok := w.w.ActionAt(w.lastPos)
-		if ok && w.config.Mode == Windowed {
+		if ok {
 			switch act {
 			case system.ActionMove:
-				w.move(serial)
+				// --- patch acessos (ver third_party/gio/PATCH.md) ---
+				// Original: só inicia o move em modo Windowed. Como a
+				// titlebar é nossa (CSD), arrastar uma janela MAXIMIZADA
+				// não fazia nada — em todo software "padrão" isso restaura
+				// pra tamanho de janela e já continua o arrasto. Restaura
+				// primeiro (pedido assíncrono ao compositor) e inicia o
+				// move com o MESMO serial: KWin/Mutter aceitam o move
+				// interativo mesmo com o unmaximize ainda pendente.
+				if w.config.Mode == Maximized {
+					w.unmaximizeForDrag()
+				}
+				if w.config.Mode == Windowed {
+					w.move(serial)
+				}
 				return
 			}
 		}
@@ -1109,13 +1165,13 @@ func (w *window) Configure(options []Option) {
 		switch prev.Mode {
 		case Fullscreen:
 			w.config.Mode = Windowed
-			w.size = w.wsize.Div(w.scale)
+			w.size = w.restoreSize().Div(w.scale)
 			C.xdg_toplevel_unset_fullscreen(w.topLvl)
 		case Minimized:
 			w.config.Mode = Windowed
 		case Maximized:
 			w.config.Mode = Windowed
-			w.size = w.wsize.Div(w.scale)
+			w.size = w.restoreSize().Div(w.scale)
 			C.xdg_toplevel_unset_maximized(w.topLvl)
 		}
 		w.setTitle(prev, cnf)
@@ -1168,6 +1224,40 @@ func (w *window) Perform(actions system.Action) {
 			w.closing = true
 		}
 	})
+}
+
+// restoreSize: --- patch acessos (ver third_party/gio/PATCH.md) ---
+// wsize (o tamanho "de janela" salvo antes de maximizar/fullscreen) nunca
+// é setado quando o app já NASCE maximizado (main.go pede
+// app.Maximized.Option() sem app.Size): a primeira Configure captura
+// w.config.Size pra dentro de wsize, e nesse instante ele ainda é (0,0)
+// porque o compositor não confirmou geometria nenhuma. Restaurar pra
+// Windowed com wsize=(0,0) manda um frameEvent de tamanho zero pro Gio,
+// que dá panic ("internal error: zero-sized Draw") — tanto pelo botão de
+// restaurar quanto arrastando a titlebar maximizada (ver
+// unmaximizeForDrag). Sem tamanho de janela salvo, caímos pra uma fração
+// do tamanho maximizado atual em vez de zero.
+func (w *window) restoreSize() image.Point {
+	if w.wsize.X > 0 && w.wsize.Y > 0 {
+		return w.wsize
+	}
+	full := w.config.Size
+	if full.X <= 0 || full.Y <= 0 {
+		return image.Pt(1200, 800)
+	}
+	return image.Pt(full.X*3/4, full.Y*3/4)
+}
+
+// unmaximizeForDrag: --- patch acessos (ver third_party/gio/PATCH.md) ---
+// Mesma transição Maximized -> Windowed de (*window).Configure, chamada
+// direto do clique na titlebar (arrastar janela maximizada), sem passar
+// pelo Perform/Option — aqui precisamos do efeito NA HORA, antes do
+// w.move(serial) logo em seguida, e o caminho normal só roda no próximo
+// laço de eventos.
+func (w *window) unmaximizeForDrag() {
+	w.config.Mode = Windowed
+	w.size = w.restoreSize().Div(w.scale)
+	C.xdg_toplevel_unset_maximized(w.topLvl)
 }
 
 func (w *window) move(serial C.uint32_t) {
