@@ -29,6 +29,7 @@ extern int goRdpCertMudou(void *ctx, char *host, uint16_t porta,
                           char *emissor, char *digital_novo,
                           char *assunto_antigo, char *emissor_antigo,
                           char *digital_antigo, uint32_t flags);
+extern void goRdpAoCursor(void *ctx, int xhot, int yhot, int w, int h, uint8_t *mask);
 */
 import "C"
 
@@ -62,6 +63,11 @@ type Session struct {
 	// OnCertificado decide sobre a identidade do servidor. Chamado DA
 	// THREAD DE REDE do FreeRDP e bloqueia o handshake até responder.
 	OnCertificado func(Certificado) int
+
+	// OnCursor é chamado quando o servidor manda uma forma de cursor
+	// nova, ou pede o padrão de volta (w=h=0, mask=nil). mask é 1 byte
+	// por pixel (0/255) — uma CÓPIA, válida além do escopo do callback.
+	OnCursor func(xhot, yhot, w, h int, mask []byte)
 }
 
 var (
@@ -94,6 +100,7 @@ func New() *Session {
 		C.cb_certificado_mudou(C.goRdpCertMudou),
 		C.cb_clip_texto(C.goRdpAoClipTexto),
 		C.cb_disp_pronto(C.goRdpDispPronto),
+		C.cb_cursor(C.goRdpAoCursor),
 	)
 	return sess
 }
@@ -320,6 +327,23 @@ func goRdpAoClipTexto(ctx unsafe.Pointer, utf8 *C.char, tam C.int) {
 	if sess != nil && sess.OnClipboardText != nil {
 		sess.OnClipboardText(C.GoStringN(utf8, tam))
 	}
+}
+
+//export goRdpAoCursor
+func goRdpAoCursor(ctx unsafe.Pointer, xhot, yhot, w, h C.int, mask *C.uint8_t) {
+	sess := sessionFromHandle(ctx)
+	if sess == nil || sess.OnCursor == nil {
+		return
+	}
+	if mask == nil || w <= 0 || h <= 0 {
+		sess.OnCursor(int(xhot), int(yhot), 0, 0, nil)
+		return
+	}
+	n := int(w) * int(h)
+	src := unsafe.Slice((*byte)(unsafe.Pointer(mask)), n)
+	buf := make([]byte, n)
+	copy(buf, src)
+	sess.OnCursor(int(xhot), int(yhot), int(w), int(h), buf)
 }
 
 // Certificado é o que a interface precisa mostrar para decidir.

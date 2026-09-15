@@ -87,6 +87,11 @@ type vncTab struct {
 	// de comando: aí não há onde gravar preferência).
 	nomeConexao string
 	ronly       atomic.Bool
+	// cursor remoto (ver cursorforma.go): a cada forma nova que o VNC
+	// manda, classificamos aproximadamente e guardamos como
+	// pointer.Cursor pra Layout desenhar em cima da área da tela remota.
+	classCursor classificadorCursor
+	cursorAtual atomic.Uint32
 	btnOlho     widget.Clickable
 	btnRec      widget.Clickable
 	btnTeclas   widget.Clickable
@@ -154,6 +159,10 @@ func (t *vncTab) manageSession(user, pass string) {
 		sess.SetCredentials(user, pass)
 		sess.OnUpdate = func(x, y, w, h int) { t.w.Invalidate() }
 		sess.OnResize = func(w, h int) { t.w.Invalidate() }
+		sess.OnCursor = func(_, _, w, h int, mask []byte) {
+			t.cursorAtual.Store(uint32(t.classCursor.classificar(w, h, mask)))
+			t.w.Invalidate()
+		}
 		sess.OnCutText = func(text string) {
 			if !t.clipOn.Load() || !ehAbaAtiva(t) {
 				return
@@ -274,6 +283,7 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 	// frame, inclusive a barra de abas logo acima.
 	area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
 	defer area.Pop()
+	pointer.Cursor(t.cursorAtual.Load()).Add(gtx.Ops)
 
 	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)

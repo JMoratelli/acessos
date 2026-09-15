@@ -36,6 +36,8 @@
 typedef void (*cb_atualizou)(void *ctx, int x, int y, int w, int h);
 typedef void (*cb_redimensionou)(void *ctx, int w, int h);
 typedef void (*cb_texto)(void *ctx, const char *texto, int tam);
+typedef void (*cb_cursor)(void *ctx, int xhot, int yhot, int w, int h,
+                          const uint8_t *mask);
 
 typedef struct {
     rfbClient *cl;
@@ -43,6 +45,7 @@ typedef struct {
     cb_atualizou ao_atualizar;
     cb_redimensionou ao_redimensionar;
     cb_texto ao_receber_texto;
+    cb_cursor ao_cursor;
     char *senha;               /* copia nossa; a lib libera a que devolvemos */
     char *usuario;             /* para VeNCrypt Plain / UltraVNC MSLogon */
     int morto;
@@ -313,12 +316,32 @@ static void hook_cuttext(rfbClient *cl, const char *texto, int tam) {
     if (s && s->ao_receber_texto) s->ao_receber_texto(s->ctx, texto, tam);
 }
 
+/* O SERVIDOR MANDOU UM NOVO FORMATO DE CURSOR.
+ *
+ * useRemoteCursor (ver vs_criar) ja faz o servidor mandar isto em vez de
+ * carimbar o ponteiro no framebuffer; so nao estava sendo usado pra nada.
+ * cl->rcMask e 1 byte por pixel (0/255), width*height bytes — e so o que
+ * o lado Go precisa pra tentar adivinhar a FORMA (seta / texto / ocupado).
+ * cl->rcSource (as cores) nao interessa aqui: nao desenhamos o bitmap,
+ * so aproximamos um pointer.Cursor local do Gio. */
+static void hook_cursor(rfbClient *cl, int xhot, int yhot, int w, int h,
+                        int bytesPerPixel) {
+    (void)bytesPerPixel;
+    Sessao *s = sessao_de(cl);
+    if (getenv("VS_LOG"))
+        fprintf(stderr, "[vnc] cursor: %dx%d hot=(%d,%d) rcMask=%p\n",
+                w, h, xhot, yhot, (void *)cl->rcMask);
+    if (s && s->ao_cursor && cl->rcMask)
+        s->ao_cursor(s->ctx, xhot, yhot, w, h, cl->rcMask);
+}
+
 /* ---- API exposta ao Python ---- */
 
 Sessao *vs_criar(void *ctx,
                  cb_atualizou ao_atualizar,
                  cb_redimensionou ao_redimensionar,
-                 cb_texto ao_receber_texto) {
+                 cb_texto ao_receber_texto,
+                 cb_cursor ao_cursor) {
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
 
@@ -338,6 +361,7 @@ Sessao *vs_criar(void *ctx,
     s->ao_atualizar = ao_atualizar;
     s->ao_redimensionar = ao_redimensionar;
     s->ao_receber_texto = ao_receber_texto;
+    s->ao_cursor = ao_cursor;
 
     /* Formato de pixel casado com cairo FORMAT_RGB24 em little-endian:
      * na memoria os bytes saem B,G,R,X — que e o que o Cairo espera. */
@@ -378,6 +402,7 @@ Sessao *vs_criar(void *ctx,
     cl->GotXCutText = hook_cuttext;
     cl->FinishedFrameBufferUpdate = hook_terminou;
     cl->GetCredential = hook_credencial;
+    cl->GotCursorShape = hook_cursor;
 
     /* CURSOR: pedir os pseudo-encodings de cursor faz o servidor mandar o
      * ponteiro SEPARADO, em vez de pinta-lo dentro do framebuffer. Sem

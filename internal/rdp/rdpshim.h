@@ -23,6 +23,11 @@ typedef int (*cb_certificado_mudou)(void *ctx, const char *host, uint16_t porta,
                                     const char *digital_antigo, uint32_t flags);
 typedef void (*cb_clip_texto)(void *ctx, const char *utf8, int tam);
 typedef void (*cb_disp_pronto)(void *ctx);
+/* forma de cursor nova (ou "voltou ao padrão", com w=h=0 e mask=NULL).
+ * mask: 1 byte por pixel (w*h bytes), o canal alfa decodificado do
+ * XOR+AND mask do RDP — 0 = transparente, != 0 = opaco. */
+typedef void (*cb_cursor)(void *ctx, int xhot, int yhot, int w, int h,
+                          const uint8_t *mask);
 
 Sessao *rs_criar(void *pyctx,
                   cb_atualizou ao_atualizar,
@@ -31,7 +36,8 @@ Sessao *rs_criar(void *pyctx,
                   cb_certificado_novo ao_certificado_novo,
                   cb_certificado_mudou ao_certificado_mudou,
                   cb_clip_texto ao_clip_texto,
-                  cb_disp_pronto ao_disp_pronto);
+                  cb_disp_pronto ao_disp_pronto,
+                  cb_cursor ao_cursor);
 
 void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam);
 int rs_pedir_resize(Sessao *s, int largura, int altura);
