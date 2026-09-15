@@ -42,9 +42,14 @@ const spTerminal = unit.Sp(13)
 // cursor, rolagem); daqui pra frente o trabalho é só teclado -> bytes e
 // células -> pixels.
 //
-// Limites assumidos nesta versão, de propósito: sem histórico de rolagem
-// (o que saiu da tela saiu) e sem relatório de mouse. Shell, logs e
-// edição em tela cheia funcionam.
+// scrollHist (rolagem, ver `rolagem` abaixo) usa um patch local do vt10x
+// (third_party/vt10x/PATCH.md): a lib de origem não guarda nada do que
+// sai por cima da tela.
+//
+// Limite assumido nesta versão, de propósito: sem relatório de mouse
+// (programas que capturam clique/roda dentro do terminal, tipo htop ou
+// um menu TUI, não recebem o evento). Shell, logs e edição em tela cheia
+// funcionam.
 type sshTab struct {
 	th     *material.Theme
 	w      *app.Window
@@ -56,12 +61,13 @@ type sshTab struct {
 
 	term vt10x.Terminal
 
-	mu      sync.Mutex
-	entrada io.WriteCloser // stdin da sessão remota
-	sess    *ssh.Session
-	cli     *ssh.Client
-	estado  string // mensagem mostrada enquanto não há sessão viva
-	fechado bool
+	mu         sync.Mutex
+	entrada    io.WriteCloser // stdin da sessão remota
+	sess       *ssh.Session
+	cli        *ssh.Client
+	estado     string // mensagem mostrada enquanto não há sessão viva
+	fechado    bool
+	jaConectou bool // true a partir da 2ª sessão desta aba — ver limparTela
 
 	cols, rows int
 	mods       modificadores
@@ -74,13 +80,24 @@ type sshTab struct {
 	avanco    float64
 	alturaCel int
 
-	// Seleção com o mouse, em coordenadas de CÉLULA da tela visível. Ela
-	// não acompanha o conteúdo: se o programa remoto redesenhar a tela, a
-	// seleção continua onde está, marcando o que estiver ali agora. É o
-	// que um terminal sem scrollback pode prometer com honestidade.
+	// Seleção com o mouse, em coordenadas de CÉLULA da tela VISÍVEL no
+	// momento (que pode estar rolada pro histórico — ver `rolagem`). Ela
+	// não acompanha o conteúdo: se a tela visível mudar (novo output com
+	// rolagem em 0, ou o operador rolar), a seleção continua nas mesmas
+	// coordenadas, marcando o que estiver ali agora.
 	selA, selB celula
 	selAtiva   bool
 	arrastando bool
+
+	// rolagem: 0 = acompanhando a saída ao vivo (o fundo da tela); N =
+	// rolado N linhas para dentro do histórico. Roda do mouse SEM Ctrl
+	// mexe aqui (com Ctrl continua mudando o corpo da fonte, como sempre
+	// mudou). Volta a 0 sozinha quando o operador digita algo — é o
+	// mesmo gesto de "ler o histórico não deveria travar o comando
+	// seguinte" que fez `set_scroll_on_output(False)` no terminal antigo
+	// (VTE/GTK), só que aqui em vez de travar o AUTO-SCROLL a rolagem
+	// INTEIRA é manual.
+	rolagem int
 
 	// painel lateral de snippets
 	painelSnips bool
@@ -89,10 +106,11 @@ type sshTab struct {
 	listaSnips  widget.List
 	filtroSnip  widget.Editor
 
-	// corpo da fonte (Ctrl+roda) e último texto copiado no sistema, para
-	// o Ctrl+Shift+V ter o que colar.
-	corpo     float32
-	clipLocal string
+	// corpo da fonte (Ctrl+roda). O que colar (Ctrl+Shift+V) não mora
+	// mais aqui — ver clipboardSistema() em clipboard.go: por aba, só
+	// pegava o clipboard de quando ELA estava ativa, e colar numa aba
+	// diferente da que copiou não funcionava.
+	corpo float32
 
 	religar     chan struct{}
 	auto        atomic.Bool
@@ -145,7 +163,11 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 	if spec["auto"] == "0" {
 		t.auto.Store(false)
 	}
-	t.term = vt10x.New(vt10x.WithSize(t.cols, t.rows), vt10x.WithWriter(escritorEntrada{t}))
+	// 20000 linhas é o mesmo teto que o terminal antigo (VTE) usava —
+	// scrollback generoso o bastante pra um log comprido sem virar um
+	// consumo de memória visível numa sessão de PDV.
+	t.term = vt10x.New(vt10x.WithSize(t.cols, t.rows), vt10x.WithWriter(escritorEntrada{t}),
+		vt10x.WithScrollback(20000))
 	go t.laco()
 	return t, nil
 }
@@ -162,10 +184,40 @@ func (e escritorEntrada) Write(p []byte) (int, error) {
 
 // invalidar existe para a aba poder ser exercitada sem janela (testes):
 // o resto do código chama isto em vez de t.w.Invalidate() direto.
+//
+// TAMBÉM insiste por uma janela curta, e é isso que resolve um atraso de
+// verdade visto na prática (medido com log: 200ms a mais de 1s entre o
+// dado chegar e a tela mostrar, sem NENHUMA rede envolvida — confirmado
+// contra uma máquina real e contra localhost).
+//
+// O Window.Invalidate do Gio tem uma guarda (mayInvalidate) que SILENCIA
+// a chamada se um quadro já estiver "em vôo" por outro motivo qualquer, e
+// nada reagenda depois — quem chamou nesse instante simplesmente perde o
+// pedido. Isso é inofensivo para eventos gerados NO PRÓPRIO laço de
+// quadro (tecla, mouse): o quadro em vôo, se houver, já reflete o estado
+// atualizado, e por isso digitar sempre pareceu instantâneo. Mas a
+// goroutine que lê a saída do SSH roda solta, batendo Invalidate() a
+// qualquer momento — e se acertar bem no instante em que outro quadro
+// (de QUALQUER origem, até de outra aba) está de passagem, o pedido some
+// e a tela só se atualiza quando ALGO MAIS pedir um quadro novo depois
+// (na prática, dava pra "destravar" mandando outra tecla). As
+// repetições aqui garantem que, mesmo perdendo a primeira tentativa, uma
+// das seguintes cai com a guarda já rearmada.
 func (t *sshTab) invalidar() {
-	if t.w != nil {
-		t.w.Invalidate()
+	if t.w == nil {
+		return
 	}
+	t.w.Invalidate()
+	go func() {
+		for _, espera := range []time.Duration{
+			8 * time.Millisecond, 24 * time.Millisecond, 64 * time.Millisecond,
+		} {
+			time.Sleep(espera)
+			if t.w != nil {
+				t.w.Invalidate()
+			}
+		}
+	}()
 }
 
 func (t *sshTab) Title() string { return t.titulo }
@@ -285,9 +337,25 @@ func (t *sshTab) sessao() error {
 	}
 	t.cli, t.sess, t.entrada = cli, sess, entrada
 	t.estado = ""
+	reconexao := t.jaConectou
+	t.jaConectou = true
 	reg("[%s] ssh pronto em %s", t.titulo, time.Since(inicio).Truncate(time.Millisecond))
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
+
+	// Numa RECONEXÃO (rede caiu, ou a máquina remota reiniciou), a tela
+	// ainda tem o conteúdo da sessão ANTERIOR, parada onde o cursor
+	// ficou — no meio da tela, na maioria das vezes. Sem isto, o
+	// login/MOTD da sessão NOVA começa a escrever bem ali, por cima do
+	// que já estava, e o resultado é texto embaralhado. limparTela
+	// empurra o que tem pro histórico (nada se perde, dá pra rolar pra
+	// ver) e deixa a tela em branco, cursor no topo, pronta pra sessão
+	// nova — o mesmo que aconteceria numa reconexão manual num terminal
+	// de verdade, só que sem depender do operador ter apertado Enter
+	// antes pra "empurrar" a linha velha.
+	if reconexao {
+		t.limparTela()
+	}
 
 	if err := sess.Shell(); err != nil {
 		return err
@@ -309,7 +377,7 @@ func (t *sshTab) sessao() error {
 	t.mu.Lock()
 	t.cli, t.sess, t.entrada = nil, nil, nil
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
 	if err != nil {
 		if _, ok := err.(*ssh.ExitError); ok {
 			return nil // saiu com exit != 0: é o shell terminando, não erro de rede
@@ -327,7 +395,7 @@ type leitorAvisado struct {
 func (l leitorAvisado) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
 	if n > 0 {
-		l.t.w.Invalidate()
+		l.t.invalidar()
 	}
 	return n, err
 }
@@ -337,7 +405,7 @@ type escritorTerminal struct{ t *sshTab }
 
 func (e escritorTerminal) Write(p []byte) (int, error) {
 	n, err := e.t.term.Write(p)
-	e.t.w.Invalidate()
+	e.t.invalidar()
 	return n, err
 }
 
@@ -345,7 +413,7 @@ func (t *sshTab) setEstado(s string) {
 	t.mu.Lock()
 	t.estado = s
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
 }
 
 func (t *sshTab) encerrada() bool {
@@ -402,6 +470,16 @@ func (t *sshTab) HandleKey(keysym, _ uint32, pressed bool) {
 			t.colarDoSistema()
 			return
 		}
+	}
+	// Digitar volta pro fundo da tela: é o que todo terminal faz quando o
+	// operador estava lendo o histórico e retoma o comando — sem isto o
+	// que se digita ia aparecer "atrás" da rolagem, fora de vista.
+	t.mu.Lock()
+	rolava := t.rolagem != 0
+	t.rolagem = 0
+	t.mu.Unlock()
+	if rolava {
+		t.invalidar()
 	}
 	t.enviar(bytesDaTecla(keysym, t.mods))
 }
@@ -476,22 +554,33 @@ func (t *sshTab) textoSelecionado() (string, bool) {
 
 // colarDoSistema escreve o clipboard no stdin. Sem Enter: quem confirma é
 // quem está olhando — colar comando que executa sozinho já derrubou PDV.
+//
+// Lê o cache GLOBAL (clipboard.go), não um campo desta aba: é o que faz
+// colar funcionar em qualquer aba, mesmo quando o que foi copiado veio de
+// OUTRA aba deste mesmo app (ex.: copiar na sessão da caixa 101 e colar
+// na da 102) — o aviso do Wayland de "clipboard mudou" só chega uma vez,
+// para a aba que estiver ativa naquele instante, e nada garante que seja
+// esta.
+// marcaColadoIni/marcaColadoFim: "bracketed paste" (o mesmo modo que
+// xterm/gnome-terminal usam). Sem isto, um programa com editor de linha
+// próprio — nano, bash com readline moderno — não tem como saber que
+// aqueles bytes vieram de um COLAR, e trata cada '\n' como se tivesse
+// sido digitado rápido demais: testado na prática, o nano especificamente
+// troca todo '\n' assim recebido por um ESPAÇO, embaralhando o arquivo
+// inteiro numa linha só. Com a marcação, ele entende que é um bloco colado
+// e preserva as quebras de linha — exatamente o que um terminal de
+// verdade manda a cada Ctrl+V.
+const (
+	marcaColadoIni = "\x1b[200~"
+	marcaColadoFim = "\x1b[201~"
+)
+
 func (t *sshTab) colarDoSistema() {
-	t.mu.Lock()
-	texto := t.clipLocal
-	t.mu.Unlock()
+	texto := clipboardSistema()
 	if texto == "" {
 		return
 	}
-	t.enviar([]byte(texto))
-}
-
-// OnLocalClipboard guarda o que foi copiado no sistema, para o
-// Ctrl+Shift+V ter o que colar.
-func (t *sshTab) OnLocalClipboardTexto(texto string) {
-	t.mu.Lock()
-	t.clipLocal = texto
-	t.mu.Unlock()
+	t.enviar([]byte(marcaColadoIni + texto + marcaColadoFim))
 }
 
 // celulaEm converte a posição do ponteiro (relativa à área de conteúdo)
@@ -510,8 +599,8 @@ func (t *sshTab) celulaEm(p f32.Point) celula {
 }
 
 // HandlePointer: Ctrl+roda muda o corpo da fonte, 6 a 32, como no VTE do
-// app original. Sem Ctrl a roda não faz nada (ainda não há scrollback).
-// O botão esquerdo seleciona texto, arrastando.
+// app original. Sem Ctrl a roda rola o histórico. O botão esquerdo
+// seleciona texto, arrastando.
 func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
 	switch ev.Kind {
 	case pointer.Press:
@@ -548,7 +637,11 @@ func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
 		t.invalidar()
 		return
 	}
-	if ev.Kind != pointer.Scroll || !(t.mods.ctrl || ctrlPressionado()) {
+	if ev.Kind != pointer.Scroll {
+		return
+	}
+	if !(t.mods.ctrl || ctrlPressionado()) {
+		t.rolarHistorico(ev)
 		return
 	}
 	t.mu.Lock()
@@ -569,7 +662,30 @@ func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
 	}
 	t.corpo = corpo
 	t.mu.Unlock()
-	t.w.Invalidate()
+	t.invalidar()
+}
+
+// rolarHistorico move `rolagem` (em linhas) e prende o resultado entre 0
+// (fundo, ao vivo) e o total guardado — travar em vez de deixar passar
+// evita rolar "além" do que existe e mostrar tela em branco.
+func (t *sshTab) rolarHistorico(ev pointer.Event) {
+	passo := 0
+	switch {
+	case ev.Scroll.Y < 0:
+		passo = 3 // roda pra cima: revela linhas mais ANTIGAS
+	case ev.Scroll.Y > 0:
+		passo = -3
+	default:
+		return
+	}
+	t.term.Lock()
+	hist := t.term.HistoryLen()
+	t.term.Unlock()
+
+	t.mu.Lock()
+	t.rolagem = min(max(t.rolagem+passo, 0), hist)
+	t.mu.Unlock()
+	t.invalidar()
 }
 
 // corpoAtual é o tamanho da fonte em uso.
@@ -581,9 +697,6 @@ func (t *sshTab) corpoAtual() unit.Sp {
 	}
 	return unit.Sp(t.corpo)
 }
-
-// OnLocalClipboard é o gancho do clipboard do sistema (mesmo de VNC/RDP).
-func (t *sshTab) OnLocalClipboard(texto string) { t.OnLocalClipboardTexto(texto) }
 
 // ------------------------------------------------------------- desenho
 
@@ -626,10 +739,21 @@ func (t *sshTab) layoutTerminal(gtx layout.Context) layout.Dimensions {
 	t.desenharGrade(gtx, cols, rows, avanco, alturaCel)
 
 	t.mu.Lock()
-	estado := t.estado
+	texto := t.estado
+	rolagem := t.rolagem
 	t.mu.Unlock()
-	if estado != "" {
-		txt(t.th, fonteMono, spCorpo, estado, tema.AtencaoFg).Layout(gtx)
+	if rolagem > 0 {
+		// avisa que a tela não é mais a ao vivo — sem isto, rolar pro
+		// histórico e esquecer disso parece a sessão ter travado.
+		nota := fmt.Sprintf("↑ histórico — %d linha(s) acima (digite algo pra voltar ao fim)", rolagem)
+		if texto != "" {
+			texto += "   •   " + nota
+		} else {
+			texto = nota
+		}
+	}
+	if texto != "" {
+		txt(t.th, fonteMono, spCorpo, texto, tema.AtencaoFg).Layout(gtx)
 	}
 	return layout.Dimensions{Size: size}
 }
@@ -664,9 +788,12 @@ func (t *sshTab) redimensionar(cols, rows int) {
 		return
 	}
 	// A marcação é em coordenadas de tela; mudou a grade, ela não quer
-	// dizer mais nada.
+	// dizer mais nada. A rolagem também volta ao fundo: o número de
+	// linhas por tela mudou, então "rolado N linhas" não aponta mais
+	// pro mesmo lugar.
 	t.mu.Lock()
 	t.selAtiva, t.arrastando = false, false
+	t.rolagem = 0
 	t.mu.Unlock()
 	t.term.Resize(cols, rows)
 	if sess != nil {
@@ -680,6 +807,10 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 	// avança, então fundo, glifo e cursor caem sempre na mesma grade.
 	px := func(col int) int { return int(math.Round(float64(col) * avanco)) }
 	selA, selB, temSel := t.selecao()
+	t.mu.Lock()
+	rolagem := t.rolagem
+	t.mu.Unlock()
+
 	t.term.Lock()
 	defer t.term.Unlock()
 
@@ -691,12 +822,27 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 		rows = trows
 	}
 
+	// cel: a célula da linha VISÍVEL y, que tanto pode vir da tela ao
+	// vivo quanto do histórico — é o único ponto que sabe a diferença;
+	// todo o resto da função só desenha o que `cel` devolver. hist é o
+	// total de linhas de scrollback guardadas; rolagem, quanto se rolou
+	// pra dentro dele (0 = fundo, ao vivo). Ver o comentário do campo
+	// `rolagem` na struct pra conta completa.
+	hist := t.term.HistoryLen()
+	cel := func(x, y int) vt10x.Glyph {
+		idx := hist - rolagem + y
+		if idx < hist {
+			return t.term.HistoryCell(x, idx)
+		}
+		return t.term.Cell(x, idx-hist)
+	}
+
 	for y := 0; y < rows; y++ {
 		// primeiro os fundos da linha, depois o texto: assim uma célula
 		// com fundo não apaga o glifo da vizinha.
 		x := 0
 		for x < cols {
-			g := t.term.Cell(x, y)
+			g := cel(x, y)
 			bg, temBg := corDeFundo(g.BG)
 			if !temBg {
 				x++
@@ -704,7 +850,7 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 			}
 			fim := x + 1
 			for fim < cols {
-				g2 := t.term.Cell(fim, y)
+				g2 := cel(fim, y)
 				if c2, ok := corDeFundo(g2.BG); !ok || c2 != bg {
 					break
 				}
@@ -738,12 +884,12 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 
 		x = 0
 		for x < cols {
-			g := t.term.Cell(x, y)
+			g := cel(x, y)
 			fg := corDeTexto(g.FG)
 			var sb strings.Builder
 			inicio := x
 			for x < cols {
-				g2 := t.term.Cell(x, y)
+				g2 := cel(x, y)
 				if corDeTexto(g2.FG) != fg {
 					break
 				}
@@ -767,7 +913,9 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 		}
 	}
 
-	if t.term.CursorVisible() {
+	// Cursor só faz sentido no fundo da tela: rolado pro histórico, a
+	// posição dele não corresponde a linha nenhuma das que estão à vista.
+	if rolagem == 0 && t.term.CursorVisible() {
 		c := t.term.Cursor()
 		if c.X < cols && c.Y < rows {
 			r := clip.Rect{
@@ -906,6 +1054,20 @@ func (t *sshTab) Reconectar() {
 	case t.religar <- struct{}{}:
 	default:
 	}
+}
+
+// limparTela empurra o conteúdo atual da tela pro histórico (rolando,
+// não apagando) e leva o cursor pro topo — ver o comentário em sessao()
+// sobre por que isto roda no começo de toda RECONEXÃO.
+func (t *sshTab) limparTela() {
+	t.mu.Lock()
+	rows := t.rows
+	t.mu.Unlock()
+	if rows <= 0 {
+		return
+	}
+	t.term.Write([]byte(strings.Repeat("\n", rows) + "\x1b[H"))
+	t.invalidar()
 }
 
 // ------------------------------------------------ painel de snippets
