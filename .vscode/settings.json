@@ -1,0 +1,25 @@
+{
+  // build/ chega a alguns GB e dezenas de milhares de arquivos (sysroot
+  // MinGW, cache do flatpak-builder, dist do Windows) durante um build —
+  // sem essas exclusões o watcher de arquivos do VS Code tenta acompanhar
+  // tudo isso em tempo real e trava a janela inteira. python/ e testes/
+  // são resíduos de antes da reescrita em Go (não rastreados, mas ainda
+  // no disco); .flatpak-builder/ e vendor/ são gerados, do mesmo jeito.
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/.flatpak-builder/**": true,
+    "**/vendor/**": true,
+    "**/python/**": true,
+    "**/testes/**": true
+  },
+  "files.exclude": {
+    "**/.flatpak-builder": true
+  },
+  "search.exclude": {
+    "**/build": true,
+    "**/.flatpak-builder": true,
+    "**/vendor": true,
+    "**/python": true,
+    "**/testes": true
+  }
+}
