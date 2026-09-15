@@ -21,5 +21,15 @@
     "**/vendor": true,
     "**/python": true,
     "**/testes": true
-  }
+  },
+  // watcherExclude/search.exclude não impedem o Pylance de indexar
+  // python/: ele é quem estava consumindo a CPU toda, mesmo com a janela
+  // parada. Isto aqui é o que de fato tira a pasta do radar dele.
+  "python.analysis.exclude": [
+    "**/python/**",
+    "**/testes/**",
+    "**/build/**",
+    "**/.flatpak-builder/**",
+    "**/vendor/**"
+  ]
 }
