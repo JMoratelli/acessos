@@ -266,7 +266,11 @@ func layoutAba(gtx layout.Context, th *material.Theme, t Tab, ativa, hover bool,
 										c = tema.ErroFg // erro SÓ em ação destrutiva
 									}
 									return layout.UniformInset(1).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return icone(gtx, iconeFechar, c, 14)
+										d := icone(gtx, iconeFechar, c, 14)
+										area := clip.Rect{Max: d.Size}.Push(gtx.Ops)
+										pointer.CursorPointer.Add(gtx.Ops)
+										area.Pop()
+										return d
 									})
 								})
 							})

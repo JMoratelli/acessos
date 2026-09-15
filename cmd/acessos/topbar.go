@@ -6,6 +6,7 @@ import (
 
 	"gio.tools/icons"
 	"gioui.org/app"
+	"gioui.org/io/pointer"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -222,6 +223,12 @@ func botaoIcone(gtx layout.Context, btn *widget.Clickable, ic *widget.Icon, cor,
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
+				// Mão só nos ícones da barra de topo — não em TODO
+				// Clickable do app (isso já foi tentado; em cima de
+				// card/linha de lista virava mão em qualquer hover, e
+				// ficava irritante). Estes são controles discretos, do
+				// tamanho de um ícone, onde a mão faz sentido.
+				pointer.CursorPointer.Add(gtx.Ops)
 				if btn.Hovered() {
 					superficie(gtx, size, tema.VidroH, transparente, 5)
 				}
@@ -247,6 +254,7 @@ func botaoFechar(gtx layout.Context, btn *widget.Clickable) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
+				pointer.CursorPointer.Add(gtx.Ops)
 				if btn.Hovered() {
 					superficie(gtx, size, hex(0xd13438), transparente, 5)
 				}
@@ -274,6 +282,7 @@ func pilula(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
+				pointer.CursorPointer.Add(gtx.Ops)
 				fundo, borda := tema.Vidro, tema.VidroB
 				if btn.Hovered() {
 					fundo = tema.VidroH
