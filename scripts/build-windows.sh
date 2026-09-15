@@ -18,7 +18,16 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 
 APPID=org.jj.Acessos
 SAIDA=build/win
-SYSROOT=$PWD/$SAIDA/sysroot/ucrt64
+SYSROOT_REAL=$PWD/$SAIDA/sysroot/ucrt64
+# cgo corta CGO_LDFLAGS/CGO_CFLAGS/PKG_CONFIG no primeiro espaço do valor,
+# sem suporte a aspas — limite conhecido do Go. Se o próprio repositório
+# estiver num caminho com espaço (pasta sincronizada tipo "Google Drive",
+# como aqui), qualquer flag que aponte direto pro sysroot quebra o link
+# ("cannot find Drive/Machado/..."). Um link simbólico fixo fora do
+# repositório contorna isso sem mudar onde o sysroot de fato mora (continua
+# em build/win, como todo o resto).
+SYSROOT=/tmp/acessos-win-sysroot
+ln -sfn "$SYSROOT_REAL" "$SYSROOT"
 DIST=$SAIDA/dist
 CACHE=$SAIDA/.cache
 WINEPREFIX_LOCAL=$PWD/$SAIDA/wine
@@ -91,7 +100,17 @@ rm -f "$rc"
 echo ">> compilando acessos.exe"
 export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig"
-export PKG_CONFIG="$PWD/scripts/pkg-config-mingw"
+# O cgo SEPARA o valor de PKG_CONFIG por espaço (é por isso que o wrapper
+# existe: "pkg-config --define-prefix" direto vira um nome de programa só,
+# com o --define-prefix ignorado). Se o próprio $PWD tiver espaço no
+# caminho — caso comum com pastas sincronizadas tipo "Google Drive" —, o
+# cgo corta o caminho do wrapper ali e tenta executar só o pedaço antes do
+# espaço, com "arquivo não encontrado". Por isso o wrapper é copiado para
+# um caminho fixo sem espaço antes de apontar PKG_CONFIG pra ele.
+pkgConfigMingw=/tmp/acessos-pkg-config-mingw
+cp scripts/pkg-config-mingw "$pkgConfigMingw"
+chmod +x "$pkgConfigMingw"
+export PKG_CONFIG="$pkgConfigMingw"
 export CGO_ENABLED=1 GOOS=windows GOARCH=amd64
 export CC=x86_64-w64-mingw32-gcc
 export CGO_LDFLAGS="-O2 -g -L$SYSROOT/lib"
