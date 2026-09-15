@@ -45,6 +45,14 @@ echo ">> gerando o bundle"
 flatpak build-bundle build/repo "build/$APPID-$VERSAO.flatpak" "$APPID"
 echo "bundle: build/$APPID-$VERSAO.flatpak"
 
+# Padrão de publicação: ao subir a release no GitHub, o nome do asset
+# pode variar (ex.: com a versão embutida, como aqui) — o atualizador
+# (internal/atualizador) só exige que termine em ".flatpak", não um nome
+# fixo. Isso é de propósito, para não repetir o bug do lado Windows, onde
+# o nome fixo "SHA256SUMS.txt" divergiu do publicado numa release
+# (SHA256SUMS-2.1.0.txt) e a atualização nunca foi oferecida. Não crie
+# aqui uma dependência de nome exato sem essa mesma tolerância.
+
 if [ "${1:-}" = "--instalar" ]; then
     flatpak install --user --reinstall -y "build/$APPID-$VERSAO.flatpak"
     echo "instalado. rode com: flatpak run $APPID"
