@@ -30,6 +30,7 @@
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,23 @@
 #include <unistd.h>
 #include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include "grab_wayland.h"
+
+/* repeticao de tecla, do jeito que wl_keyboard obriga: o protocolo so
+ * entrega apertou/soltou crus, repetir enquanto segura e trabalho do
+ * cliente (todo terminal Wayland de verdade faz isso — foot, alacritty).
+ * Sem taxa/atraso nenhum a chegar do compositor (repeat_info), a seta
+ * segurada mandava UM byte e parava ai: exatamente o "segurar seta pra
+ * baixo nao repete" relatado no terminal SSH. */
+typedef struct {
+    pthread_t thread;
+    int thread_criada;
+    pthread_mutex_t m;
+    int ativo;             /* 1 enquanto uma tecla repetivel esta pressionada */
+    int parar;             /* sinaliza a thread pra encerrar, em grab_parar */
+    uint32_t keysym, keycode;
+    int64_t geracao;       /* muda a cada apertou/soltou, invalida ciclo antigo */
+    int32_t atraso_ms, intervalo_ms;
+} EstadoRepeticao;
 
 /* mimes que aceitamos AO LER o clipboard alheio, em ordem de preferencia —
  * mais amplo que o do Gio (que so tem a variante SEM hifen de utf8, e no
@@ -78,6 +96,7 @@ struct Grab {
 
     cb_tecla ao_teclar;
     uint32_t ultimo_serial; /* de um key press real — exigido por set_selection */
+    EstadoRepeticao rep;
 
     /* ---- clipboard (wl_data_device) ---- */
     struct wl_data_device_manager *data_mgr;
@@ -131,6 +150,56 @@ static void teclado_modifiers(void *dados, struct wl_keyboard *kbd,
     xkb_state_update_mask(g->xkb_state, depressed, latched, locked, 0, 0, grupo);
 }
 
+/* ainda_valida: a geracao pedida ainda e a que esta em curso, a thread
+ * nao foi mandada parar e a tecla continua pressionada. Qualquer "nao"
+ * aqui derruba o ciclo de repeticao em curso. */
+static int rep_ainda_valida(Grab *g, int64_t geracao) {
+    pthread_mutex_lock(&g->rep.m);
+    int ok = !g->rep.parar && g->rep.ativo && g->rep.geracao == geracao;
+    pthread_mutex_unlock(&g->rep.m);
+    return ok;
+}
+
+/* rep_esperar: dorme ms em fatias curtas, saindo mais cedo se o estado
+ * mudou (tecla solta, trocou de tecla, ou grab_parar chamado). Fatia de
+ * 15ms e curta o bastante pra nao atrasar perceptivelmente nem o inicio
+ * nem cada repeticao seguinte. */
+static int rep_esperar(Grab *g, int64_t geracao, int32_t ms) {
+    int32_t passado = 0;
+    const int32_t fatia = 15;
+    while (passado < ms) {
+        usleep(fatia * 1000);
+        passado += fatia;
+        if (!rep_ainda_valida(g, geracao)) return 0;
+    }
+    return 1;
+}
+
+/* rep_loop roda pela vida inteira do Grab: fica parada enquanto nenhuma
+ * tecla repetivel esta pressionada, e quando uma fica, espera o atraso
+ * inicial e entao chama ao_teclar(..., pressionada=1) — um "apertou"
+ * sintetico — a cada intervalo, ate soltar ou trocar de tecla. */
+static void *rep_loop(void *arg) {
+    Grab *g = (Grab *)arg;
+    for (;;) {
+        pthread_mutex_lock(&g->rep.m);
+        if (g->rep.parar) { pthread_mutex_unlock(&g->rep.m); return NULL; }
+        int ativo = g->rep.ativo;
+        int64_t geracao = g->rep.geracao;
+        uint32_t ks = g->rep.keysym, kc = g->rep.keycode;
+        int32_t atraso = g->rep.atraso_ms, intervalo = g->rep.intervalo_ms;
+        pthread_mutex_unlock(&g->rep.m);
+
+        if (!ativo || intervalo <= 0) { usleep(15000); continue; }
+        if (!rep_esperar(g, geracao, atraso)) continue;
+
+        while (rep_ainda_valida(g, geracao)) {
+            if (g->ao_teclar) g->ao_teclar(ks, kc, 1);
+            if (!rep_esperar(g, geracao, intervalo)) break;
+        }
+    }
+}
+
 static void teclado_tecla(void *dados, struct wl_keyboard *kbd,
                           uint32_t serial, uint32_t tempo, uint32_t key,
                           uint32_t estado) {
@@ -145,16 +214,53 @@ static void teclado_tecla(void *dados, struct wl_keyboard *kbd,
     const xkb_keysym_t *syms;
     int n = xkb_state_key_get_syms(g->xkb_state, codigo, &syms);
     uint32_t keysym = (n == 1) ? (uint32_t)syms[0] : 0;
+    int pressionada = estado == WL_KEYBOARD_KEY_STATE_PRESSED;
 
-    g->ao_teclar(keysym, (uint32_t)codigo, estado == WL_KEYBOARD_KEY_STATE_PRESSED);
+    /* xkb_keymap_key_repeats: e o proprio layout quem diz se ESTA tecla
+     * repete — modificador puro (Ctrl/Shift/Alt/Super/CapsLock) normalmente
+     * nao repete em teclado nenhum, e perguntar aqui poupa uma lista feita
+     * a mao (que teria que casar com o layout de cada usuario). */
+    if (g->xkb_keymap && xkb_keymap_key_repeats(g->xkb_keymap, codigo)) {
+        pthread_mutex_lock(&g->rep.m);
+        g->rep.geracao++;
+        if (pressionada) {
+            g->rep.ativo = 1;
+            g->rep.keysym = keysym;
+            g->rep.keycode = (uint32_t)codigo;
+        } else if (g->rep.keycode == (uint32_t)codigo) {
+            /* so cancela se for A MESMA tecla que estava repetindo — soltar
+             * uma tecla diferente da que repete nao pode interromper ela */
+            g->rep.ativo = 0;
+        }
+        pthread_mutex_unlock(&g->rep.m);
+    }
+
+    g->ao_teclar(keysym, (uint32_t)codigo, pressionada);
 }
 
 static void teclado_enter(void *dados, struct wl_keyboard *kbd, uint32_t serial,
                           struct wl_surface *surface, struct wl_array *teclas) {}
 static void teclado_leave(void *dados, struct wl_keyboard *kbd, uint32_t serial,
-                          struct wl_surface *surface) {}
+                          struct wl_surface *surface) {
+    /* perdeu o foco (troca de aba/janela): nao pode ficar uma tecla
+     * "presa" repetindo pra sempre do lado de dentro */
+    Grab *g = (Grab *)dados;
+    pthread_mutex_lock(&g->rep.m);
+    g->rep.ativo = 0;
+    g->rep.geracao++;
+    pthread_mutex_unlock(&g->rep.m);
+}
 static void teclado_repeat_info(void *dados, struct wl_keyboard *kbd,
-                                int32_t taxa, int32_t atraso) {}
+                                int32_t taxa, int32_t atraso) {
+    /* vem do proprio compositor: respeita o que a pessoa configurou em
+     * "velocidade do teclado" em vez de inventar um numero fixo aqui.
+     * taxa 0 quer dizer "sem repeticao nenhuma" (protocolo permite). */
+    Grab *g = (Grab *)dados;
+    pthread_mutex_lock(&g->rep.m);
+    g->rep.atraso_ms = atraso;
+    g->rep.intervalo_ms = (taxa > 0) ? (1000 / taxa) : 0;
+    pthread_mutex_unlock(&g->rep.m);
+}
 
 static const struct wl_keyboard_listener ouvinte_teclado = {
     .keymap = teclado_keymap,
@@ -300,6 +406,13 @@ static const struct wl_registry_listener ouvinte_registro = {
 
 void grab_parar(Grab *g) {
     if (!g) return;
+    if (g->rep.thread_criada) {
+        pthread_mutex_lock(&g->rep.m);
+        g->rep.parar = 1;
+        pthread_mutex_unlock(&g->rep.m);
+        pthread_join(g->rep.thread, NULL);
+        pthread_mutex_destroy(&g->rep.m);
+    }
     if (g->inibidor) zwp_keyboard_shortcuts_inhibitor_v1_destroy(g->inibidor);
     if (g->manager) zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(g->manager);
     if (g->fonte) wl_data_source_destroy(g->fonte);
@@ -326,6 +439,16 @@ Grab *grab_iniciar(void *display, void *surface, cb_tecla ao_teclar,
     g->ao_clip = ao_clip;
     g->xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     if (!g->xkb_ctx) { free(g); return NULL; }
+
+    /* valores por padrao ate o wl_keyboard.repeat_info do compositor chegar
+     * (400ms / ~30 por segundo, o padrao usual de xterm/GNOME) — sem isto a
+     * primeira tecla segurada antes do evento chegar nao repetiria. */
+    pthread_mutex_init(&g->rep.m, NULL);
+    g->rep.atraso_ms = 400;
+    g->rep.intervalo_ms = 33;
+    if (pthread_create(&g->rep.thread, NULL, rep_loop, g) == 0) {
+        g->rep.thread_criada = 1;
+    }
 
     g->registry = wl_display_get_registry(g->display);
     if (!g->registry) { grab_parar(g); return NULL; }

@@ -22,6 +22,7 @@ package grab
 
 /*
 #cgo pkg-config: wayland-client xkbcommon
+#cgo LDFLAGS: -lpthread
 #include <stdlib.h>
 #include "grab_wayland.h"
 
