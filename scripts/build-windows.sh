@@ -142,12 +142,22 @@ wine "$ISCC" "/DAppVersion=$VERSAO" "/O$PWD/$SAIDA" scripts/instalador.iss >"$SA
     || { tail -20 "$SAIDA/iscc.log"; exit 1; }
 
 # 7. sha256 do instalador: o atualizador do Windows (internal/atualizador)
-#    baixa o SHA256SUMS.txt anexado à release antes de confiar no .exe.
-#    Mesmo nome e formato de `sha256sum` já usados nas releases
-#    anteriores (que hoje juntam ali a soma do bundle Flatpak também —
-#    junte as duas linhas na hora de publicar).
+#    baixa um asset SHA256SUMS*.txt anexado à release antes de confiar no
+#    .exe. Mesmo formato de `sha256sum` já usado nas releases anteriores
+#    (que hoje juntam ali a soma do bundle Flatpak também — junte as duas
+#    linhas na hora de publicar).
+#
+#    Padrão de publicação: suba o asset SEMPRE como "SHA256SUMS.txt"
+#    (sem sufixo de versão no nome) — é o nome usado em toda release já
+#    publicada. Um nome diferente (ex.: "SHA256SUMS-2.1.0.txt") já causou
+#    o atualizador nunca oferecer a versão nova no Windows; o código hoje
+#    tolera qualquer "SHA256SUMS*.txt" como rede de segurança, mas manter
+#    o nome fixo evita depender dessa tolerância.
 INSTALADOR="$SAIDA/AcessosSetup-$VERSAO.exe"
 (cd "$SAIDA" && sha256sum "$(basename "$INSTALADOR")") > "$SAIDA/SHA256SUMS.txt"
 
 echo "instalador: $INSTALADOR"
 echo "somas:      $SAIDA/SHA256SUMS.txt ($(cat "$SAIDA/SHA256SUMS.txt"))"
+echo ">> ao publicar a release no GitHub, suba os assets com estes nomes exatos:"
+echo "     $(basename "$INSTALADOR")"
+echo "     SHA256SUMS.txt"

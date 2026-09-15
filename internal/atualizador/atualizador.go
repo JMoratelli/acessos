@@ -108,7 +108,7 @@ func Checar(versaoAtual string) (*Release, error) {
 			if strings.HasPrefix(a.Nome, "AcessosSetup-") && strings.HasSuffix(a.Nome, ".exe") {
 				exeNome, exeURL = a.Nome, a.URL
 			}
-			if a.Nome == "SHA256SUMS.txt" {
+			if strings.HasPrefix(a.Nome, "SHA256SUMS") && strings.HasSuffix(a.Nome, ".txt") {
 				somasURL = a.URL
 			}
 		}
