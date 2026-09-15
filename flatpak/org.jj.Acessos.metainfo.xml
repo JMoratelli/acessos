@@ -64,6 +64,13 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.1.0" date="2026-09-15">
+      <description>
+        <p>Arrastar a barra de titulo com a janela maximizada agora restaura o tamanho e continua o arrasto seguindo o cursor, como em qualquer outro programa — antes nao fazia nada.</p>
+        <p>Cursor de mao ao passar sobre os icones da barra de topo e o x de fechar aba. Corrige tambem o cursor do sistema aparecendo maior que o resto do desktop.</p>
+        <p>Dentro das sessoes VNC e RDP, o cursor local passa a acompanhar (de forma aproximada) o cursor do sistema remoto — seta, texto ou clicavel — em vez de ficar sempre parado na seta.</p>
+      </description>
+    </release>
     <release version="2.0.10" date="2026-09-15">
       <description>
         <p>Terminal SSH: repeticao de tecla ao segurar (setas, backspace etc.), historico de rolagem (roda do mouse sem Ctrl), colar (Ctrl+Shift+V) passa a funcionar entre abas diferentes e preserva quebra de linha em editores como o nano, Ctrl+Delete apaga a palavra a frente do cursor, e a tela comeca limpa numa reconexao em vez de embaralhar com o conteudo da sessao anterior.</p>
