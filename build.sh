@@ -34,7 +34,14 @@ echo ">> sincronizando metainfo embutido"
 cp "flatpak/$APPID.metainfo.xml" cmd/acessos/dados/metainfo.xml
 
 echo ">> atualizando vendor/"
-go mod vendor
+# GOWORK=off pelo mesmo motivo que o manifesto ignora go.work (veja a lista
+# de arquivos removidos em flatpak/org.jj.Acessos.yml): o go.work é
+# conveniência local do editor e não é versionado, mas basta ele existir no
+# diretório para o Go entrar em modo workspace e recusar o `go mod vendor`
+# com "cannot be run in workspace mode" — o build quebra na máquina de quem
+# tem o arquivo e funciona na de quem não tem, que é o pior tipo de defeito
+# de build. Quem manda aqui é o go.mod, como no Flatpak.
+GOWORK=off go mod vendor
 
 echo ">> compilando o Flatpak ($APPID $VERSAO)"
 mkdir -p build
