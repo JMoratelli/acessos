@@ -64,6 +64,13 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.2.0" date="2026-09-16">
+      <description>
+        <p>Cada sessao RDP passa a rodar em processo separado. Uma falha dentro do cliente RDP deixa de derrubar o programa inteiro: morre so aquela aba, que reconecta sozinha, e as demais sessoes continuam abertas como se nada tivesse acontecido. Ate agora uma queda abrupta da conexao RDP fechava tudo de uma vez, com o trabalho das outras abas junto.</p>
+        <p>Sessoes RDP mais leves na tela: a area da maquina remota so e redesenhada quando algo muda de fato do outro lado, em vez de a cada quadro da interface.</p>
+        <p>Limite de 12 sessoes remotas simultaneas em processo proprio, para abrir muitas abas de uma vez nao comprometer a memoria da maquina. Ao atingir o limite a aba avisa e aguarda, sem derrubar nada.</p>
+      </description>
+    </release>
     <release version="2.1.1" date="2026-09-16">
       <description>
         <p>Windows: teclado e area de transferencia passam a funcionar dentro das sessoes VNC e RDP — digitar, copiar e colar entre o Windows e a maquina remota, testado ao vivo. Antes o teclado e o clipboard simplesmente nao chegavam a sessao remota nessa plataforma.</p>
