@@ -87,75 +87,70 @@ nova. Para distribuição interna é aceitável (o aviso passa com "Mais
 informações"); para distribuir fora, não. Precisa de um certificado de
 code signing — custo e decisão sua, não técnica.
 
-## 6. Crash do app inteiro num disconnect abrupto de RDP — CONTIDO (2026-09-16)
+## 6. Crash do app inteiro num disconnect abrupto de RDP — RESOLVIDO PARA RDP (2026-09-16)
 
-O crash em si continua existindo dentro do FreeRDP; o que mudou é que ele
-deixou de derrubar o app. **Cada sessão RDP agora roda em processo
-próprio** — o terceiro caminho que esta lista descrevia, e o mais
-estrutural. Falta VALIDAR AO VIVO contra o servidor que reproduziu o
-crash: o esperado é a aba marcar "CAIU" e religar sozinha enquanto as
-outras seguem intocadas.
+O diagnóstico continua valendo e vale a pena guardar: o servidor derruba a
+sessão (`ERRINFO_RPC_INITIATED_DISCONNECT`) e o processo inteiro morre com
+SIGSEGV dentro do **próprio FreeRDP** (`dvcman_channel_close`, chamado de
+`drdynvc_order_recv`, na thread do canal dinâmico), não no
+[rdpshim.c](internal/rdp/rdpshim.c). É a vizinhança da
+[CVE-2026-56297](https://github.com/FreeRDP/FreeRDP/security/advisories/GHSA-3mv2-5q57-2v8h),
+cuja correção catalogada já está no 3.31.1 que vendorizamos — ou seja, é uma
+variante residual: `dvcman_channel_close` mexe em
+`channel->state`/`channel->channel_callback` sem o `channel->lock` que a
+struct já tem.
 
-Como ficou:
+Dos três caminhos listados aqui antes, foi feito o terceiro, que era o
+estrutural: **cada sessão RDP roda em processo próprio**. O app reexecuta a
+si mesmo (`acessos -tela-worker rdp <endereço> <token>`) e conversa com o
+filho por socket em 127.0.0.1. Agora um SIGSEGV dentro da libfreerdp mata o
+FILHO; o processo principal só vê o canal fechar, marca a aba como "CAIU" e
+o backoff de reconexão que já existia religa aquela aba. As outras abas nem
+ficam sabendo, porque deixaram de compartilhar o mesmo heap C.
 
-- [internal/telaproc](internal/telaproc/) é o canal entre os dois
-  processos: socket TCP em 127.0.0.1 com token de 32 bytes, moldura de
-  `tipo + tamanho + corpo`. Não é stdin/stdout de propósito — a libfreerdp
-  escreve no stdout/stderr do processo (WLog) e corromperia o fluxo;
-- o app **reexecuta a si mesmo** (`acessos -tela-worker rdp <addr>
-  <token>`, ver [telaworker.go](cmd/acessos/telaworker.go)). Nada muda no
-  Flatpak nem no instalador do Windows, e não há como as duas metades
-  saírem de versão;
-- [rdptab.go](cmd/acessos/rdptab.go) virou a ponta que manda entrada e
-  recebe retângulos de tela. Crash do filho, desconexão limpa e queda de
-  rede chegam aqui como a MESMA coisa (o socket fecha), e caem no backoff
-  de reconexão que já existia;
-- ao desconectar, o filho sai com `os.Exit` **sem** desmontar a sessão: a
-  desmontagem (`dvcman_channel_close`) é justamente onde mora o crash, e
-  não há nada a liberar que o fim do processo não libere melhor.
+Onde mora:
 
-Dois ganhos que vieram junto, por o desenho obrigar a rastrear região
-suja:
+- [internal/telaproc](internal/telaproc/) — protocolo e transporte, Go puro
+  (sem cgo, compila em qualquer plataforma). O porquê de socket TCP local
+  em vez de stdin/stdout está no cabeçalho de `protocolo.go`: a libfreerdp
+  escreve nos descritores padrão (WLog), e no Windows o próprio app os
+  redireciona para o arquivo de log — qualquer byte dela corromperia o
+  fluxo binário;
+- [telaworker.go](cmd/acessos/telaworker.go) — o app rodando como filho:
+  sem janela, biblioteca C de um lado e socket do outro;
+- [rdptab.go](cmd/acessos/rdptab.go) — a aba, que agora manda entrada e
+  recebe retângulos de tela em vez de chamar `internal/rdp` direto.
 
-- a conversão BGRX→NRGBA pixel a pixel saiu da thread que desenha e
-  passou a cobrir só o retângulo que mudou. Antes ela rodava sobre a tela
-  INTEIRA a cada quadro da interface, mesmo sem nada ter mudado na sessão
-  remota;
-- há controle de fluxo por crédito: o filho só manda um quadro quando o
-  processo principal diz que consumiu o anterior. Uma sessão muito ativa
-  não enche mais a fila do socket mais rápido do que a interface desenha.
+Provado ao vivo contra servidor real
+([telaworker_aovivo_test.go](cmd/acessos/telaworker_aovivo_test.go),
+desligado por padrão, ligado por `ACESSOS_RDP_AOVIVO`): `SIGKILL` no filho
+no meio da sessão, o principal percebe como EOF e religa num processo novo.
+O `ERRINFO_RPC_INITIATED_DISCONNECT` original chegou a acontecer durante os
+testes — e matou só o filho.
 
-Ainda em aberto neste item:
+De quebra, a aba ficou mais leve. Antes ela copiava a tela remota inteira do
+C e convertia BGRX→NRGBA pixel a pixel A CADA QUADRO DA INTERFACE, mesmo
+sem nada ter mudado do lado remoto. Agora o filho manda só o retângulo sujo,
+já convertido, e a thread de desenho só encosta em pixel quando chega quadro
+novo. Medido ao vivo numa sessão de 1024x768: com a tela calma, 1.792 bytes
+por quadro contra 3.145.752 da tela cheia.
 
-- **VNC continua in-process.** O transporte já nasceu agnóstico de
-  protocolo; falta escrever o `vncworker.go` e virar a chave no
-  [vnctab.go](cmd/acessos/vnctab.go). Foi deixado de fora de propósito,
-  para não dobrar a área de teste ao vivo numa rodada só;
-- reportar o bug upstream ao FreeRDP continua valendo — conter não é
-  corrigir, e quem usa `dvcman_channel_close` fora daqui segue exposto.
+O que ficou de fora, de propósito:
 
-## 7. `unsafe.Pointer` mal usado nos handles de VNC e RDP
-
-`go vet ./...` acusa duas linhas, as duas anteriores a qualquer coisa
-desta lista: [rdp.go:94](internal/rdp/rdp.go) e
-[vnc.go:62](internal/vnc/vnc.go). Os dois pacotes usam um CONTADOR (1, 2,
-3…) convertido para `unsafe.Pointer` como contexto opaco dos callbacks em
-C. Na prática funciona — o valor nunca é desreferenciado do lado Go, só
-vai ao C e volta para virar chave de mapa —, mas é ilegal pelas regras do
-`unsafe.Pointer`, e o `checkptr` (que o `-race` liga junto) aborta o
-processo ao ver a conversão.
-
-O efeito concreto hoje: o teste que sobe o processo-filho RDP de verdade
-precisa ficar fora do `-race`
-([telaworker_filho_test.go](cmd/acessos/telaworker_filho_test.go)).
-
-Correção provável, pequena nos dois pacotes: usar o endereço de um objeto
-de verdade alocado no heap como handle, guardando-o dentro da própria
-`Session` para o coletor não o levar. Não foi feito nesta rodada por
-tocar em dois pacotes testados ao vivo, e o item aqui é para essa decisão
-ser sua e não minha.
-
----
+- **VNC continua dentro do processo principal.** O transporte já nasceu
+  agnóstico para receber os dois; falta o worker de VNC e reescrever a
+  `vnctab.go` do mesmo jeito. Ao fazer isso, releia o teto de sessões
+  abaixo — ele foi calibrado só com RDP em processo próprio;
+- **teto de sessões simultâneas**: `telaproc.MaxSessoes` (hoje 12). Cada
+  sessão passou a custar um processo, e a medição real de um filho é RSS
+  118 MiB / PSS 94 MiB / **privada 87 MiB** — o que manda é a privada. 12
+  deixa o pior caso em ~1 GiB. **Esse número não é chute e não deve ser
+  mexido por estimativa**: `TestAoVivoCustoDeUmFilho` mede um filho de
+  verdade, e é ela que precisa ser refeita antes de mudar o teto. O
+  raciocínio inteiro está no comentário da constante em
+  [processo.go](internal/telaproc/processo.go);
+- **reportar upstream ao FreeRDP** continua valendo, e agora com menos
+  pressa: o bug deixou de ser fatal aqui, mas segue sendo bug deles.
 
 ## Limitações conhecidas, que NÃO estão no plano de corrigir
 

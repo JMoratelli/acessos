@@ -257,6 +257,9 @@ func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 	}
 
 	t.lacoEventos(proc, inicio)
+	if fimSessao(pedido.Load()) == fimCaiu {
+		reg("[%s] processo %d da sessão terminou", t.title, proc.PID())
+	}
 	return fimSessao(pedido.Load())
 }
 

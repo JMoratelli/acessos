@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +23,59 @@ import (
 // instalador do Windows, e não há como as duas metades saírem de versão.
 const ArgWorker = "-tela-worker"
 
+// MaxSessoes é o TETO de sessões remotas em processo próprio, simultâneas,
+// no app inteiro — não por aba, não por protocolo: o total.
+//
+// LEIA ISTO ANTES DE MEXER EM QUALQUER COISA QUE CRIE SESSÃO. Cada aba de
+// tela remota agora custa um PROCESSO, não uma goroutine. O que antes
+// crescia alguns megabytes por aba hoje cresce um binário inteiro mais o
+// framebuffer da máquina remota, e some do radar de quem olha só o
+// processo principal. Sem um teto, "abri as abas todas" deixa de ser um
+// app pesado e vira uma máquina no chão — que é exatamente o acidente que
+// esta arquitetura existe para EVITAR, não para causar.
+//
+// O número sai de MEDIÇÃO, não de chute. TestAoVivoCustoDeUmFilho
+// (cmd/acessos/telaworker_aovivo_test.go) mede um filho de verdade contra
+// um servidor real. Medição de referência, sessão de 1024x768:
+//
+//	RSS 118,3 MiB | PSS 94,5 MiB | PRIVADA 86,7 MiB
+//
+// O que manda é a PRIVADA (~87 MiB): o RSS conta o binário e as bibliotecas
+// que todos os filhos compartilham, então ele triplica o custo da segunda
+// sessão em diante. Uma tela maior sobe pouco isso — 1920x1080 acrescenta
+// ~5 MiB de framebuffer sobre 1024x768, não o dobro.
+//
+//	12 sessões x ~87 MiB ~= 1,0 GiB no pior caso.
+//
+// Um giga é o que se pode gastar sem pensar numa máquina de operação; é daí
+// que vem o 12. Mudar este número exige REFAZER a medição, não estimar a
+// partir dela: se um dia o filho engordar, o teto antigo passa a valer
+// outra coisa em memória.
+//
+// Cuidado ao portar o VNC para cá: hoje ele roda DENTRO do processo
+// principal, e o histórico registra operador com ~30 telas VNC abertas ao
+// mesmo tempo (ver o comentário sobre wl_data_source em
+// cmd/acessos/clipboard.go). Com VNC também em processo próprio, 30 telas
+// passam a bater neste teto — a conta tem que ser refeita com a medição de
+// um filho VNC, e não simplesmente dobrada.
+//
+// Estourar o teto não derruba nada: Iniciar recusa com ErrLotado, a aba
+// mostra no log e fica em "CAIU" até alguém fechar outra sessão.
+const MaxSessoes = 12
+
+// vivas conta os filhos de pé. Sobe em Iniciar e desce em Encerrar, uma
+// vez só por Processo (daí o sync.Once): Encerrar é chamado tanto pelo
+// caminho normal quanto por defer em caminho de erro.
+var vivas atomic.Int32
+
+// ErrLotado é o que Iniciar devolve quando o teto foi atingido.
+var ErrLotado = fmt.Errorf(
+	"limite de %d sessões remotas simultâneas atingido — feche uma aba de tela antes de abrir outra",
+	MaxSessoes)
+
+// SessoesVivas é quantos filhos estão de pé agora (para o diagnóstico).
+func SessoesVivas() int { return int(vivas.Load()) }
+
 // prazoHandshake é quanto esperamos o filho nascer e se apresentar. Ele não
 // faz nada antes disso além de abrir um socket, então segundos de sobra
 // aqui só servem para máquina muito carregada.
@@ -30,7 +85,8 @@ const prazoHandshake = 20 * time.Second
 // para ele.
 type Processo struct {
 	*Conn
-	cmd *exec.Cmd
+	cmd      *exec.Cmd
+	baixaUma sync.Once
 }
 
 // Iniciar sobe um processo-filho para o protocolo pedido ("rdp") e espera
@@ -42,6 +98,21 @@ type Processo struct {
 // poderia correr para se conectar primeiro e passar a receber a tela e as
 // teclas da sessão — o token é o que fecha essa porta.
 func Iniciar(protocolo string) (*Processo, error) {
+	// A reserva vem ANTES de qualquer trabalho: se já estamos no teto,
+	// não custa nem um fork descobrir isso.
+	if vivas.Add(1) > MaxSessoes {
+		vivas.Add(-1)
+		return nil, ErrLotado
+	}
+	p, err := iniciar(protocolo)
+	if err != nil {
+		vivas.Add(-1)
+		return nil, err
+	}
+	return p, nil
+}
+
+func iniciar(protocolo string) (*Processo, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("não achei o próprio executável: %w", err)
@@ -120,10 +191,21 @@ func aceitar(ln net.Listener, token []byte) (*Processo, error) {
 	return &Processo{Conn: conn}, nil
 }
 
+// PID é o processo-filho, para o log poder dizer QUAL processo morreu
+// quando uma sessão cai — com várias abas abertas, "o filho caiu" sem
+// número não ajuda ninguém a cruzar com um coredump.
+func (p *Processo) PID() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
 // Encerrar fecha o canal e garante que o filho morreu. Fechar o socket já
 // basta no caso normal (o filho vê EOF e sai), mas um filho travado dentro
 // da biblioteca C não veria nada — daí o prazo e o tiro de misericórdia.
 func (p *Processo) Encerrar() {
+	p.baixaUma.Do(func() { vivas.Add(-1) })
 	_ = p.Fechar()
 	if p.cmd == nil || p.cmd.Process == nil {
 		return

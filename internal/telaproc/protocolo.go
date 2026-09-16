@@ -114,6 +114,15 @@ type Quadro struct {
 // tamCabQuadro são os 6 int32 do cabeçalho.
 const tamCabQuadro = 24
 
+// ladoMax limita a geometria anunciada no cabeçalho. Quem recebe aloca uma
+// imagem de TotalW x TotalH x 4 bytes ANTES de ter olhado os pixels, então
+// sem teto um cabeçalho estragado (ou um filho que enlouqueceu dentro da
+// biblioteca C) faz o processo principal pedir gigabytes ao sistema — que
+// é justamente o tipo de coisa que não derruba o app, derruba a MÁQUINA.
+// 32768 dá folga sobre qualquer parede de monitores real e mantém o pior
+// caso em 4 GB, abaixo do teto de mensagem.
+const ladoMax = 32768
+
 // Codificar escreve o cabeçalho na frente de pix e devolve o corpo pronto.
 func (q Quadro) Codificar(pix []byte) []byte {
 	buf := make([]byte, tamCabQuadro+len(pix))
@@ -144,7 +153,15 @@ func DecodificarQuadro(corpo []byte) (Quadro, []byte, error) {
 		TotalH: int32(le.Uint32(corpo[20:])),
 	}
 	pix := corpo[tamCabQuadro:]
-	if q.W < 0 || q.H < 0 || int(q.W)*int(q.H)*4 != len(pix) {
+	if q.TotalW <= 0 || q.TotalH <= 0 || q.TotalW > ladoMax || q.TotalH > ladoMax {
+		return Quadro{}, nil, fmt.Errorf("tela de %dx%d fora do aceitável", q.TotalW, q.TotalH)
+	}
+	if q.X < 0 || q.Y < 0 || q.W < 0 || q.H < 0 ||
+		q.X+q.W > q.TotalW || q.Y+q.H > q.TotalH {
+		return Quadro{}, nil, fmt.Errorf("retângulo (%d,%d %dx%d) não cabe na tela %dx%d",
+			q.X, q.Y, q.W, q.H, q.TotalW, q.TotalH)
+	}
+	if int(q.W)*int(q.H)*4 != len(pix) {
 		return Quadro{}, nil, fmt.Errorf("quadro %dx%d não bate com %d bytes", q.W, q.H, len(pix))
 	}
 	return q, pix, nil

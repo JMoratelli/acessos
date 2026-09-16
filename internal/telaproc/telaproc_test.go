@@ -2,6 +2,7 @@ package telaproc
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -172,5 +173,44 @@ func TestQuadroCorrompidoNaoPassa(t *testing.T) {
 	}
 	if _, _, err := DecodificarQuadro([]byte{1, 2, 3}); err == nil {
 		t.Fatal("aceitou cabeçalho truncado")
+	}
+}
+
+// O teto existe para o app não virar um problema de memória da máquina
+// inteira (ver MaxSessoes). Aqui ele é exercitado mexendo no contador, e
+// não subindo MaxSessoes processos de verdade: o que precisa estar certo é
+// a contabilidade — recusar no limite, não vazar a reserva na recusa, e
+// devolver a vaga quando a sessão encerra.
+func TestTetoDeSessoes(t *testing.T) {
+	antes := SessoesVivas()
+	t.Cleanup(func() { vivas.Store(int32(antes)) })
+
+	vivas.Store(int32(MaxSessoes))
+	if _, err := Iniciar("eco"); err == nil {
+		t.Fatal("Iniciar passou por cima do teto")
+	} else if !errors.Is(err, ErrLotado) {
+		t.Fatalf("recusou com %v, esperava ErrLotado", err)
+	}
+	if v := SessoesVivas(); v != MaxSessoes {
+		t.Fatalf("a recusa deixou o contador em %d, esperava %d", v, MaxSessoes)
+	}
+
+	// Com uma vaga livre, entra — e devolve a vaga ao encerrar.
+	vivas.Store(int32(MaxSessoes - 1))
+	p, err := Iniciar("eco")
+	if err != nil {
+		t.Fatalf("Iniciar com vaga livre: %v", err)
+	}
+	if v := SessoesVivas(); v != MaxSessoes {
+		t.Fatalf("contador ficou em %d depois de subir uma sessão", v)
+	}
+	p.Encerrar()
+	if v := SessoesVivas(); v != MaxSessoes-1 {
+		t.Fatalf("Encerrar deixou o contador em %d, esperava %d", v, MaxSessoes-1)
+	}
+	// Encerrar duas vezes não pode descontar duas vagas.
+	p.Encerrar()
+	if v := SessoesVivas(); v != MaxSessoes-1 {
+		t.Fatalf("Encerrar repetido vazou vaga: contador em %d", v)
 	}
 }
