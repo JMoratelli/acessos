@@ -73,6 +73,23 @@ patch lê o array (um `wl_array` de `uint32_t`, valores do enum
 na prática: o KWin manda `[MAXIMIZED, ACTIVATED]` nesse array ao encostar
 a janela no topo da tela.
 
+Um oitavo patch, em `app/d3d11_windows.go` (`(*d3d11Context).Refresh`): o
+resize do swapchain D3D11 só tratava `DXGI_ERROR_DEVICE_RESET`/
+`_DEVICE_REMOVED` como recuperável — qualquer outro erro do
+`ResizeBuffers`/`GetBuffer`/`CreateRenderTargetView` (visto na prática:
+`DXGI_ERROR_INVALID_CALL` ao minimizar ou trocar de monitor/DPI no meio de
+um redesenho pesado) subia cru e `window.go` derrubava a janela — a
+travada relatada no Windows ao minimizar e ao mover entre telas. O patch
+(1) pula o resize e devolve `errOutOfDate` quando a janela está 0x0
+(minimizada: não há o que redesenhar, e o tamanho de cliente muda de novo
+assim que ela volta) e (2) faz qualquer erro do resize passar por
+`recoverableErr`, que vira `gpu.ErrDeviceLost` — `window.go` já sabe reagir
+a isso destruindo e recriando o contexto D3D11 no quadro seguinte, em vez
+de propagar o erro cru e matar a janela. Não tem equivalente nos caminhos
+GL/EGL do Linux (`egl_wayland.go`, `egl_x11.go`): o resize ali
+(`wl_egl_window_resize`/`glViewport`) não falha desse jeito, então não há
+o que hardening aqui traria para lá.
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).

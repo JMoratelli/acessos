@@ -3,6 +3,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"unsafe"
 
@@ -76,28 +77,56 @@ func wrapErr(err error) error {
 	return err
 }
 
+// patch acessos: recoverableErr é o wrapErr do caminho de resize (ResizeBuffers/GetBuffer/
+// CreateRenderTargetView): qualquer erro aqui — mesmo um DXGI_ERROR_INVALID_CALL
+// sem código tratado por wrapErr, visto na prática ao trocar de monitor (adaptador
+// ou DPI diferente) no meio de um redesenho pesado — vira ErrDeviceLost em vez de
+// matar a janela. window.go já sabe recuperar disso: destrói o contexto D3D11 e
+// recria do zero no próximo quadro. Um erro cru aqui não tinha essa segunda chance
+// e derrubava o app inteiro (era exatamente isto que causava a travada ao
+// minimizar/trocar de tela relatada no Windows).
+func recoverableErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if wrapped := wrapErr(err); wrapped == nil || errors.Is(wrapped, gpu.ErrDeviceLost) {
+		return wrapped
+	}
+	return gpu.ErrDeviceLost
+}
+
 func (c *d3d11Context) Refresh() error {
 	var width, height int
 	_, width, height = c.win.HWND()
 	if c.renderTarget != nil && width == c.width && height == c.height {
 		return nil
 	}
+	// Minimizar (ou trocar de monitor/DPI no meio de um redesenho pesado,
+	// que passa por um retângulo de cliente momentaneamente inválido) pode
+	// entregar 0x0 aqui. ResizeBuffers com isso reflete o tamanho ATUAL da
+	// janela (0x0), o que deixa o swapchain num estado que nada do resto
+	// desta função sabe desenhar — mais vale pular o frame (o próximo
+	// Refresh tenta de novo com um tamanho de verdade) do que arriscar um
+	// resize inválido.
+	if width == 0 || height == 0 {
+		return errOutOfDate
+	}
 	c.releaseFBO()
 	if err := c.swchain.ResizeBuffers(0, 0, 0, d3d11.DXGI_FORMAT_UNKNOWN, 0); err != nil {
-		return wrapErr(err)
+		return recoverableErr(err)
 	}
 	c.width = width
 	c.height = height
 
 	backBuffer, err := c.swchain.GetBuffer(0, &d3d11.IID_Texture2D)
 	if err != nil {
-		return err
+		return recoverableErr(err)
 	}
 	texture := (*d3d11.Resource)(unsafe.Pointer(backBuffer))
 	renderTarget, err := c.dev.CreateRenderTargetView(texture)
 	d3d11.IUnknownRelease(unsafe.Pointer(backBuffer), backBuffer.Vtbl.Release)
 	if err != nil {
-		return err
+		return recoverableErr(err)
 	}
 	c.renderTarget = renderTarget
 	return nil
