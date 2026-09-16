@@ -3,16 +3,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"acessos-go/internal/conexoes"
 	"acessos-go/internal/rdp"
+	"acessos-go/internal/telaproc"
 
 	"gioui.org/app"
 	"gioui.org/f32"
@@ -26,6 +27,13 @@ import (
 
 	"gio.tools/icons"
 )
+
+// A sessão RDP NÃO roda dentro deste processo: ela vive num processo-filho
+// (ver internal/telaproc e telaworker.go), e o que existe aqui é a ponta
+// que manda entrada e recebe retângulos de tela. O motivo está no
+// BACKLOG.md §6 — um crash dentro da libfreerdp levava o app inteiro, com
+// todas as abas. Agora leva o filho, esta aba marca "CAIU" e o mesmo
+// backoff de sempre religa.
 
 type rdpView struct {
 	scale      float32
@@ -60,7 +68,7 @@ type rdpTab struct {
 	title             string
 	host              string
 	port              int
-	sess              atomic.Pointer[rdp.Session]
+	proc              atomic.Pointer[telaproc.Processo]
 	stop              chan struct{}
 	closeOnce         sync.Once
 	viewMu            sync.Mutex
@@ -70,6 +78,17 @@ type rdpTab struct {
 	lastSizeRequested image.Point
 	lastButtons       pointer.Buttons
 
+	// tela é o último quadro PRONTO para desenhar. Quem monta troca o
+	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
+	// permite entregá-la ao Gio sem trava e sem risco de ela mudar
+	// debaixo do upload da textura.
+	tela atomic.Pointer[image.NRGBA]
+	// opCache guarda a ImageOp da última tela publicada: sem isto o Gio
+	// remontaria (e reenviaria à GPU) a textura a cada quadro DA
+	// INTERFACE, mesmo sem nada ter mudado do lado remoto.
+	opCache  paint.ImageOp
+	opDaTela *image.NRGBA
+
 	// estado mostrado e controlado pela barra de sessão
 	religar     chan struct{}
 	auto        atomic.Bool
@@ -78,8 +97,6 @@ type rdpTab struct {
 	caiu        atomic.Bool
 	fw, fh      atomic.Int32
 	nomeConexao string
-	// cursor remoto (ver cursorforma.go), mesmo esquema do vncTab.
-	classCursor classificadorCursor
 	cursorAtual atomic.Uint32
 	btnRec      widget.Clickable
 	btnTeclas   widget.Clickable
@@ -134,99 +151,44 @@ func (t *rdpTab) Close() {
 	t.closeOnce.Do(func() { close(t.stop) })
 }
 
+// fimSessao diz por que uma sessão terminou, e com isso o que fazer em
+// seguida.
+type fimSessao int
+
+const (
+	fimParar   fimSessao = iota // aba fechada: não volta
+	fimReligar                  // pedido manual: reconecta já
+	fimCaiu                     // caiu sozinha (inclusive crash do filho)
+)
+
 func (t *rdpTab) manageSession(user, pass, domain string) {
 	attempt := 0
-
 	for {
-		sess := rdp.New()
-		sess.SetCredentials(user, pass, domain)
-		sess.OnUpdate = func(x, y, w, h int) { t.w.Invalidate() }
-		sess.OnResize = func(w, h int) { t.w.Invalidate() }
-		sess.OnCursor = func(_, _, w, h int, mask []byte) {
-			t.cursorAtual.Store(uint32(t.classCursor.classificar(w, h, mask)))
-			t.w.Invalidate()
-		}
-		// Certificado: o callback roda NA THREAD DE REDE do FreeRDP e
-		// bloqueia o handshake — é isso que dá sentido à pergunta. A
-		// resposta vem da interface por um canal.
-		// Canal de display pronto: reenvia o tamanho AGORA. Sem isto, o
-		// primeiro pedido (feito no primeiro quadro) caía antes do
-		// handshake do canal e era descartado — daí a sessão só se
-		// ajustar quando a janela mexia.
-		sess.OnDisplayPronto = func() {
-			t.mu.Lock()
-			t.lastSizeRequested = image.Point{}
-			t.mu.Unlock()
-			t.w.Invalidate()
-		}
-		sess.OnCertificado = func(c rdp.Certificado) int {
-			resp := make(chan int, 1)
-			pedirConfiancaCertificado(t.w, c, func(d int) { resp <- d })
-			t.w.Invalidate()
-			return <-resp
-		}
-		sess.OnClipboardText = func(text string) {
-			if !t.clipOn.Load() || !ehAbaAtiva(t) {
-				return
-			}
-			if !t.clip.checkAndSet(text) {
-				return
-			}
-			publicarClipboard(t.w, text)
-		}
-
-		reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
-		inicio := time.Now()
-		if err := sess.Connect(t.host, t.port); err != nil {
-			ce := err.(*rdp.ConnectError)
-			fmt.Fprintf(os.Stderr, "[%s] falha: %s (auth=%v)\n", t.title, ce.Message, ce.AuthFailed)
-			sess.Close()
-			return
-		}
-		reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
-		attempt = 0
-
-		t.sess.Store(sess)
-		t.caiu.Store(false)
+		fim := t.rodarSessao(user, pass, domain)
+		t.proc.Store(nil)
+		// Apaga a tela ao perder a sessão, em vez de deixar congelado o
+		// último quadro: com o chip "CAIU" ao lado, uma imagem parada que
+		// continua parecendo viva é pior que preto — e era assim que a aba
+		// se comportava antes de a sessão mudar de processo.
+		t.tela.Store(nil)
 		t.w.Invalidate()
-		runStop := make(chan struct{})
-		done := make(chan error, 1)
-		go func() { done <- sess.Run(runStop) }()
 
-		manual := false
-		select {
-		case <-t.stop:
-			close(runStop)
-			<-done
-			sess.Close()
+		switch fim {
+		case fimParar:
 			return
-		case <-t.religar:
-			manual = true
-			close(runStop)
-			<-done
-			t.sess.Store(nil)
-			sess.Close()
-		case err := <-done:
-			t.sess.Store(nil)
-			t.caiu.Store(true)
-			sess.Close()
-			reg("[%s] sessão caiu: %v", t.title, err)
-			t.w.Invalidate()
-		}
-		if manual {
+		case fimReligar:
 			attempt = 0
-			t.mu.Lock()
-			t.lastSizeRequested = image.Point{}
-			t.mu.Unlock()
+			t.esquecerTamanho()
 			continue
 		}
+
+		t.caiu.Store(true)
+		t.w.Invalidate()
 		if !t.auto.Load() {
 			select {
 			case <-t.religar:
 				attempt = 0
-				t.mu.Lock()
-				t.lastSizeRequested = image.Point{}
-				t.mu.Unlock()
+				t.esquecerTamanho()
 				continue
 			case <-t.stop:
 				return
@@ -235,7 +197,7 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 
 		wait := backoffSchedule[min(attempt, len(backoffSchedule)-1)]
 		attempt++
-		fmt.Printf("[%s] reconectando em %s (tentativa #%d)\n", t.title, wait, attempt)
+		reg("[%s] reconectando em %s (tentativa #%d)", t.title, wait, attempt)
 		select {
 		case <-time.After(wait):
 		case <-t.religar:
@@ -243,10 +205,200 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 		case <-t.stop:
 			return
 		}
-		t.mu.Lock()
-		t.lastSizeRequested = image.Point{}
-		t.mu.Unlock()
+		t.esquecerTamanho()
 	}
+}
+
+// esquecerTamanho faz o próximo quadro reenviar a resolução ao servidor.
+// Sem isto, uma sessão religada fica na resolução de quando caiu.
+func (t *rdpTab) esquecerTamanho() {
+	t.mu.Lock()
+	t.lastSizeRequested = image.Point{}
+	t.mu.Unlock()
+}
+
+// rodarSessao vive de um processo-filho: sobe, conversa até acabar, e
+// garante que ele morreu antes de devolver.
+func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
+	proc, err := telaproc.Iniciar("rdp")
+	if err != nil {
+		reg("[%s] %v", t.title, err)
+		return fimCaiu
+	}
+	defer proc.Encerrar()
+
+	// Este vigia é o que traduz "fechar a aba" e "reconectar agora" em
+	// algo que acorde a leitura do socket: fechar o canal faz o Ler()
+	// abaixo devolver erro na hora.
+	var pedido atomic.Int32
+	pedido.Store(int32(fimCaiu))
+	saiu := make(chan struct{})
+	defer close(saiu)
+	go func() {
+		select {
+		case <-t.stop:
+			pedido.Store(int32(fimParar))
+		case <-t.religar:
+			pedido.Store(int32(fimReligar))
+		case <-saiu:
+			return
+		}
+		_ = proc.Fechar()
+	}()
+
+	reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
+	inicio := time.Now()
+	if err := proc.Conectar(telaproc.Ligacao{
+		Host: t.host, Porta: t.port,
+		Usuario: user, Senha: pass, Dominio: domain,
+	}); err != nil {
+		reg("[%s] não consegui pedir a conexão: %v", t.title, err)
+		return fimSessao(pedido.Load())
+	}
+
+	t.lacoEventos(proc, inicio)
+	return fimSessao(pedido.Load())
+}
+
+// lacoEventos é o único leitor do canal do filho. Sai quando o filho fecha
+// ou morre — e "morre" inclui o SIGSEGV dentro da libfreerdp, que daqui é
+// indistinguível de uma desconexão limpa. Essa indistinção é o ponto.
+func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
+	// acum é a tela remota inteira, montada retângulo a retângulo. Fica
+	// nesta goroutine e nunca é entregue ao Gio: o que vai para a
+	// interface é sempre uma cópia congelada (ver publicar).
+	var acum *image.NRGBA
+
+	for {
+		tipo, corpo, err := proc.Ler()
+		if err != nil {
+			return
+		}
+		switch tipo {
+		case telaproc.EvtConectado:
+			reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
+			t.proc.Store(proc)
+			t.caiu.Store(false)
+			t.w.Invalidate()
+			_ = proc.Credito()
+
+		case telaproc.EvtFalha:
+			var f telaproc.Falha
+			_ = json.Unmarshal(corpo, &f)
+			reg("[%s] falha: %s (auth=%v)", t.title, f.Mensagem, f.AuthFalhou)
+			return
+
+		case telaproc.EvtQuadro:
+			q, pix, err := telaproc.DecodificarQuadro(corpo)
+			if err != nil {
+				reg("[%s] quadro inválido: %v", t.title, err)
+				return
+			}
+			acum = aplicarQuadro(acum, q, pix)
+			t.fw.Store(q.TotalW)
+			t.fh.Store(q.TotalH)
+			t.publicar(acum)
+			t.w.Invalidate()
+			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
+			// filho de encher a fila do socket mais rápido do que isto
+			// aqui consome.
+			_ = proc.Credito()
+
+		case telaproc.EvtDesconectado:
+			reg("[%s] sessão caiu: %s", t.title, string(corpo))
+			return
+
+		case telaproc.EvtClipboard:
+			texto := string(corpo)
+			if !t.clipOn.Load() || !ehAbaAtiva(t) {
+				continue
+			}
+			if !t.clip.checkAndSet(texto) {
+				continue
+			}
+			publicarClipboard(t.w, texto)
+
+		case telaproc.EvtCursor:
+			if c, ok := telaproc.LerCursor(corpo); ok {
+				t.cursorAtual.Store(c)
+				t.w.Invalidate()
+			}
+
+		case telaproc.EvtDisplayPronto:
+			// O canal Display Control acabou o handshake: reenvia o
+			// tamanho AGORA. Sem isto, o primeiro pedido (feito no
+			// primeiro quadro) caía antes do handshake e era descartado —
+			// daí a sessão só se ajustar quando a janela mexia.
+			t.esquecerTamanho()
+			t.w.Invalidate()
+
+		case telaproc.EvtCertPedido:
+			var c telaproc.Certificado
+			if err := json.Unmarshal(corpo, &c); err != nil {
+				_ = proc.CertResposta(rdp.CertRecusar)
+				continue
+			}
+			// O filho está com o handshake PARADO esperando isto, então a
+			// resposta tem de sair de uma goroutine própria: o diálogo só
+			// é respondido no laço de quadro, que precisa deste laço aqui
+			// vivo para a aba continuar desenhando enquanto se pergunta.
+			go func() {
+				resp := make(chan int, 1)
+				pedirConfiancaCertificado(t.w, rdp.Certificado{
+					Host: c.Host, Porta: c.Porta,
+					NomeComum: c.NomeComum, Assunto: c.Assunto,
+					Emissor: c.Emissor, Digital: c.Digital,
+					DigitalAnterior: c.DigitalAnterior, Mudou: c.Mudou,
+				}, func(d int) { resp <- d })
+				t.w.Invalidate()
+				select {
+				case d := <-resp:
+					_ = proc.CertResposta(d)
+				case <-t.stop:
+				}
+			}()
+		}
+	}
+}
+
+// aplicarQuadro cola o retângulo recebido na tela acumulada, criando ou
+// trocando a imagem quando a resolução remota muda.
+func aplicarQuadro(acum *image.NRGBA, q telaproc.Quadro, pix []byte) *image.NRGBA {
+	tw, th := int(q.TotalW), int(q.TotalH)
+	if tw <= 0 || th <= 0 {
+		return acum
+	}
+	if acum == nil || acum.Rect.Dx() != tw || acum.Rect.Dy() != th {
+		acum = image.NewNRGBA(image.Rect(0, 0, tw, th))
+	}
+	x, y, w, h := int(q.X), int(q.Y), int(q.W), int(q.H)
+	if x < 0 || y < 0 || x+w > tw || y+h > th {
+		return acum
+	}
+	for linha := 0; linha < h; linha++ {
+		dst := acum.Pix[(y+linha)*acum.Stride+x*4:]
+		copy(dst[:w*4], pix[linha*w*4:])
+	}
+	return acum
+}
+
+// publicar congela a tela acumulada numa imagem nova e a entrega ao
+// desenho. A cópia é o preço de não precisar de trava nenhuma do lado do
+// Gio: a imagem publicada não muda mais depois de publicada, então a
+// textura pode subir para a GPU com calma enquanto o próximo retângulo já
+// está sendo colado no acumulador.
+//
+// Antes disto a interface fazia, A CADA QUADRO DELA, uma cópia da tela
+// inteira vinda do C mais uma conversão BGRX->NRGBA pixel a pixel — mesmo
+// quando nada tinha mudado na sessão remota. Agora a cópia acontece uma
+// vez por quadro REMOTO, e fora da thread que desenha.
+func (t *rdpTab) publicar(acum *image.NRGBA) {
+	if acum == nil {
+		return
+	}
+	pub := image.NewNRGBA(acum.Rect)
+	copy(pub.Pix, acum.Pix)
+	t.tela.Store(pub)
 }
 
 func (t *rdpTab) OnLocalClipboard(text string) {
@@ -256,43 +408,20 @@ func (t *rdpTab) OnLocalClipboard(text string) {
 	if !t.clip.checkAndSet(text) {
 		return
 	}
-	if sess := t.sess.Load(); sess != nil {
-		sess.SendClipboardText(text)
+	if p := t.proc.Load(); p != nil {
+		_ = p.Clipboard(text)
 	}
-}
-
-// rdpBGRXToNRGBA é como bgrxToNRGBA (vnctab.go), mas respeitando stride:
-// ao contrário do VNC, o gdi do FreeRDP pode alinhar cada linha além de
-// w*4 bytes.
-func rdpBGRXToNRGBA(buf []byte, w, h, stride int) *image.NRGBA {
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		row := buf[y*stride:]
-		out := img.Pix[y*img.Stride:]
-		for x := 0; x < w; x++ {
-			b := row[x*4+0]
-			g := row[x*4+1]
-			r := row[x*4+2]
-			out[x*4+0] = r
-			out[x*4+1] = g
-			out[x*4+2] = b
-			out[x*4+3] = 255
-		}
-	}
-	return img
 }
 
 func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	size := gtx.Constraints.Max
-	sess := t.sess.Load()
+	proc := t.proc.Load()
+	tela := t.tela.Load()
 
-	var buf []byte
-	var fw, fh, stride int
-	if sess != nil {
-		buf, fw, fh, stride = sess.Framebuffer()
+	fw, fh := 0, 0
+	if tela != nil {
+		fw, fh = tela.Rect.Dx(), tela.Rect.Dy()
 	}
-	t.fw.Store(int32(fw))
-	t.fh.Store(int32(fh))
 	v := computeRDPView(size, fw, fh, t.modo.Load())
 	t.viewMu.Lock()
 	t.view = v
@@ -301,13 +430,13 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	// Resolução dinâmica: acompanha o tamanho da área da aba (canal
 	// Display Control) — só reenvia quando muda, mesma razão do rdpview.
 	t.mu.Lock()
-	pedirResize := sess != nil && size != t.lastSizeRequested && t.modo.Load() == modoDinamico
+	pedirResize := proc != nil && size != t.lastSizeRequested && t.modo.Load() == modoDinamico
 	if pedirResize {
 		t.lastSizeRequested = size
 	}
 	t.mu.Unlock()
 	if pedirResize {
-		sess.RequestResize(size.X, size.Y)
+		_ = proc.Resize(size.X, size.Y)
 	}
 
 	// Clipa à própria área — mesma razão do vnctab.go: sem isto, o
@@ -319,14 +448,20 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 
-	if len(buf) > 0 {
-		img := rdpBGRXToNRGBA(buf, fw, fh, stride)
+	if tela != nil {
+		// Só remonta a ImageOp quando a TELA mudou: a comparação é de
+		// ponteiro porque cada publicação é uma imagem nova (ver
+		// publicar). Reaproveitar a op é o que faz o Gio reusar a textura
+		// já na GPU em vez de reenviá-la a cada quadro da interface.
+		if t.opDaTela != tela {
+			t.opCache = paint.NewImageOp(tela)
+			t.opDaTela = tela
+		}
 		tr := op.Affine(f32.Affine2D{}.
 			Scale(f32.Point{}, f32.Point{X: v.scale, Y: v.scale}).
 			Offset(f32.Point{X: v.offX, Y: v.offY}),
 		).Push(gtx.Ops)
-		imgOp := paint.NewImageOp(img)
-		imgOp.Add(gtx.Ops)
+		t.opCache.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		tr.Pop()
 	}
@@ -335,8 +470,8 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 }
 
 func (t *rdpTab) HandlePointer(ev pointer.Event, _ image.Point) {
-	sess := t.sess.Load()
-	if sess == nil {
+	proc := t.proc.Load()
+	if proc == nil {
 		return
 	}
 	t.viewMu.Lock()
@@ -348,24 +483,24 @@ func (t *rdpTab) HandlePointer(ev pointer.Event, _ image.Point) {
 	x := int((ev.Position.X - v.offX) / v.scale)
 	y := int((ev.Position.Y - v.offY) / v.scale)
 
-	sess.PointerMove(x, y)
+	_ = proc.PonteiroMover(x, y)
 
 	changed := ev.Buttons ^ t.lastButtons
 	if changed&pointer.ButtonPrimary != 0 {
-		sess.PointerButton(x, y, 1, ev.Buttons&pointer.ButtonPrimary != 0)
+		_ = proc.PonteiroBotao(x, y, 1, ev.Buttons&pointer.ButtonPrimary != 0)
 	}
 	if changed&pointer.ButtonTertiary != 0 {
-		sess.PointerButton(x, y, 2, ev.Buttons&pointer.ButtonTertiary != 0)
+		_ = proc.PonteiroBotao(x, y, 2, ev.Buttons&pointer.ButtonTertiary != 0)
 	}
 	if changed&pointer.ButtonSecondary != 0 {
-		sess.PointerButton(x, y, 3, ev.Buttons&pointer.ButtonSecondary != 0)
+		_ = proc.PonteiroBotao(x, y, 3, ev.Buttons&pointer.ButtonSecondary != 0)
 	}
 	t.lastButtons = ev.Buttons
 }
 
 func (t *rdpTab) HandleKey(_, keycodeX11 uint32, pressed bool) {
-	if sess := t.sess.Load(); sess != nil {
-		sess.KeyEvent(keycodeX11, pressed)
+	if p := t.proc.Load(); p != nil {
+		_ = p.Tecla(keycodeX11, pressed)
 	}
 }
 
@@ -377,7 +512,7 @@ func (t *rdpTab) EstadoSessao() estadoSessao {
 		Texto: fmt.Sprintf("%s:%d", t.host, t.port),
 	}
 	switch {
-	case t.sess.Load() != nil:
+	case t.proc.Load() != nil:
 		e.Chip, e.Tipo = "ATIVO", "ok"
 	case t.caiu.Load():
 		e.Chip, e.Tipo = "CAIU", "erro"
@@ -400,9 +535,7 @@ func (t *rdpTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 			t.modo.Store(int32(i))
 			// voltar pro dinâmico tem que reenviar o tamanho, senão o
 			// servidor fica na resolução de quando ele foi desligado.
-			t.mu.Lock()
-			t.lastSizeRequested = image.Point{}
-			t.mu.Unlock()
+			t.esquecerTamanho()
 		}
 	}
 	if t.btnTeclas.Clicked(gtx) {
@@ -411,8 +544,8 @@ func (t *rdpTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 			if !ok {
 				return
 			}
-			if sess := t.sess.Load(); sess != nil {
-				sess.KeyEvent(kc, pressionada)
+			if p := t.proc.Load(); p != nil {
+				_ = p.Tecla(kc, pressionada)
 			}
 		})
 	}

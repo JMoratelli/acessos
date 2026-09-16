@@ -61,6 +61,14 @@ func specInt(spec map[string]string, key string, def int) int {
 }
 
 func main() {
+	// Antes de qualquer coisa: este processo pode ser um FILHO hospedando
+	// uma sessão remota, e não o app. Ele não tem janela, não lê .ini e
+	// não mexe no log — só abre o canal com quem o criou. Ver
+	// internal/telaproc e telaworker.go.
+	if modoWorker() {
+		return
+	}
+
 	var specs connSpecs
 	flag.Var(&specs, "conn",
 		"conexão (repetível): type=vnc|rdp|ssh|sftp,host=...,port=...,user=...,pass=...,domain=...")

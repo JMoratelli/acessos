@@ -87,43 +87,73 @@ nova. Para distribuição interna é aceitável (o aviso passa com "Mais
 informações"); para distribuir fora, não. Precisa de um certificado de
 code signing — custo e decisão sua, não técnica.
 
-## 6. Crash do app inteiro num disconnect abrupto de RDP
+## 6. Crash do app inteiro num disconnect abrupto de RDP — CONTIDO (2026-09-16)
 
-**Reproduzido em 2026-09-16**, coredump capturado e analisado: o servidor
-derruba a sessão (`ERRINFO_RPC_INITIATED_DISCONNECT`) e o processo inteiro
-morre com SIGSEGV — não só a aba daquela conexão. O crash é **dentro do
-próprio FreeRDP** (`dvcman_channel_close`, chamado de
-`drdynvc_order_recv`), rodando na thread interna do canal dinâmico
-(`drdynvc`), não no [rdpshim.c](internal/rdp/rdpshim.c). É a mesma
-vizinhança da [CVE-2026-56297](https://github.com/FreeRDP/FreeRDP/security/advisories/GHSA-3mv2-5q57-2v8h)
-(use-after-free em `dvcman_channel_close`/`channel_callback`, corrigida na
-3.22.0) — a correção catalogada já está presente no 3.31.1 que
-vendorizamos, então isto é uma variante residual do mesmo problema:
-`dvcman_channel_close` mexe em `channel->state`/`channel->channel_callback`
-sem usar o `channel->lock` que a struct já tem (só é usado em
-`dvcman_write_channel`), deixando uma corrida entre a thread do `drdynvc`
-processando uma ordem e a rotina de desconexão dele mesmo.
+O crash em si continua existindo dentro do FreeRDP; o que mudou é que ele
+deixou de derrubar o app. **Cada sessão RDP agora roda em processo
+próprio** — o terceiro caminho que esta lista descrevia, e o mais
+estrutural. Falta VALIDAR AO VIVO contra o servidor que reproduziu o
+crash: o esperado é a aba marcar "CAIU" e religar sozinha enquanto as
+outras seguem intocadas.
 
-Não é algo para remendar no nosso código — o FreeRDP é baixado direto do
-tarball da tag no manifesto (flatpak/org.jj.Acessos.yml), sem fork local
-(diferente do Gio no Windows, que tem PATCH.md). Caminhos possíveis,
-nenhum tentado ainda:
+Como ficou:
 
-- reportar upstream ao projeto FreeRDP;
-- um patch local no manifesto Flatpak, no mesmo espírito dos patches do
-  Gio, adicionando o `channel->lock` em volta do fechamento do canal —
-  arriscado sem revisão de quem mantém o FreeRDP;
-- **isolar cada sessão remota (RDP e VNC) em processo próprio**, o app
-  principal reexecutando a si mesmo como "worker" por conexão e falando
-  com ele por socket/pipe (framebuffer, teclado, mouse, clipboard,
-  cursor). Essa é a correção de verdade, no sentido de que um crash
-  dentro do FreeRDP (este ou qualquer outro) mata só aquele processo
-  filho — as outras abas continuam de pé, porque deixam de compartilhar
-  o mesmo heap C. Vira o padrão do app: aba caiu, o processo principal
-  detecta a saída do worker e só reconecta aquela aba (o backoff de
-  reconexão já existe), sem o usuário notar que algo morreu de verdade.
-  É reescrita grande do transporte das sessões — não é para fazer de
-  afogadilho, mas é o item mais estrutural desta lista.
+- [internal/telaproc](internal/telaproc/) é o canal entre os dois
+  processos: socket TCP em 127.0.0.1 com token de 32 bytes, moldura de
+  `tipo + tamanho + corpo`. Não é stdin/stdout de propósito — a libfreerdp
+  escreve no stdout/stderr do processo (WLog) e corromperia o fluxo;
+- o app **reexecuta a si mesmo** (`acessos -tela-worker rdp <addr>
+  <token>`, ver [telaworker.go](cmd/acessos/telaworker.go)). Nada muda no
+  Flatpak nem no instalador do Windows, e não há como as duas metades
+  saírem de versão;
+- [rdptab.go](cmd/acessos/rdptab.go) virou a ponta que manda entrada e
+  recebe retângulos de tela. Crash do filho, desconexão limpa e queda de
+  rede chegam aqui como a MESMA coisa (o socket fecha), e caem no backoff
+  de reconexão que já existia;
+- ao desconectar, o filho sai com `os.Exit` **sem** desmontar a sessão: a
+  desmontagem (`dvcman_channel_close`) é justamente onde mora o crash, e
+  não há nada a liberar que o fim do processo não libere melhor.
+
+Dois ganhos que vieram junto, por o desenho obrigar a rastrear região
+suja:
+
+- a conversão BGRX→NRGBA pixel a pixel saiu da thread que desenha e
+  passou a cobrir só o retângulo que mudou. Antes ela rodava sobre a tela
+  INTEIRA a cada quadro da interface, mesmo sem nada ter mudado na sessão
+  remota;
+- há controle de fluxo por crédito: o filho só manda um quadro quando o
+  processo principal diz que consumiu o anterior. Uma sessão muito ativa
+  não enche mais a fila do socket mais rápido do que a interface desenha.
+
+Ainda em aberto neste item:
+
+- **VNC continua in-process.** O transporte já nasceu agnóstico de
+  protocolo; falta escrever o `vncworker.go` e virar a chave no
+  [vnctab.go](cmd/acessos/vnctab.go). Foi deixado de fora de propósito,
+  para não dobrar a área de teste ao vivo numa rodada só;
+- reportar o bug upstream ao FreeRDP continua valendo — conter não é
+  corrigir, e quem usa `dvcman_channel_close` fora daqui segue exposto.
+
+## 7. `unsafe.Pointer` mal usado nos handles de VNC e RDP
+
+`go vet ./...` acusa duas linhas, as duas anteriores a qualquer coisa
+desta lista: [rdp.go:94](internal/rdp/rdp.go) e
+[vnc.go:62](internal/vnc/vnc.go). Os dois pacotes usam um CONTADOR (1, 2,
+3…) convertido para `unsafe.Pointer` como contexto opaco dos callbacks em
+C. Na prática funciona — o valor nunca é desreferenciado do lado Go, só
+vai ao C e volta para virar chave de mapa —, mas é ilegal pelas regras do
+`unsafe.Pointer`, e o `checkptr` (que o `-race` liga junto) aborta o
+processo ao ver a conversão.
+
+O efeito concreto hoje: o teste que sobe o processo-filho RDP de verdade
+precisa ficar fora do `-race`
+([telaworker_filho_test.go](cmd/acessos/telaworker_filho_test.go)).
+
+Correção provável, pequena nos dois pacotes: usar o endereço de um objeto
+de verdade alocado no heap como handle, guardando-o dentro da própria
+`Session` para o coletor não o levar. Não foi feito nesta rodada por
+tocar em dois pacotes testados ao vivo, e o item aqui é para essa decisão
+ser sua e não minha.
 
 ---
 
