@@ -87,6 +87,44 @@ nova. Para distribuição interna é aceitável (o aviso passa com "Mais
 informações"); para distribuir fora, não. Precisa de um certificado de
 code signing — custo e decisão sua, não técnica.
 
+## 6. Crash do app inteiro num disconnect abrupto de RDP
+
+**Reproduzido em 2026-09-16**, coredump capturado e analisado: o servidor
+derruba a sessão (`ERRINFO_RPC_INITIATED_DISCONNECT`) e o processo inteiro
+morre com SIGSEGV — não só a aba daquela conexão. O crash é **dentro do
+próprio FreeRDP** (`dvcman_channel_close`, chamado de
+`drdynvc_order_recv`), rodando na thread interna do canal dinâmico
+(`drdynvc`), não no [rdpshim.c](internal/rdp/rdpshim.c). É a mesma
+vizinhança da [CVE-2026-56297](https://github.com/FreeRDP/FreeRDP/security/advisories/GHSA-3mv2-5q57-2v8h)
+(use-after-free em `dvcman_channel_close`/`channel_callback`, corrigida na
+3.22.0) — a correção catalogada já está presente no 3.31.1 que
+vendorizamos, então isto é uma variante residual do mesmo problema:
+`dvcman_channel_close` mexe em `channel->state`/`channel->channel_callback`
+sem usar o `channel->lock` que a struct já tem (só é usado em
+`dvcman_write_channel`), deixando uma corrida entre a thread do `drdynvc`
+processando uma ordem e a rotina de desconexão dele mesmo.
+
+Não é algo para remendar no nosso código — o FreeRDP é baixado direto do
+tarball da tag no manifesto (flatpak/org.jj.Acessos.yml), sem fork local
+(diferente do Gio no Windows, que tem PATCH.md). Caminhos possíveis,
+nenhum tentado ainda:
+
+- reportar upstream ao projeto FreeRDP;
+- um patch local no manifesto Flatpak, no mesmo espírito dos patches do
+  Gio, adicionando o `channel->lock` em volta do fechamento do canal —
+  arriscado sem revisão de quem mantém o FreeRDP;
+- **isolar cada sessão remota (RDP e VNC) em processo próprio**, o app
+  principal reexecutando a si mesmo como "worker" por conexão e falando
+  com ele por socket/pipe (framebuffer, teclado, mouse, clipboard,
+  cursor). Essa é a correção de verdade, no sentido de que um crash
+  dentro do FreeRDP (este ou qualquer outro) mata só aquele processo
+  filho — as outras abas continuam de pé, porque deixam de compartilhar
+  o mesmo heap C. Vira o padrão do app: aba caiu, o processo principal
+  detecta a saída do worker e só reconecta aquela aba (o backoff de
+  reconexão já existe), sem o usuário notar que algo morreu de verdade.
+  É reescrita grande do transporte das sessões — não é para fazer de
+  afogadilho, mas é o item mais estrutural desta lista.
+
 ---
 
 ## Limitações conhecidas, que NÃO estão no plano de corrigir
