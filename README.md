@@ -88,9 +88,10 @@ Diferenças em relação ao Linux: a sonda de vida usa `IcmpSendEcho` do
 `log.txt`/`freerdp.log` ao lado do `conexoes.ini` (compilado como
 aplicativo gráfico, ele não tem stdout).
 
-**As sessões remotas no Windows ainda são só leitura**: tela e mouse
-funcionam, teclado e área de transferência não — o caminho de entrada
-inteiro é o do Wayland. É o item 1 do [BACKLOG.md](BACKLOG.md).
+Tela, mouse, teclado e área de transferência funcionam nas sessões
+remotas do Windows (VNC e RDP testados; SSH usa o mesmo caminho). Layout
+de teclado assumido é US — ver limitações no item 1 do
+[BACKLOG.md](BACKLOG.md).
 
 ## Estrutura
 

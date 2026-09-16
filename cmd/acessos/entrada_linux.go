@@ -9,6 +9,7 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/io/event"
+	"gioui.org/layout"
 )
 
 // tratarEventoPlataforma cuida do que só existe no Linux/Wayland: o grab
@@ -105,4 +106,16 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 		}
 	}
 
+}
+
+// tratarTecladoFrame não faz nada no Linux: o teclado já chega inteiro pelo
+// grab acima, direto do Wayland — ver tratarEventoPlataforma.
+func tratarTecladoFrame(w *app.Window, gtx layout.Context, activeTab func() Tab) {}
+
+// tratarClipboardFrame só entrega o que já estava enfileirado — ver
+// clipboard.go. Fora do Linux (entrada_outros.go) é diferente: lá não há
+// grab nenhum publicando, então a entrega usa clipboard.WriteCmd do
+// próprio Gio.
+func tratarClipboardFrame(gtx layout.Context, activeTab func() Tab) {
+	entregarClipboard()
 }

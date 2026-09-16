@@ -4,52 +4,57 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-14.
+Atualizado em 2026-09-16.
 
 ---
 
-## 1. Teclado nas sessões remotas do Windows — BLOQUEANTE
+## 1. Teclado nas sessões remotas do Windows — RESOLVIDO (2026-09-16)
 
-**Estado: não existe.** No Windows, VNC, RDP e o terminal SSH são hoje
-**só leitura**: dá para ver a tela e usar o mouse, e nenhuma tecla chega
-do outro lado.
+VNC e RDP testados ao vivo (VNC contra `127.0.0.1`, RDP contra uma
+máquina de verdade na rede): digitar, Ctrl+A, Ctrl+V, tudo chegando na
+sessão remota. SSH usa o mesmo `Tab.HandleKey` e não foi testado ao vivo
+nesta rodada, mas o caminho é idêntico ao do VNC (keysym), então deve
+funcionar igual — vale uma conferência quando der.
 
-Não é "falta mapear tecla", é que o caminho inteiro é do Linux:
-`Tab.HandleKey` só é chamado de [entrada_linux.go](cmd/acessos/entrada_linux.go),
-que lê o teclado direto do Wayland (`internal/grab`). Em
-[entrada_outros.go](cmd/acessos/entrada_outros.go) a função é um corpo
-vazio — e o comentário dela, dizendo que "o teclado vem do próprio Gio",
-descreve uma intenção, não o que acontece.
+O caminho ficou em [entrada_outros.go](cmd/acessos/entrada_outros.go)
+(`tratarTecladoFrame`, chamado do `main.go` a cada quadro) e
+[teclado_outros.go](cmd/acessos/teclado_outros.go) (as tabelas de
+tradução). Diferente do que este item dizia antes: não foi preciso ler
+scancode cru do `WM_KEYDOWN` — o `key.Event` do Gio no Windows já entrega
+`Modifiers` confiável (ao contrário do Wayland, que foi por isso que o
+`grab` nasceu) e um `Name` estável por tecla física (não pelo caractere
+já deslocado por Shift). Duas pegadinhas que custaram para achar, caso
+mexam aqui de novo:
 
-O que precisa ser feito:
+- um `key.Filter{Name: ""}` sem `Optional` só combina com teclas **sem
+  nenhum modificador** — Ctrl+V inteiro (incluindo o Ctrl e a V) era
+  descartado pelo roteador do Gio antes de chegar no app. É preciso
+  `Optional: ModCtrl|ModShift|ModAlt|ModSuper|ModCommand`;
+- pedir o foco com `key.FocusCmd` não basta: sem um `event.Op(gtx.Ops,
+  tag)` chamado no MESMO quadro, o roteador não marca o alvo como
+  "focusable"/"visible" e desfaz o foco sozinho ao fim do quadro,
+  silenciosamente.
 
-- consumir `key.Event` do Gio na aba ativa (hoje ninguém registra
-  `event.Op` de teclado nas abas), e decidir o que fazer com o fato,
-  já documentado em `main.go`, de que o `key.Event` do Gio **não entrega
-  o "soltou" de Ctrl/Alt/Shift sozinhos** nesta pilha — foi por isso que
-  o `grab` nasceu. Modificador preso é sessão remota inutilizável;
-- traduzir para o que cada protocolo quer: VNC quer keysym X11, RDP quer
-  scancode PS/2. No Windows o scancode vem de graça (é o que o
-  `WM_KEYDOWN` já entrega) — é o caminho que o shim do Carlos usa, com a
-  lista estática de teclas estendidas do lado da interface;
-- o terminal SSH tem um encoder próprio ([keyencode.go](cmd/acessos/keyencode.go))
-  que hoje só recebe keysym; ele também precisa de entrada nova.
+Limitações conhecidas, aceitas por ora:
 
-Sem isto o app no Windows serve para olhar, não para operar.
+- layout assumido é US — símbolos que dependem de outro layout (ex.:
+  teclado ABNT2, acentos mortos) não têm tabela ainda
+  ([teclado_outros.go](cmd/acessos/teclado_outros.go));
+- Ctrl/Alt/Shift sempre viram a variante ESQUERDA (o Windows não
+  distingue no `key.Event` sem ir atrás do scancode cru); AltGr não foi
+  testado;
+- os atalhos do próprio app (F12, Ctrl+W, Ctrl+G) só respondem com uma
+  sessão remota em foco — fora dela o app não disputa o foco de teclado
+  do Gio com o resto da interface (ver comentário em
+  `tratarTecladoFrame`).
 
-## 2. Área de transferência no Windows
+## 2. Área de transferência no Windows — RESOLVIDO (2026-09-16)
 
-**Estado: não existe.** `currentGrab` é sempre nil fora do Linux, então
-`SetClipboardText` não faz nada e nada é recebido do sistema. Copiar e
-colar entre a máquina local e a sessão remota não funciona — nem no VNC,
-nem no RDP, nem no SSH.
-
-O motor dos dois lados já está pronto e é multiplataforma (os canais
-CLIPRDR/VNC cut-text estão em `internal/rdp` e `internal/vnc`): falta só
-a ponte com o clipboard do sistema. O ponto de entrada é o mesmo do item
-1 — o Gio tem `clipboard.ReadCmd`/`WriteCmd`, que no Windows resolvem
-sozinhos, e a publicação já está serializada no laço de quadro
-(ver [clipboard.go](cmd/acessos/clipboard.go)).
+Testado ao vivo: `Set-Clipboard` local + Ctrl+V numa sessão VNC trouxe o
+texto certo do outro lado. A ponte é a mesma função-quadro do item 1
+(`tratarClipboardFrame`, também em entrada_outros.go): usa
+`clipboard.ReadCmd`/`WriteCmd` do próprio Gio, que no Windows já
+resolvem contra a API do sistema — só faltava alguém chamando.
 
 ## 3. Ícones no Windows
 

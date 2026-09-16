@@ -479,8 +479,12 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			// quem publica no clipboard do sistema é ESTE laço, nunca as
 			// goroutines das sessões — ver clipboard.go
 			marcarAbaAtiva(activeTab())
-			entregarClipboard()
 			gtx := app.NewContext(&ops, e)
+			// Teclado e clipboard fora do Linux (Windows) passam pelo
+			// próprio Gio, não pelo grab — ver entrada_outros.go. No
+			// Linux estas duas só repassam pro caminho de sempre.
+			tratarTecladoFrame(w, gtx, activeTab)
+			tratarClipboardFrame(gtx, activeTab)
 			// A escala da interface entra AQUI, antes de qualquer layout:
 			// tudo o que é medido em Dp ou Sp no quadro já nasce no
 			// tamanho escolhido, sem cada widget precisar saber disso.
