@@ -56,7 +56,55 @@ texto certo do outro lado. A ponte é a mesma função-quadro do item 1
 `clipboard.ReadCmd`/`WriteCmd` do próprio Gio, que no Windows já
 resolvem contra a API do sistema — só faltava alguém chamando.
 
-## 3. Ícones no Windows
+## 3. Terminal SSH: teclas de navegação e cursor — A VERIFICAR
+
+Relatado em 2026-09-16, ainda **sem reproduzir com método**. É hoje o
+candidato a "o que mais precisa de melhoria" no app. Sintomas, como
+chegaram:
+
+- as **setas não funcionam**;
+- o **cursor (`|` piscando) não funciona**;
+- **seta para cima não traz o último comando** no host.
+
+O terceiro sintoma é provavelmente o mesmo do primeiro, e não um item
+separado: quem traz o último comando é o readline DO OUTRO LADO, quando
+recebe `\x1b[A`. Se a seta não vira bytes, não há histórico a buscar.
+Confirmar isso antes de investigar os dois em separado.
+
+O que JÁ foi conferido nesta anotação, para ninguém refazer:
+
+- **a tabela de tradução está certa.** `especiais` em
+  [keyencode.go](cmd/acessos/keyencode.go) mapeia os quatro keysyms de
+  seta (`0xff52`/`0xff54`/`0xff53`/`0xff51`) para `\x1b[A`/`B`/`C`/`D`,
+  que é o que qualquer terminal manda. Então o defeito NÃO está aqui —
+  está antes (a tecla não chegar em `bytesDaTecla`) ou depois (o shell
+  remoto não estar em modo de aplicação/PTY como se espera);
+- **o cursor não pisca porque piscada não existe.** Em
+  [sshtab.go](cmd/acessos/sshtab.go) ele é um retângulo azul sólido
+  (`tema.Azul` com alfa 150) preenchendo a célula — não há temporizador,
+  não há fase, e não é a barra `|` que o relato descreve. Ou seja, "não
+  pisca" é comportamento atual, não regressão; virar um `|` que pisca é
+  trabalho a fazer, não conserto.
+
+Por onde começar, e a pergunta que decide tudo: **em qual sistema isso foi
+visto?** Os dois caminhos de entrada são independentes e falham por
+motivos diferentes:
+
+- **Linux/Wayland** — [entrada_linux.go](cmd/acessos/entrada_linux.go),
+  alimentado pelo [internal/grab](internal/grab/), que entrega keysym X11
+  já resolvido pelo layout. Aqui a seta deveria chegar pronta;
+- **Windows** — [entrada_outros.go](cmd/acessos/entrada_outros.go) com as
+  tabelas de [teclado_outros.go](cmd/acessos/teclado_outros.go), montadas
+  a partir do `key.Event` do Gio. É o caminho mais novo e o mais provável
+  de ter buraco: conferir se `key.NameUpArrow` e companhia estão na
+  tabela E se o filtro de teclas do Gio as deixa passar (ver a pegadinha
+  do `key.Filter` sem `Optional` registrada no item 1 deste arquivo).
+
+Vale medir antes de mexer: registrar no diagnóstico o keysym que chega em
+`sshTab.HandleKey` ao apertar cada seta separa "não chegou" de "chegou e
+não virou bytes" numa tentativa só.
+
+## 4. Ícones no Windows
 
 **Relatado no teste da 2.0.4: os ícones saem errados no Windows.** Falta
 detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
@@ -73,21 +121,21 @@ detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
   dependem de nada do sistema — se estes estiverem errados no Windows e
   certos no Linux, o assunto é outro (escala ou tema), não o `.ico`.
 
-## 4. Capturas de tela do metainfo
+## 5. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 5. Assinatura do executável do Windows
+## 6. Assinatura do executável do Windows
 
 O instalador não é assinado, então o SmartScreen avisa em toda máquina
 nova. Para distribuição interna é aceitável (o aviso passa com "Mais
 informações"); para distribuir fora, não. Precisa de um certificado de
 code signing — custo e decisão sua, não técnica.
 
-## 6. Crash do app inteiro num disconnect abrupto de RDP — RESOLVIDO PARA RDP (2026-09-16)
+## 7. Crash do app inteiro num disconnect abrupto de RDP — RESOLVIDO PARA RDP (2026-09-16)
 
 O diagnóstico continua valendo e vale a pena guardar: o servidor derruba a
 sessão (`ERRINFO_RPC_INITIATED_DISCONNECT`) e o processo inteiro morre com

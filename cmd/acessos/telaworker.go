@@ -265,7 +265,7 @@ func (wk *workerRDP) conectar(l telaproc.Ligacao) {
 	_ = wk.c.Enviar(telaproc.EvtDesconectado, []byte(motivo))
 
 	// os.Exit sem sess.Close() é DE PROPÓSITO, não esquecimento: o crash
-	// catalogado no BACKLOG.md §6 mora justamente na desmontagem do canal
+	// catalogado no BACKLOG.md §7 mora justamente na desmontagem do canal
 	// dinâmico (dvcman_channel_close), e não há nada a liberar que o fim
 	// do processo não libere melhor. Sair aqui também garante que um filho
 	// nunca fique órfão segurando uma sessão depois de cair.

@@ -5,7 +5,7 @@
 // Por que um processo por sessão: libfreerdp3 e libvncclient são C rodando
 // no MESMO heap que a interface. Um segmentation fault lá dentro — e existe
 // pelo menos um reproduzido, na desconexão abrupta de RDP (ver BACKLOG.md
-// §6) — mata o app inteiro, com todas as outras abas junto. Em processo
+// §7) — mata o app inteiro, com todas as outras abas junto. Em processo
 // separado, o mesmo crash mata só aquele filho: o processo principal vê o
 // socket fechar, marca a aba como caída e o backoff de reconexão que já
 // existia religa a sessão. Quem está usando vê uma reconexão, não a perda

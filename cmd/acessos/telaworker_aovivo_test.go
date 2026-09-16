@@ -210,7 +210,7 @@ func TestAoVivoFluxoDeQuadros(t *testing.T) {
 				// O servidor derrubar a sessão é condição de ambiente
 				// (tomada de sessão por outro login, política de
 				// ociosidade), não defeito do canal — e é justamente o caso
-				// do BACKLOG §6, que aqui mata só o filho.
+				// do BACKLOG §7, que aqui mata só o filho.
 				t.Skipf("o servidor derrubou a sessão no quadro %d: %s", recebidos, string(m.corpo))
 			case telaproc.EvtQuadro:
 				q, _, err := telaproc.DecodificarQuadro(m.corpo)

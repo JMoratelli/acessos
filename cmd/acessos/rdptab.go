@@ -31,7 +31,7 @@ import (
 // A sessão RDP NÃO roda dentro deste processo: ela vive num processo-filho
 // (ver internal/telaproc e telaworker.go), e o que existe aqui é a ponta
 // que manda entrada e recebe retângulos de tela. O motivo está no
-// BACKLOG.md §6 — um crash dentro da libfreerdp levava o app inteiro, com
+// BACKLOG.md §7 — um crash dentro da libfreerdp levava o app inteiro, com
 // todas as abas. Agora leva o filho, esta aba marca "CAIU" e o mesmo
 // backoff de sempre religa.
 
