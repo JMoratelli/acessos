@@ -131,3 +131,13 @@ modules:
     sources:
       - type: dir
         path: ..
+        # go.work é conveniência local do editor (veja .gitignore) e nunca
+        # existe num clone limpo — mas type: dir copia o diretório inteiro
+        # sem respeitar .gitignore, então se ele existir na hora do build
+        # entra na sandbox e o Go troca sozinho para modo workspace,
+        # incompatível com GOFLAGS=-mod=vendor acima (erro "not replaced
+        # in the workspace"). Pular os dois explicitamente evita depender
+        # de lembrar de apagá-los antes de rodar build.sh.
+        skip:
+          - go.work
+          - go.work.sum
