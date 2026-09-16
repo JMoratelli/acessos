@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.1.1" date="2026-09-16">
+      <description>
+        <p>Windows: teclado e area de transferencia passam a funcionar dentro das sessoes VNC e RDP — digitar, copiar e colar entre o Windows e a maquina remota, testado ao vivo. Antes o teclado e o clipboard simplesmente nao chegavam a sessao remota nessa plataforma.</p>
+        <p>Windows: corrige a janela travando ao minimizar ou trocar de monitor com DPI diferente — o redimensionamento do Direct3D agora se recupera de qualquer falha, nao so das duas mais comuns.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-09-15">
       <description>
         <p>Arrastar a barra de titulo com a janela maximizada agora restaura o tamanho e continua o arrasto seguindo o cursor, como em qualquer outro programa — antes nao fazia nada.</p>
