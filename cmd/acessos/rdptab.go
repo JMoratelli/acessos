@@ -151,16 +151,6 @@ func (t *rdpTab) Close() {
 	t.closeOnce.Do(func() { close(t.stop) })
 }
 
-// fimSessao diz por que uma sessão terminou, e com isso o que fazer em
-// seguida.
-type fimSessao int
-
-const (
-	fimParar   fimSessao = iota // aba fechada: não volta
-	fimReligar                  // pedido manual: reconecta já
-	fimCaiu                     // caiu sozinha (inclusive crash do filho)
-)
-
 func (t *rdpTab) manageSession(user, pass, domain string) {
 	attempt := 0
 	for {
@@ -180,6 +170,19 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 			attempt = 0
 			t.esquecerTamanho()
 			continue
+		case fimFalhou:
+			// A conexão foi RECUSADA (credencial, política do servidor).
+			// Não entra no backoff: ver o comentário em fimSessao.
+			t.caiu.Store(true)
+			t.w.Invalidate()
+			select {
+			case <-t.religar:
+				attempt = 0
+				t.esquecerTamanho()
+				continue
+			case <-t.stop:
+				return
+			}
 		}
 
 		t.caiu.Store(true)
@@ -256,7 +259,15 @@ func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 		return fimSessao(pedido.Load())
 	}
 
-	t.lacoEventos(proc, inicio)
+	if falhou := t.lacoEventos(proc, inicio); falhou {
+		// A falha de conexão vence o que o vigia tiver anotado, EXCETO
+		// fechar a aba: se o operador já mandou fechar, fechar é o que
+		// vale.
+		if fimSessao(pedido.Load()) == fimParar {
+			return fimParar
+		}
+		return fimFalhou
+	}
 	if fimSessao(pedido.Load()) == fimCaiu {
 		reg("[%s] processo %d da sessão terminou", t.title, proc.PID())
 	}
@@ -266,7 +277,9 @@ func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 // lacoEventos é o único leitor do canal do filho. Sai quando o filho fecha
 // ou morre — e "morre" inclui o SIGSEGV dentro da libfreerdp, que daqui é
 // indistinguível de uma desconexão limpa. Essa indistinção é o ponto.
-func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
+//
+// Devolve true quando a sessão terminou por RECUSA do servidor.
+func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou bool) {
 	// acum é a tela remota inteira, montada retângulo a retângulo. Fica
 	// nesta goroutine e nunca é entregue ao Gio: o que vai para a
 	// interface é sempre uma cópia congelada (ver publicar).
@@ -275,7 +288,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
 	for {
 		tipo, corpo, err := proc.Ler()
 		if err != nil {
-			return
+			return false
 		}
 		switch tipo {
 		case telaproc.EvtConectado:
@@ -289,18 +302,18 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
 			var f telaproc.Falha
 			_ = json.Unmarshal(corpo, &f)
 			reg("[%s] falha: %s (auth=%v)", t.title, f.Mensagem, f.AuthFalhou)
-			return
+			return true
 
 		case telaproc.EvtQuadro:
 			q, pix, err := telaproc.DecodificarQuadro(corpo)
 			if err != nil {
 				reg("[%s] quadro inválido: %v", t.title, err)
-				return
+				return false
 			}
 			acum = aplicarQuadro(acum, q, pix)
 			t.fw.Store(q.TotalW)
 			t.fh.Store(q.TotalH)
-			t.publicar(acum)
+			publicarTela(&t.tela, acum)
 			t.w.Invalidate()
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
@@ -309,7 +322,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
 
 		case telaproc.EvtDesconectado:
 			reg("[%s] sessão caiu: %s", t.title, string(corpo))
-			return
+			return false
 
 		case telaproc.EvtClipboard:
 			texto := string(corpo)
@@ -362,46 +375,6 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) {
 			}()
 		}
 	}
-}
-
-// aplicarQuadro cola o retângulo recebido na tela acumulada, criando ou
-// trocando a imagem quando a resolução remota muda.
-func aplicarQuadro(acum *image.NRGBA, q telaproc.Quadro, pix []byte) *image.NRGBA {
-	tw, th := int(q.TotalW), int(q.TotalH)
-	if tw <= 0 || th <= 0 {
-		return acum
-	}
-	if acum == nil || acum.Rect.Dx() != tw || acum.Rect.Dy() != th {
-		acum = image.NewNRGBA(image.Rect(0, 0, tw, th))
-	}
-	x, y, w, h := int(q.X), int(q.Y), int(q.W), int(q.H)
-	if x < 0 || y < 0 || x+w > tw || y+h > th {
-		return acum
-	}
-	for linha := 0; linha < h; linha++ {
-		dst := acum.Pix[(y+linha)*acum.Stride+x*4:]
-		copy(dst[:w*4], pix[linha*w*4:])
-	}
-	return acum
-}
-
-// publicar congela a tela acumulada numa imagem nova e a entrega ao
-// desenho. A cópia é o preço de não precisar de trava nenhuma do lado do
-// Gio: a imagem publicada não muda mais depois de publicada, então a
-// textura pode subir para a GPU com calma enquanto o próximo retângulo já
-// está sendo colado no acumulador.
-//
-// Antes disto a interface fazia, A CADA QUADRO DELA, uma cópia da tela
-// inteira vinda do C mais uma conversão BGRX->NRGBA pixel a pixel — mesmo
-// quando nada tinha mudado na sessão remota. Agora a cópia acontece uma
-// vez por quadro REMOTO, e fora da thread que desenha.
-func (t *rdpTab) publicar(acum *image.NRGBA) {
-	if acum == nil {
-		return
-	}
-	pub := image.NewNRGBA(acum.Rect)
-	copy(pub.Pix, acum.Pix)
-	t.tela.Store(pub)
 }
 
 func (t *rdpTab) OnLocalClipboard(text string) {

@@ -79,3 +79,56 @@ func lerComPrazo(t *testing.T, p *telaproc.Processo, prazo time.Duration) (telap
 		return 0, nil, nil
 	}
 }
+
+// Custo de BASE de um filho, por protocolo: binário, runtime do Go e a
+// biblioteca C carregada, SEM sessão conectada. É a maior parcela do que
+// o orçamento de telaproc limita — o framebuffer entra por cima disto e é
+// calculável (largura x altura x 4, algumas cópias).
+//
+// Não precisa de servidor nenhum: o filho sobe, se apresenta e fica
+// esperando um CmdConectar que não vem. Refaça esta medição antes de mexer
+// no teto.
+func TestCustoDeBaseDosFilhos(t *testing.T) {
+	for _, proto := range []string{"rdp", "vnc"} {
+		t.Run(proto, func(t *testing.T) {
+			proc, err := telaproc.Iniciar(proto)
+			if err != nil {
+				t.Fatalf("Iniciar(%s): %v", proto, err)
+			}
+			defer proc.Encerrar()
+
+			// Deixa o filho terminar de subir antes de medir: sem isso a
+			// medição pega o processo no meio do carregamento das
+			// bibliotecas e sai baixa demais para servir de base.
+			esperarEstavel(t, proc.PID())
+
+			m, err := memoriaDe(proc.PID())
+			if err != nil {
+				t.Fatalf("medindo %s: %v", proto, err)
+			}
+			privada := m["Private_Clean"] + m["Private_Dirty"]
+			t.Logf("filho %s (sem conectar): RSS %.1f MiB | PSS %.1f MiB | PRIVADA %.1f MiB",
+				proto, float64(m["Rss"])/1024, float64(m["Pss"])/1024, float64(privada)/1024)
+			t.Logf("  reservado para %s: %d MiB por sessão", proto, telaproc.CustoDe(proto))
+		})
+	}
+}
+
+// esperarEstavel espera o RSS parar de crescer, que é quando o filho
+// terminou de carregar.
+func esperarEstavel(t *testing.T, pid int) {
+	t.Helper()
+	anterior := -1
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		m, err := memoriaDe(pid)
+		if err != nil {
+			t.Fatalf("processo %d sumiu durante a medição: %v", pid, err)
+		}
+		atual := m["Rss"]
+		if atual == anterior {
+			return
+		}
+		anterior = atual
+	}
+}

@@ -176,41 +176,92 @@ func TestQuadroCorrompidoNaoPassa(t *testing.T) {
 	}
 }
 
-// O teto existe para o app não virar um problema de memória da máquina
-// inteira (ver MaxSessoes). Aqui ele é exercitado mexendo no contador, e
-// não subindo MaxSessoes processos de verdade: o que precisa estar certo é
-// a contabilidade — recusar no limite, não vazar a reserva na recusa, e
-// devolver a vaga quando a sessão encerra.
-func TestTetoDeSessoes(t *testing.T) {
-	antes := SessoesVivas()
-	t.Cleanup(func() { vivas.Store(int32(antes)) })
+// O orçamento existe para o app não virar um problema de memória da
+// máquina inteira (ver OrcamentoMiB). Aqui ele é exercitado mexendo na
+// contabilidade, e não subindo dezenas de processos de verdade: o que
+// precisa estar certo é a conta — recusar quando não cabe, não vazar a
+// reserva na recusa, devolver a vaga ao encerrar, e cobrar de cada
+// protocolo o que ele custa.
+func TestOrcamentoDeSessoes(t *testing.T) {
+	orcamentoMu.Lock()
+	gastoAntes, vivasAntes := gastoMiB, vivas
+	orcamentoMu.Unlock()
+	t.Cleanup(func() {
+		orcamentoMu.Lock()
+		gastoMiB, vivas = gastoAntes, vivasAntes
+		orcamentoMu.Unlock()
+	})
 
-	vivas.Store(int32(MaxSessoes))
+	// Protocolos diferentes cobram diferente — é a razão de ser do
+	// orçamento por memória em vez de por contagem.
+	if CustoDe("rdp") <= CustoDe("vnc") {
+		t.Fatalf("RDP (%d MiB) devia custar mais que VNC (%d MiB)", CustoDe("rdp"), CustoDe("vnc"))
+	}
+	// Protocolo não medido entra pelo preço do mais caro, nunca de graça.
+	if CustoDe("protocolo-que-nao-existe") != custoDesconhecido {
+		t.Fatal("protocolo desconhecido não está pagando o preço do mais caro")
+	}
+
+	// Cheio: não cabe nem a sessão mais barata.
+	orcamentoMu.Lock()
+	gastoMiB, vivas = OrcamentoMiB, 1
+	orcamentoMu.Unlock()
 	if _, err := Iniciar("eco"); err == nil {
-		t.Fatal("Iniciar passou por cima do teto")
-	} else if !errors.Is(err, ErrLotado) {
-		t.Fatalf("recusou com %v, esperava ErrLotado", err)
+		t.Fatal("Iniciar passou por cima do orçamento")
+	} else {
+		var lotado *ErrLotado
+		if !errors.As(err, &lotado) {
+			t.Fatalf("recusou com %v, esperava *ErrLotado", err)
+		}
+		if lotado.PorContagem {
+			t.Fatal("recusou por contagem, devia ser por memória")
+		}
 	}
-	if v := SessoesVivas(); v != MaxSessoes {
-		t.Fatalf("a recusa deixou o contador em %d, esperava %d", v, MaxSessoes)
+	if GastoMiB() != OrcamentoMiB {
+		t.Fatalf("a recusa mexeu no gasto: %d MiB", GastoMiB())
 	}
 
-	// Com uma vaga livre, entra — e devolve a vaga ao encerrar.
-	vivas.Store(int32(MaxSessoes - 1))
+	// Com espaço, entra — e devolve exatamente o que reservou ao encerrar.
+	orcamentoMu.Lock()
+	gastoMiB, vivas = 0, 0
+	orcamentoMu.Unlock()
 	p, err := Iniciar("eco")
 	if err != nil {
-		t.Fatalf("Iniciar com vaga livre: %v", err)
+		t.Fatalf("Iniciar com orçamento livre: %v", err)
 	}
-	if v := SessoesVivas(); v != MaxSessoes {
-		t.Fatalf("contador ficou em %d depois de subir uma sessão", v)
+	if GastoMiB() != custoDesconhecido || SessoesVivas() != 1 {
+		t.Fatalf("depois de subir: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
 	}
 	p.Encerrar()
-	if v := SessoesVivas(); v != MaxSessoes-1 {
-		t.Fatalf("Encerrar deixou o contador em %d, esperava %d", v, MaxSessoes-1)
+	if GastoMiB() != 0 || SessoesVivas() != 0 {
+		t.Fatalf("Encerrar não devolveu: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
 	}
-	// Encerrar duas vezes não pode descontar duas vagas.
+	// Encerrar duas vezes não pode devolver duas vezes.
 	p.Encerrar()
-	if v := SessoesVivas(); v != MaxSessoes-1 {
-		t.Fatalf("Encerrar repetido vazou vaga: contador em %d", v)
+	if GastoMiB() != 0 || SessoesVivas() != 0 {
+		t.Fatalf("Encerrar repetido vazou: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
+	}
+}
+
+// O limite por CONTAGEM é a rede de segurança acima do orçamento: mesmo
+// uma sessão baratíssima não pode abrir processo sem fim.
+func TestTetoPorContagem(t *testing.T) {
+	orcamentoMu.Lock()
+	gastoAntes, vivasAntes := gastoMiB, vivas
+	gastoMiB, vivas = 0, MaxSessoes
+	orcamentoMu.Unlock()
+	t.Cleanup(func() {
+		orcamentoMu.Lock()
+		gastoMiB, vivas = gastoAntes, vivasAntes
+		orcamentoMu.Unlock()
+	})
+
+	_, err := Iniciar("eco")
+	var lotado *ErrLotado
+	if !errors.As(err, &lotado) {
+		t.Fatalf("recusou com %v, esperava *ErrLotado", err)
+	}
+	if !lotado.PorContagem {
+		t.Fatal("devia ter recusado por CONTAGEM, com orçamento sobrando")
 	}
 }

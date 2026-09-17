@@ -3,16 +3,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"acessos-go/internal/conexoes"
-	"acessos-go/internal/vnc"
+	"acessos-go/internal/telaproc"
 
 	"gioui.org/app"
 	"gioui.org/f32"
@@ -26,6 +26,17 @@ import (
 
 	"gio.tools/icons"
 )
+
+// A sessão VNC NÃO roda dentro deste processo: ela vive num processo-filho
+// (ver internal/telaproc e telaworker_vnc.go), e o que existe aqui é a
+// ponta que manda entrada e recebe retângulos de tela.
+//
+// O motivo é o mesmo do RDP (BACKLOG.md §7), mais um específico do VNC: a
+// libvncclient tem CVEs abertas de escrita fora dos limites no decodificador
+// Tight, disparadas pelo servidor, sem release corrigida — as correções
+// estão aplicadas como patch local (ver flatpak/patches/libvncserver/).
+// Corrigir fecha o que se conhece; rodar em processo próprio limita o
+// estrago do que ainda não se conhece. Isto aqui é a segunda metade.
 
 // backoffSchedule espelha o ESPERAS do app original (acessos.py).
 var backoffSchedule = []time.Duration{
@@ -69,13 +80,24 @@ type vncTab struct {
 	title     string
 	host      string
 	port      int
-	sess      atomic.Pointer[vnc.Session]
+	proc      atomic.Pointer[telaproc.Processo]
 	stop      chan struct{}
 	religar   chan struct{}
 	closeOnce sync.Once
 	viewMu    sync.Mutex
 	view      vncView
 	clip      clipboardSync
+
+	// tela é o último quadro PRONTO para desenhar. Quem monta troca o
+	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
+	// permite entregá-la ao Gio sem trava e sem risco de ela mudar
+	// debaixo do upload da textura.
+	tela atomic.Pointer[image.NRGBA]
+	// opCache guarda a ImageOp da última tela publicada: sem isto o Gio
+	// remontaria (e reenviaria à GPU) a textura a cada quadro DA
+	// INTERFACE, mesmo sem nada ter mudado do lado remoto.
+	opCache  paint.ImageOp
+	opDaTela *image.NRGBA
 
 	// estado mostrado e controlado pela barra de sessão
 	auto   atomic.Bool // reconectar sozinho ao cair
@@ -87,10 +109,6 @@ type vncTab struct {
 	// de comando: aí não há onde gravar preferência).
 	nomeConexao string
 	ronly       atomic.Bool
-	// cursor remoto (ver cursorforma.go): a cada forma nova que o VNC
-	// manda, classificamos aproximadamente e guardamos como
-	// pointer.Cursor pra Layout desenhar em cima da área da tela remota.
-	classCursor classificadorCursor
 	cursorAtual atomic.Uint32
 	btnOlho     widget.Clickable
 	btnRec      widget.Clickable
@@ -153,72 +171,33 @@ func (t *vncTab) Close() {
 
 func (t *vncTab) manageSession(user, pass string) {
 	attempt := 0
-
 	for {
-		sess := vnc.New()
-		sess.SetCredentials(user, pass)
-		sess.OnUpdate = func(x, y, w, h int) { t.w.Invalidate() }
-		sess.OnResize = func(w, h int) { t.w.Invalidate() }
-		sess.OnCursor = func(_, _, w, h int, mask []byte) {
-			t.cursorAtual.Store(uint32(t.classCursor.classificar(w, h, mask)))
-			t.w.Invalidate()
-		}
-		sess.OnCutText = func(text string) {
-			if !t.clipOn.Load() || !ehAbaAtiva(t) {
-				return
-			}
-			if !t.clip.checkAndSet(text) {
-				return
-			}
-			publicarClipboard(t.w, text)
-		}
-
-		reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
-		inicio := time.Now()
-		if err := sess.Connect(t.host, t.port); err != nil {
-			ce := err.(*vnc.ConnectError)
-			fmt.Fprintf(os.Stderr, "[%s] falha: %s (auth=%v precisa_usuario=%v recusado=%v)\n",
-				t.title, ce.Message, ce.AuthFailed, ce.NeedsUsername, ce.Rejected)
-			sess.Close()
-			return
-		}
-		reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
-		attempt = 0
-
-		t.sess.Store(sess)
-		t.caiu.Store(false)
+		fim := t.rodarSessao(user, pass)
+		t.proc.Store(nil)
 		t.w.Invalidate()
-		runStop := make(chan struct{})
-		done := make(chan error, 1)
-		go func() { done <- sess.Run(runStop) }()
 
-		manual := false
-		select {
-		case <-t.stop:
-			close(runStop)
-			<-done
-			sess.Close()
+		switch fim {
+		case fimParar:
 			return
-		case <-t.religar:
-			// Reconectar a mão: derruba a sessão e recomeça JÁ, sem
-			// espera — quem clicou está olhando a tela.
-			manual = true
-			close(runStop)
-			<-done
-			t.sess.Store(nil)
-			sess.Close()
-		case err := <-done:
-			t.sess.Store(nil)
-			t.caiu.Store(true)
-			sess.Close()
-			reg("[%s] sessão caiu: %v", t.title, err)
-			t.w.Invalidate()
-		}
-		if manual {
+		case fimReligar:
 			attempt = 0
 			continue
+		case fimFalhou:
+			// A conexão foi RECUSADA (credencial, política do servidor).
+			// Não entra no backoff: ver o comentário em fimSessao.
+			t.caiu.Store(true)
+			t.w.Invalidate()
+			select {
+			case <-t.religar:
+				attempt = 0
+				continue
+			case <-t.stop:
+				return
+			}
 		}
 
+		t.caiu.Store(true)
+		t.w.Invalidate()
 		if !t.auto.Load() {
 			// Reconexão automática desligada: fica parada até alguém
 			// clicar em Reconectar.
@@ -233,13 +212,136 @@ func (t *vncTab) manageSession(user, pass string) {
 
 		wait := backoffSchedule[min(attempt, len(backoffSchedule)-1)]
 		attempt++
-		fmt.Printf("[%s] reconectando em %s (tentativa #%d)\n", t.title, wait, attempt)
+		reg("[%s] reconectando em %s (tentativa #%d)", t.title, wait, attempt)
 		select {
 		case <-time.After(wait):
 		case <-t.religar:
 			attempt = 0
 		case <-t.stop:
 			return
+		}
+	}
+}
+
+// rodarSessao vive de um processo-filho: sobe, conversa até acabar, e
+// garante que ele morreu antes de devolver.
+func (t *vncTab) rodarSessao(user, pass string) fimSessao {
+	proc, err := telaproc.Iniciar("vnc")
+	if err != nil {
+		reg("[%s] %v", t.title, err)
+		return fimCaiu
+	}
+	defer proc.Encerrar()
+
+	// Este vigia é o que traduz "fechar a aba" e "reconectar agora" em
+	// algo que acorde a leitura do socket: fechar o canal faz o Ler()
+	// abaixo devolver erro na hora.
+	var pedido atomic.Int32
+	pedido.Store(int32(fimCaiu))
+	saiu := make(chan struct{})
+	defer close(saiu)
+	go func() {
+		select {
+		case <-t.stop:
+			pedido.Store(int32(fimParar))
+		case <-t.religar:
+			pedido.Store(int32(fimReligar))
+		case <-saiu:
+			return
+		}
+		_ = proc.Fechar()
+	}()
+
+	reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
+	inicio := time.Now()
+	if err := proc.Conectar(telaproc.Ligacao{
+		Host: t.host, Porta: t.port, Usuario: user, Senha: pass,
+	}); err != nil {
+		reg("[%s] não consegui pedir a conexão: %v", t.title, err)
+		return fimSessao(pedido.Load())
+	}
+
+	if falhou := t.lacoEventos(proc, inicio); falhou {
+		// A falha de conexão vence o que o vigia tiver anotado, EXCETO
+		// fechar a aba: se o operador já mandou fechar, fechar é o que
+		// vale.
+		if fimSessao(pedido.Load()) == fimParar {
+			return fimParar
+		}
+		return fimFalhou
+	}
+	if fimSessao(pedido.Load()) == fimCaiu {
+		reg("[%s] processo %d da sessão terminou", t.title, proc.PID())
+	}
+	return fimSessao(pedido.Load())
+}
+
+// lacoEventos é o único leitor do canal do filho. Sai quando o filho fecha
+// ou morre — e "morre" inclui um SIGSEGV dentro da libvncclient, que daqui
+// é indistinguível de uma desconexão limpa. Essa indistinção é o ponto.
+//
+// Devolve true quando a sessão terminou por RECUSA do servidor.
+func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou bool) {
+	// acum é a tela remota inteira, montada retângulo a retângulo. Fica
+	// nesta goroutine e nunca é entregue ao Gio: o que vai para a
+	// interface é sempre uma cópia congelada (ver publicarTela).
+	var acum *image.NRGBA
+
+	for {
+		tipo, corpo, err := proc.Ler()
+		if err != nil {
+			return false
+		}
+		switch tipo {
+		case telaproc.EvtConectado:
+			reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
+			t.proc.Store(proc)
+			t.caiu.Store(false)
+			t.w.Invalidate()
+			_ = proc.Credito()
+
+		case telaproc.EvtFalha:
+			var f telaproc.Falha
+			_ = json.Unmarshal(corpo, &f)
+			reg("[%s] falha: %s (auth=%v precisa_usuario=%v recusado=%v)",
+				t.title, f.Mensagem, f.AuthFalhou, f.PrecisaUsuario, f.Recusado)
+			return true
+
+		case telaproc.EvtQuadro:
+			q, pix, err := telaproc.DecodificarQuadro(corpo)
+			if err != nil {
+				reg("[%s] quadro inválido: %v", t.title, err)
+				return false
+			}
+			acum = aplicarQuadro(acum, q, pix)
+			t.fw.Store(q.TotalW)
+			t.fh.Store(q.TotalH)
+			publicarTela(&t.tela, acum)
+			t.w.Invalidate()
+			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
+			// filho de encher a fila do socket mais rápido do que isto
+			// aqui consome.
+			_ = proc.Credito()
+
+		case telaproc.EvtDesconectado:
+			reg("[%s] sessão caiu: %s", t.title, string(corpo))
+			return false
+
+		case telaproc.EvtClipboard:
+			texto := string(corpo)
+			if !t.clipOn.Load() || !ehAbaAtiva(t) {
+				continue
+			}
+			if !t.clip.checkAndSet(texto) {
+				continue
+			}
+			publicarClipboard(t.w, texto)
+
+		case telaproc.EvtCursor:
+			if c, ok := telaproc.LerCursor(corpo); ok {
+				t.cursorAtual.Store(c)
+				t.w.Invalidate()
+			}
 		}
 	}
 }
@@ -254,8 +356,8 @@ func (t *vncTab) OnLocalClipboard(text string) {
 	if !t.clip.checkAndSet(text) {
 		return
 	}
-	if sess := t.sess.Load(); sess != nil {
-		sess.SendCutText(text)
+	if p := t.proc.Load(); p != nil {
+		_ = p.Clipboard(text)
 	}
 }
 
@@ -264,15 +366,12 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 	if depurarLayout {
 		fmt.Printf("[dbg vnc] max=%v min=%v\n", gtx.Constraints.Max, gtx.Constraints.Min)
 	}
-	sess := t.sess.Load()
+	tela := t.tela.Load()
 
-	var buf []byte
-	var fw, fh int
-	if sess != nil {
-		buf, fw, fh = sess.Framebuffer()
+	fw, fh := 0, 0
+	if tela != nil {
+		fw, fh = tela.Rect.Dx(), tela.Rect.Dy()
 	}
-	t.fw.Store(int32(fw))
-	t.fh.Store(int32(fh))
 	v := computeVNCView(size, fw, fh, t.modo.Load())
 	t.viewMu.Lock()
 	t.view = v
@@ -288,14 +387,21 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 
-	if len(buf) > 0 {
-		img := bgrxToNRGBA(buf, fw, fh)
+	if tela != nil {
+		// Só remonta a ImageOp quando a TELA mudou: a comparação é de
+		// ponteiro porque cada publicação é uma imagem nova (ver
+		// publicarTela). Reaproveitar a op é o que faz o Gio reusar a
+		// textura já na GPU em vez de reenviá-la a cada quadro da
+		// interface.
+		if t.opDaTela != tela {
+			t.opCache = paint.NewImageOp(tela)
+			t.opDaTela = tela
+		}
 		tr := op.Affine(f32.Affine2D{}.
 			Scale(f32.Point{}, f32.Point{X: v.scale, Y: v.scale}).
 			Offset(f32.Point{X: v.offX, Y: v.offY}),
 		).Push(gtx.Ops)
-		imgOp := paint.NewImageOp(img)
-		imgOp.Add(gtx.Ops)
+		t.opCache.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		tr.Pop()
 	}
@@ -304,11 +410,13 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 }
 
 func (t *vncTab) HandlePointer(ev pointer.Event, _ image.Point) {
-	sess := t.sess.Load()
+	proc := t.proc.Load()
 	// Somente leitura: nada de ponteiro nem de teclado sai daqui. É o
 	// modo de acompanhar o operador da loja sem esbarrar no que ele está
-	// fazendo — e o clique acidental num PDV em venda custa caro.
-	if sess == nil || t.ronly.Load() {
+	// fazendo — e o clique acidental num PDV em venda custa caro. O filtro
+	// fica AQUI, e não no processo-filho, de propósito: o que não é
+	// enviado não pode ser entregue errado do outro lado.
+	if proc == nil || t.ronly.Load() {
 		return
 	}
 	t.viewMu.Lock()
@@ -330,32 +438,16 @@ func (t *vncTab) HandlePointer(ev pointer.Event, _ image.Point) {
 	if ev.Buttons.Contain(pointer.ButtonTertiary) {
 		buttons |= 1 << 1
 	}
-	sess.PointerEvent(int(x), int(y), buttons)
+	_ = proc.PonteiroMascara(int(x), int(y), buttons)
 }
 
 func (t *vncTab) HandleKey(keysym, _ uint32, pressed bool) {
 	if t.ronly.Load() {
 		return
 	}
-	if sess := t.sess.Load(); sess != nil {
-		sess.KeyEvent(keysym, pressed)
+	if p := t.proc.Load(); p != nil {
+		_ = p.Tecla(keysym, pressed)
 	}
-}
-
-// bgrxToNRGBA converte o framebuffer do shim (32bpp, bytes B,G,R,X) para
-// image.NRGBA, que é o que paint.NewImageOp espera.
-func bgrxToNRGBA(buf []byte, w, h int) *image.NRGBA {
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for i := 0; i < w*h; i++ {
-		b := buf[i*4+0]
-		g := buf[i*4+1]
-		r := buf[i*4+2]
-		img.Pix[i*4+0] = r
-		img.Pix[i*4+1] = g
-		img.Pix[i*4+2] = b
-		img.Pix[i*4+3] = 255
-	}
-	return img
 }
 
 // ------------------------------------------------ barra de sessão
@@ -366,9 +458,9 @@ func (t *vncTab) EstadoSessao() estadoSessao {
 		Texto: fmt.Sprintf("%s:%d", t.host, t.port),
 	}
 	switch {
-	case t.sess.Load() != nil && t.ronly.Load():
+	case t.proc.Load() != nil && t.ronly.Load():
 		e.Chip, e.Tipo = "SÓ VER", "atencao"
-	case t.sess.Load() != nil:
+	case t.proc.Load() != nil:
 		e.Chip, e.Tipo = "ATIVO", "ok"
 	case t.caiu.Load():
 		e.Chip, e.Tipo = "CAIU", "erro"
@@ -394,8 +486,8 @@ func (t *vncTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 	}
 	if t.btnTeclas.Clicked(gtx) {
 		menuTeclas(ultimaPosPonteiro(), t.ronly.Load(), func(ks uint32, pressionada bool) {
-			if sess := t.sess.Load(); sess != nil {
-				sess.KeyEvent(ks, pressionada)
+			if p := t.proc.Load(); p != nil {
+				_ = p.Tecla(ks, pressionada)
 			}
 		})
 	}

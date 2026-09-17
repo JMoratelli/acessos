@@ -233,7 +233,7 @@ func TestAoVivoFluxoDeQuadros(t *testing.T) {
 }
 
 // Custo real de um filho em memória, medido e não estimado: é ele que
-// justifica o teto de telaproc.MaxSessoes. Roda sozinho e imprime o RSS —
+// justifica o custo reservado em telaproc.custoMiB. Imprime o RSS —
 // quando alguém mexer no teto, é este número que precisa ser refeito.
 func TestAoVivoCustoDeUmFilho(t *testing.T) {
 	proc, msgs, q := conectarAoVivo(t)
@@ -263,10 +263,9 @@ func TestAoVivoCustoDeUmFilho(t *testing.T) {
 	// então ele superestima muito o custo da segunda sessão em diante. O
 	// custo marginal de verdade é a memória privada; o PSS fica no meio e
 	// serve de conferência.
-	t.Logf("teto telaproc.MaxSessoes = %d  =>  ~%.0f MiB pelo custo privado, ~%.0f MiB pelo PSS",
-		telaproc.MaxSessoes,
-		float64(privada)/1024*float64(telaproc.MaxSessoes),
-		float64(m["Pss"])/1024*float64(telaproc.MaxSessoes))
+	t.Logf("orçamento %d MiB; RDP reserva %d MiB por sessão => cabem ~%d sessões RDP",
+		telaproc.OrcamentoMiB, telaproc.CustoDe("rdp"),
+		telaproc.OrcamentoMiB/telaproc.CustoDe("rdp"))
 }
 
 // memoriaDe lê /proc/<pid>/smaps_rollup, que já soma o mapeamento todo do

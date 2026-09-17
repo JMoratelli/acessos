@@ -45,6 +45,14 @@ func LerPonteiroBotao(corpo []byte) (x, y, botao int, pressionado, ok bool) {
 	return v[0], v[1], v[2], corpo[12] != 0, true
 }
 
+func LerPonteiroMascara(corpo []byte) (x, y, mascara int, ok bool) {
+	v, ok := lerI32(corpo, 3)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	return v[0], v[1], v[2], true
+}
+
 func LerPonteiroRoda(corpo []byte) (eixo, passos int, ok bool) {
 	v, ok := lerI32(corpo, 2)
 	if !ok {

@@ -51,11 +51,19 @@ const (
 	CmdPonteiroMover // x, y (int32)
 	CmdPonteiroBotao // x, y, botão (int32) + pressionado (1 byte)
 	CmdPonteiroRoda  // eixo, passos (int32)
-	CmdTecla         // keycode (uint32) + pressionada (1 byte)
+	CmdTecla         // tecla (uint32) + pressionada (1 byte); ver nota abaixo
 	CmdClipboard     // texto UTF-8 cru
 	CmdResize        // w, h (int32)
 	CmdCredito       // vazio: libera o filho a mandar mais UM quadro
 	CmdCertResposta  // decisão sobre o certificado (1 byte)
+
+	// CmdPonteiroMascara existe porque os dois protocolos falam de botão
+	// de jeitos diferentes: o RDP manda um evento POR BOTÃO (apertou o
+	// direito), enquanto o VNC manda o ESTADO DE TODOS os botões a cada
+	// movimento, num bitmask. Traduzir um no outro do lado do filho daria
+	// a ele que guardar estado que a aba já tem — então cada um manda o
+	// que sua biblioteca consome.
+	CmdPonteiroMascara // x, y, máscara de botões (int32)
 
 	// ---- filho -> processo principal ----
 
@@ -70,7 +78,8 @@ const (
 	EvtDisplayPronto // vazio
 )
 
-// Ligacao são os parâmetros de conexão (CmdConectar).
+// Ligacao são os parâmetros de conexão (CmdConectar). Dominio só o RDP
+// usa; o VNC clássico nem usuário tem, só senha.
 type Ligacao struct {
 	Host    string `json:"host"`
 	Porta   int    `json:"porta"`
@@ -80,9 +89,17 @@ type Ligacao struct {
 }
 
 // Falha diz por que a conexão não subiu (EvtFalha).
+//
+// Os três sinalizadores existem para a aba decidir se INSISTE. Errar a
+// senha e ficar tentando de novo a cada poucos segundos não é persistência,
+// é ataque de força bruta contra o próprio parque — e em domínio Windows
+// bloqueia a conta do operador. PrecisaUsuario e Recusado só o VNC produz
+// (ver vnc.ConnectError).
 type Falha struct {
-	Mensagem   string `json:"mensagem"`
-	AuthFalhou bool   `json:"auth_falhou"`
+	Mensagem       string `json:"mensagem"`
+	AuthFalhou     bool   `json:"auth_falhou"`
+	PrecisaUsuario bool   `json:"precisa_usuario,omitempty"`
+	Recusado       bool   `json:"recusado,omitempty"`
 }
 
 // Certificado espelha rdp.Certificado sem depender do pacote rdp, que é
