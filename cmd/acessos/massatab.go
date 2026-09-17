@@ -126,7 +126,7 @@ func newMassaTab(w *app.Window, cxs []conexoes.Conexao, caminhoSnippets string) 
 	}
 	for _, cx := range cxs {
 		if cx.Tem(conexoes.SSH) && cx.SSH.Usuario != "" {
-			t.usuario.SetText(cx.SSH.Usuario)
+			t.usuario.SetText(chaveiroAtual.Resolver(cx.SSH.Usuario, "usuario"))
 			if s, err := segredo(cx.SSH.Senha); err == nil {
 				t.senha.SetText(s)
 			}
@@ -176,6 +176,22 @@ func (t *massaTab) registrar(s string) {
 // executar monta a Config do runner e dispara. O canário (fase 1) roda em
 // UMA máquina para calibrar os timeouts antes de soltar o resto — é o que
 // evita matar um comando lento por timeout chutado.
+// credencialDigitada resolve usuário e senha de um par de campos de texto
+// livre (usuario/senha da tela do Massa, ou usuario/senhaRoot) contra o
+// chaveiro e o cofre — o mesmo passo que segredo()/chaveiroAtual.Resolver
+// já fazem para credencial salva no .ini, mas que os campos DIGITADOS na
+// própria aba nunca passavam por. Sem isto, um operador que digita
+// "!Zanthus" na tela (o app ensina esse alias em outros lugares) manda o
+// texto "!Zanthus" cru pro servidor em vez da senha de verdade.
+func credencialDigitada(usuario, senha string) (model.Credencial, error) {
+	u := chaveiroAtual.Resolver(usuario, "usuario")
+	s, err := segredo(senha)
+	if err != nil {
+		return model.Credencial{}, err
+	}
+	return model.Credencial{Usuario: u, Senha: s}, nil
+}
+
 func (t *massaTab) executar() {
 	// O que está digitado e ainda não foi somado à fila conta como o
 	// último comando: esquecer de clicar em "+" não pode significar
@@ -224,17 +240,37 @@ func (t *massaTab) executar() {
 				t.registrar(fmt.Sprintf("%s: %v (vai usar a credencial da tela)", cx.Nome, err))
 				continue
 			}
-			credPorIP[cx.Host] = model.Credencial{Usuario: cx.SSH.Usuario, Senha: senha}
+			credPorIP[cx.Host] = model.Credencial{
+				Usuario: chaveiroAtual.Resolver(cx.SSH.Usuario, "usuario"),
+				Senha:   senha,
+			}
 		}
+	}
+
+	credPadrao, err := credencialDigitada(t.usuario.Text(), t.senha.Text())
+	if err != nil {
+		t.mu.Lock()
+		t.rodando = false
+		t.mu.Unlock()
+		t.registrar(fmt.Sprintf("credencial padrão: %v", err))
+		return
+	}
+	credRoot, err := credencialDigitada("root", t.senhaRoot.Text())
+	if err != nil {
+		t.mu.Lock()
+		t.rodando = false
+		t.mu.Unlock()
+		t.registrar(fmt.Sprintf("senha de root: %v", err))
+		return
 	}
 
 	cfg := runner.Config{
 		Hosts:      hosts,
 		Comandos:   comandosDaFila(fila),
-		Cred:       model.Credencial{Usuario: t.usuario.Text(), Senha: t.senha.Text()},
+		Cred:       credPadrao,
 		CredDeHost: func(h model.Host) model.Credencial { return credPorIP[h.IP] },
 		UsarRoot:   t.usarRoot || filaPedeRoot(fila),
-		RootCred:   model.Credencial{Usuario: "root", Senha: t.senhaRoot.Text()},
+		RootCred:   credRoot,
 		Plataforma: model.Linux,
 		Workers:    8,
 		// TRÊS canários, sempre: um só não distingue "o comando está
