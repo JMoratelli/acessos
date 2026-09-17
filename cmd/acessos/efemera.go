@@ -99,15 +99,17 @@ func interpretarAlvo(texto string) (conexoes.Conexao, conexoes.Protocolo, bool) 
 }
 
 // alvoRascunho monta a conexão TEMPORÁRIA que o Painel mostra como card
-// enquanto se digita um destino que não está cadastrado.
+// enquanto se digita um destino que não está cadastrado. semResultados
+// diz se a busca em curso não casou com nenhuma máquina do inventário —
+// ver ehDestinoPlausivel.
 //
 // Diferença para interpretarAlvo: aqui os quatro protocolos nascem
 // ligados, porque o card existe justamente para o operador ESCOLHER pelo
 // ícone — o palpite do texto ("10.1.1.9:22" é shell) vira só a porta
 // daquele protocolo, não uma decisão tomada por ele.
-func alvoRascunho(texto string) (conexoes.Conexao, bool) {
+func alvoRascunho(texto string, semResultados bool) (conexoes.Conexao, bool) {
 	cx, proto, ok := interpretarAlvo(texto)
-	if !ok || !ehDestinoPlausivel(texto) {
+	if !ok || !ehDestinoPlausivel(texto, semResultados) {
 		return conexoes.Conexao{}, false
 	}
 	usuario := ""
@@ -141,11 +143,29 @@ func alvoRascunho(texto string) (conexoes.Conexao, bool) {
 	return cx, true
 }
 
-// ehDestinoPlausivel evita o card aparecer a cada letra de uma busca
-// comum: só um texto com cara de endereço (IP, host:porta, usuário@host)
-// ou com prefixo de protocolo explícito vira destino. "caixa" é busca;
-// "10.1.1.9", "serv.local" e "rdp serv-ad" são destino.
-func ehDestinoPlausivel(texto string) bool {
+// ehDestinoPlausivel decide se o texto digitado vira card de "conectar
+// sem cadastrar". São duas perguntas diferentes, e por isso dois casos:
+//
+//   - forma inequívoca de endereço (IP, host:porta, usuario@host, nome
+//     com domínio, prefixo explícito "rdp serv-ad"): vira destino
+//     SEMPRE, mesmo com a busca ainda casando com máquinas do
+//     inventário. Quem digita "10.1.1.99" já disse aonde quer ir.
+//   - nome cru, sem ponto, porta ou usuário ("fc52002-lj06"): só vira
+//     destino quando a busca NÃO casou com nada. Enquanto houver
+//     máquina cadastrada na tela o texto é filtro; quando a lista
+//     esvazia não há mais o que filtrar, e oferecer a conexão avulsa é
+//     a única saída útil que resta.
+//
+// Era esse segundo caso que faltava, e ele não é exceção nenhuma:
+// hostname sem domínio é o formato NORMAL da rede interna. A regra
+// antiga exigia ".", "@" ou ":" e mandava todo nome de máquina de verdade
+// para o lado "isto é busca" — a conexão avulsa por nome só existia pelo
+// Enter, que é o atalho invisível que o card veio justamente resolver.
+//
+// O contador de resultados é o que segura o card quieto durante uma busca
+// comum: "caixa" casa com máquinas, então não vira destino; "caixa" numa
+// instalação sem nenhuma "caixa" vira — e aí é isso mesmo que se quer.
+func ehDestinoPlausivel(texto string, semResultados bool) bool {
 	t := strings.TrimSpace(strings.ToLower(texto))
 	if t == "" {
 		return false
@@ -164,5 +184,26 @@ func ehDestinoPlausivel(texto string) bool {
 	if i := strings.Index(t, "."); i > 0 && i < len(t)-1 {
 		return true
 	}
-	return false
+	return semResultados && ehNomeDeMaquina(t)
+}
+
+// ehNomeDeMaquina: o texto tem forma de hostname (RFC 1123, já em
+// minúsculas). Serve para uma busca sem resultado que seja frase ou
+// tenha pontuação ("impressora nova", "cadê a 5?") continuar sendo busca
+// vazia, e não virar um destino que ninguém vai conseguir resolver.
+func ehNomeDeMaquina(t string) bool {
+	if t == "" || len(t) > 63 {
+		return false
+	}
+	if strings.HasPrefix(t, "-") || strings.HasSuffix(t, "-") {
+		return false
+	}
+	for _, r := range t {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -805,7 +805,9 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 // com a MESMA fileira de ícones dos cards salvos, a ação fica onde o olho
 // já está: clica no protocolo e abre, sem cadastrar nada.
 func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensions {
-	cx, ok := alvoRascunho(termo)
+	// Um nome cru ("fc52002-lj06") só vira destino quando a busca não
+	// achou nada — enquanto houver máquina casando, o texto é filtro.
+	cx, ok := alvoRascunho(termo, len(filtrar(d.arq.Conexoes, termo)) == 0)
 	if !ok {
 		return layout.Dimensions{}
 	}
