@@ -263,9 +263,8 @@ func TestAoVivoCustoDeUmFilho(t *testing.T) {
 	// então ele superestima muito o custo da segunda sessão em diante. O
 	// custo marginal de verdade é a memória privada; o PSS fica no meio e
 	// serve de conferência.
-	t.Logf("orçamento %d MiB; RDP reserva %d MiB por sessão => cabem ~%d sessões RDP",
-		telaproc.OrcamentoMiB, telaproc.CustoDe("rdp"),
-		telaproc.OrcamentoMiB/telaproc.CustoDe("rdp"))
+	t.Logf("estimado para %s: %d MiB por sessão; teto por sessão: %d MiB",
+		"rdp", telaproc.CustoDe("rdp"), telaproc.LimiteSessaoMiB)
 }
 
 // memoriaDe lê /proc/<pid>/smaps_rollup, que já soma o mapeamento todo do

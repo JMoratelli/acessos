@@ -207,7 +207,6 @@ func TestAoVivoVNCCustoDeUmFilho(t *testing.T) {
 	t.Logf("filho VNC %d, tela %dx%d: RSS %.1f MiB | PSS %.1f MiB | PRIVADA %.1f MiB",
 		proc.PID(), q.TotalW, q.TotalH,
 		float64(m["Rss"])/1024, float64(m["Pss"])/1024, float64(privada)/1024)
-	t.Logf("orçamento %d MiB; VNC reserva %d MiB por sessão => cabem ~%d telas VNC",
-		telaproc.OrcamentoMiB, telaproc.CustoDe("vnc"),
-		telaproc.OrcamentoMiB/telaproc.CustoDe("vnc"))
+	t.Logf("estimado para %s: %d MiB por sessão; teto por sessão: %d MiB",
+		"vnc", telaproc.CustoDe("vnc"), telaproc.LimiteSessaoMiB)
 }

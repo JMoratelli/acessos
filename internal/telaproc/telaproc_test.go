@@ -29,6 +29,10 @@ func filhoDeTeste(protocolo, endereco, token string) int {
 	if err != nil {
 		return 3
 	}
+	// O filho de teste liga o vigia igual ao worker de verdade (ver
+	// modoWorker em cmd/acessos/telaworker.go), senão o teste do vigia
+	// estaria exercitando um caminho que o app não usa.
+	VigiarMemoria(protocolo)
 	for {
 		tipo, corpo, err := c.Ler()
 		if err != nil {
@@ -176,92 +180,104 @@ func TestQuadroCorrompidoNaoPassa(t *testing.T) {
 	}
 }
 
-// O orçamento existe para o app não virar um problema de memória da
-// máquina inteira (ver OrcamentoMiB). Aqui ele é exercitado mexendo na
-// contabilidade, e não subindo dezenas de processos de verdade: o que
-// precisa estar certo é a conta — recusar quando não cabe, não vazar a
-// reserva na recusa, devolver a vaga ao encerrar, e cobrar de cada
-// protocolo o que ele custa.
-func TestOrcamentoDeSessoes(t *testing.T) {
-	orcamentoMu.Lock()
-	gastoAntes, vivasAntes := gastoMiB, vivas
-	orcamentoMu.Unlock()
+// A rede de segurança olha a MÁQUINA, não um número inventado: recusa
+// quando abrir mais uma sessão deixaria o sistema sem fôlego, e deixa
+// passar quando há memória. Aqui a leitura é simulada, para o teste não
+// depender de quanta memória a máquina que o roda tem no momento.
+func TestRecusaQuandoAMaquinaEstaSemFolego(t *testing.T) {
+	originalDisponivel := disponivelMiB
+	vivasMu.Lock()
+	vivasAntes := vivas
+	vivasMu.Unlock()
 	t.Cleanup(func() {
-		orcamentoMu.Lock()
-		gastoMiB, vivas = gastoAntes, vivasAntes
-		orcamentoMu.Unlock()
+		disponivelMiB = originalDisponivel
+		vivasMu.Lock()
+		vivas = vivasAntes
+		vivasMu.Unlock()
 	})
 
-	// Protocolos diferentes cobram diferente — é a razão de ser do
-	// orçamento por memória em vez de por contagem.
-	if CustoDe("rdp") <= CustoDe("vnc") {
-		t.Fatalf("RDP (%d MiB) devia custar mais que VNC (%d MiB)", CustoDe("rdp"), CustoDe("vnc"))
-	}
-	// Protocolo não medido entra pelo preço do mais caro, nunca de graça.
-	if CustoDe("protocolo-que-nao-existe") != custoDesconhecido {
-		t.Fatal("protocolo desconhecido não está pagando o preço do mais caro")
-	}
+	custo := CustoDe("eco") // protocolo não medido: paga o preço do mais caro
 
-	// Cheio: não cabe nem a sessão mais barata.
-	orcamentoMu.Lock()
-	gastoMiB, vivas = OrcamentoMiB, 1
-	orcamentoMu.Unlock()
-	if _, err := Iniciar("eco"); err == nil {
-		t.Fatal("Iniciar passou por cima do orçamento")
-	} else {
-		var lotado *ErrLotado
-		if !errors.As(err, &lotado) {
-			t.Fatalf("recusou com %v, esperava *ErrLotado", err)
-		}
-		if lotado.PorContagem {
-			t.Fatal("recusou por contagem, devia ser por memória")
-		}
-	}
-	if GastoMiB() != OrcamentoMiB {
-		t.Fatalf("a recusa mexeu no gasto: %d MiB", GastoMiB())
-	}
-
-	// Com espaço, entra — e devolve exatamente o que reservou ao encerrar.
-	orcamentoMu.Lock()
-	gastoMiB, vivas = 0, 0
-	orcamentoMu.Unlock()
+	// Sobra exatamente o mínimo depois de abrir: ainda cabe.
+	disponivelMiB = func() (int, bool) { return ReservaMinimaMiB + custo, true }
 	p, err := Iniciar("eco")
 	if err != nil {
-		t.Fatalf("Iniciar com orçamento livre: %v", err)
-	}
-	if GastoMiB() != custoDesconhecido || SessoesVivas() != 1 {
-		t.Fatalf("depois de subir: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
+		t.Fatalf("recusou com folga exata: %v", err)
 	}
 	p.Encerrar()
-	if GastoMiB() != 0 || SessoesVivas() != 0 {
-		t.Fatalf("Encerrar não devolveu: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
+
+	// Falta 1 MiB para o mínimo: não cabe.
+	disponivelMiB = func() (int, bool) { return ReservaMinimaMiB + custo - 1, true }
+	_, err = Iniciar("eco")
+	var semMem *ErrSemMemoria
+	if !errors.As(err, &semMem) {
+		t.Fatalf("recusou com %v, esperava *ErrSemMemoria", err)
 	}
-	// Encerrar duas vezes não pode devolver duas vezes.
+	if semMem.PorContagem {
+		t.Fatal("recusou por contagem, devia ser por memória")
+	}
+	if semMem.PrecisaMiB != custo {
+		t.Fatalf("erro diz precisar de %d MiB, esperava %d", semMem.PrecisaMiB, custo)
+	}
+
+	// Recusa não pode contar sessão que não subiu.
+	if SessoesVivas() != vivasAntes {
+		t.Fatalf("a recusa deixou %d sessões contadas, esperava %d", SessoesVivas(), vivasAntes)
+	}
+
+	// Plataforma sem como medir: FALHA ABERTA, não impede.
+	disponivelMiB = func() (int, bool) { return 0, false }
+	p, err = Iniciar("eco")
+	if err != nil {
+		t.Fatalf("sem saber medir, devia deixar passar; recusou com %v", err)
+	}
 	p.Encerrar()
-	if GastoMiB() != 0 || SessoesVivas() != 0 {
-		t.Fatalf("Encerrar repetido vazou: gasto=%d MiB vivas=%d", GastoMiB(), SessoesVivas())
+}
+
+// O teto POR SESSÃO precisa ter folga larga sobre o pior caso legítimo,
+// senão vira queda de aba boa em vez de proteção. O pior caso medido é uma
+// sessão RDP grande; este teste trava a relação entre os dois números para
+// ninguém apertar o teto sem perceber.
+func TestTetoPorSessaoTemFolgaSobreOCustoReal(t *testing.T) {
+	maisCaro := CustoDe("rdp")
+	if LimiteSessaoMiB < 4*maisCaro {
+		t.Fatalf("teto por sessão (%d MiB) tem menos de 4x o custo estimado do RDP (%d MiB) —"+
+			" com pouca folga, sessão legítima em tela grande passa a ser morta",
+			LimiteSessaoMiB, maisCaro)
 	}
 }
 
-// O limite por CONTAGEM é a rede de segurança acima do orçamento: mesmo
-// uma sessão baratíssima não pode abrir processo sem fim.
-func TestTetoPorContagem(t *testing.T) {
-	orcamentoMu.Lock()
-	gastoAntes, vivasAntes := gastoMiB, vivas
-	gastoMiB, vivas = 0, MaxSessoes
-	orcamentoMu.Unlock()
-	t.Cleanup(func() {
-		orcamentoMu.Lock()
-		gastoMiB, vivas = gastoAntes, vivasAntes
-		orcamentoMu.Unlock()
-	})
+// O vigia de memória precisa MATAR de verdade, não só existir. Aqui um
+// filho real sobe com o teto rebaixado a 1 MiB — que qualquer processo Go
+// já ultrapassa só de existir — e o teste confere que o processo principal
+// vê o canal fechar sozinho, sem ninguém mandar nada.
+//
+// É o mesmo que a aba veria: canal fechou, mostra "CAIU", religa.
+func TestVigiaDerrubaFilhoQuePassaDoTeto(t *testing.T) {
+	t.Setenv(VarLimiteSessao, "1")
 
-	_, err := Iniciar("eco")
-	var lotado *ErrLotado
-	if !errors.As(err, &lotado) {
-		t.Fatalf("recusou com %v, esperava *ErrLotado", err)
+	// O teste leva o intervalo de uma amostra (~2s): o vigia mora no
+	// FILHO, que é outro processo e usa o próprio padrão — mexer na
+	// variável aqui não o alcançaria.
+	p, err := Iniciar("eco")
+	if err != nil {
+		t.Fatalf("Iniciar: %v", err)
 	}
-	if !lotado.PorContagem {
-		t.Fatal("devia ter recusado por CONTAGEM, com orçamento sobrando")
+	defer p.Encerrar()
+
+	fim := make(chan error, 1)
+	go func() {
+		for {
+			if _, _, err := p.Ler(); err != nil {
+				fim <- err
+				return
+			}
+		}
+	}()
+	select {
+	case <-fim:
+		// O filho saiu sozinho: é exatamente o que se espera.
+	case <-time.After(20 * time.Second):
+		t.Fatal("o filho passou do teto e continuou vivo — o vigia não está derrubando nada")
 	}
 }

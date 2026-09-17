@@ -37,6 +37,10 @@ func modoWorker() bool {
 		fmt.Fprintf(os.Stderr, "[filho %s] %v\n", protocolo, err)
 		os.Exit(1)
 	}
+	// Teto de memória DESTA sessão: se este processo descontrolar, ele sai
+	// sozinho em vez de arrastar a máquina junto. Ver telaproc.VigiarMemoria.
+	telaproc.VigiarMemoria(protocolo)
+
 	switch protocolo {
 	case "rdp":
 		rodarWorkerRDP(c)
