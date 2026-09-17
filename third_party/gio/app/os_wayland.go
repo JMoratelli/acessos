@@ -62,6 +62,7 @@ import (
 #include "wayland_text_input.h"
 #include "wayland_xdg_shell.h"
 #include "wayland_xdg_decoration.h"
+#include "wayland_xdg_activation.h"
 
 extern const struct wl_registry_listener gio_registry_listener;
 extern const struct wl_surface_listener gio_surface_listener;
@@ -69,6 +70,7 @@ extern const struct xdg_surface_listener gio_xdg_surface_listener;
 extern const struct xdg_toplevel_listener gio_xdg_toplevel_listener;
 extern const struct zxdg_toplevel_decoration_v1_listener gio_zxdg_toplevel_decoration_v1_listener;
 extern const struct xdg_wm_base_listener gio_xdg_wm_base_listener;
+extern const struct xdg_activation_token_v1_listener gio_xdg_activation_token_v1_listener;
 extern const struct wl_callback_listener gio_callback_listener;
 extern const struct wl_output_listener gio_output_listener;
 extern const struct wl_seat_listener gio_seat_listener;
@@ -83,10 +85,12 @@ extern const struct wl_data_source_listener gio_data_source_listener;
 import "C"
 
 type wlDisplay struct {
-	disp              *C.struct_wl_display
-	reg               *C.struct_wl_registry
-	compositor        *C.struct_wl_compositor
-	wm                *C.struct_xdg_wm_base
+	disp       *C.struct_wl_display
+	reg        *C.struct_wl_registry
+	compositor *C.struct_wl_compositor
+	wm         *C.struct_xdg_wm_base
+	// --- patch acessos: xdg-activation (ver PATCH.md) ---
+	activation        *C.struct_xdg_activation_v1
 	imm               *C.struct_zwp_text_input_manager_v3
 	shm               *C.struct_wl_shm
 	dataDeviceManager *C.struct_wl_data_device_manager
@@ -615,8 +619,8 @@ func gio_onToplevelConfigure(data unsafe.Pointer, topLvl *C.struct_xdg_toplevel,
 	// tela SEM avisar o app — w.config.Mode continuava "Windowed", então
 	// o ícone de maximizar/restaurar e o arredondamento dos cantos
 	// ficavam errados até o usuário mexer manualmente no botão.
-	if states != nil && w.config.Mode != Minimized {
-		maximized, fullscreen := false, false
+	if states != nil {
+		maximized, fullscreen, ativada := false, false, false
 		n := int(states.size) / int(unsafe.Sizeof(C.uint32_t(0)))
 		for _, v := range unsafe.Slice((*C.uint32_t)(states.data), n) {
 			switch v {
@@ -624,7 +628,24 @@ func gio_onToplevelConfigure(data unsafe.Pointer, topLvl *C.struct_xdg_toplevel,
 				maximized = true
 			case C.XDG_TOPLEVEL_STATE_FULLSCREEN:
 				fullscreen = true
+			case C.XDG_TOPLEVEL_STATE_ACTIVATED:
+				ativada = true
 			}
+		}
+		// Minimizada continua minimizada até voltar ATIVADA. A versão
+		// anterior desta guarda ignorava o evento inteiro enquanto o modo
+		// fosse Minimized, e aí o modo nunca mais saía de lá: o Configure
+		// do Gio descarta um pedido de minimizar quando o modo anterior
+		// já é Minimized, então o botão minimizava UMA vez por execução e
+		// depois ficava inerte.
+		//
+		// O Wayland não tem estado "minimizada" nem evento de
+		// restauração, então não há o que consultar; ACTIVATED é o sinal
+		// que sobra, e é confiável no sentido que importa aqui — janela
+		// minimizada não está ativada, e o compositor manda o configure
+		// com ela assim que a janela volta.
+		if w.config.Mode == Minimized && !ativada {
+			return
 		}
 		mode := Windowed
 		switch {
@@ -768,6 +789,10 @@ func gio_onRegistryGlobal(data unsafe.Pointer, reg *C.struct_wl_registry, name C
 		d.shm = (*C.struct_wl_shm)(C.wl_registry_bind(reg, name, &C.wl_shm_interface, 1))
 	case "xdg_wm_base":
 		d.wm = (*C.struct_xdg_wm_base)(C.wl_registry_bind(reg, name, &C.xdg_wm_base_interface, 1))
+	// --- patch acessos: xdg-activation (ver PATCH.md) ---
+	case "xdg_activation_v1":
+		d.activation = (*C.struct_xdg_activation_v1)(C.wl_registry_bind(reg, name, &C.xdg_activation_v1_interface, 1))
+	// --- fim do patch ---
 	case "zxdg_decoration_manager_v1":
 		d.decor = (*C.struct_zxdg_decoration_manager_v1)(C.wl_registry_bind(reg, name, &C.zxdg_decoration_manager_v1_interface, 1))
 		// TODO: Implement and test text-input support.
@@ -1166,6 +1191,14 @@ func (w *window) Configure(options []Option) {
 			modo = C.ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
 		}
 		C.zxdg_toplevel_decoration_v1_set_mode(w.decor, modo)
+	}
+
+	// Translucidez: o Configure do Gio copia campo a campo para
+	// w.config, então um campo novo que ninguém copia nunca chega na
+	// updateOpaqueRegion — que é justamente quem o consome.
+	if w.config.Translucent != cnf.Translucent {
+		w.config.Translucent = cnf.Translucent
+		w.updateOpaqueRegion()
 	}
 	// --- fim do patch ---
 
@@ -1871,7 +1904,16 @@ func (w *window) updateOpaqueRegion() {
 	// cantos arredondados: os cantos saem com alfa 0. Declarar a superfície
 	// inteira como opaca faz o compositor pular a composição ali e deixar
 	// lixo no canto. Encolhemos a região o bastante pra caber o raio.
+	// Janela translúcida de propósito (app.Translucent): região opaca
+	// VAZIA. Qualquer retângulo declarado aqui é área que o compositor
+	// pode pular, e numa janela que quer o desktop aparecendo por trás
+	// não existe um pixel sequer garantidamente opaco.
 	m := C.int32_t(0)
+	if w.config.Translucent {
+		C.wl_surface_set_opaque_region(w.surf, reg)
+		C.wl_region_destroy(reg)
+		return
+	}
 	if !w.config.Decorated {
 		m = C.int32_t(12 * w.scale)
 	}
@@ -2097,4 +2139,87 @@ func fromFixed(v C.wl_fixed_t) float32 {
 	b := ((1023 + 44) << 52) + (1 << 51) + uint64(v)
 	f := math.Float64frombits(b) - (3 << 43)
 	return float32(f)
+}
+
+// --------------------------------------------- patch acessos: ativação
+//
+// xdg-activation é como o Wayland deixa uma janela trazer OUTRA para a
+// frente: sozinho um cliente não pode se ativar (senão qualquer programa
+// em segundo plano pularia na frente de quem está trabalhando), mas uma
+// janela que tem o foco pode pedir ao compositor um token e passar a vez.
+//
+// É exatamente o caso de um app com duas janelas: a caixa de busca tem o
+// foco, o usuário escolhe uma máquina, e quem deve ficar na frente é a
+// janela principal, onde a aba nasceu.
+//
+// O Gio de origem não conhece o protocolo — nem o global, nem o
+// system.ActionRaise no Wayland (que ele implementa só em Windows, X11 e
+// macOS).
+
+// tokensPendentes liga cada xdg_activation_token_v1 em voo ao canal que
+// espera por ele. O callback do compositor vem na thread do laço de
+// eventos, e é dali que a resposta sai.
+var (
+	tokensMu        sync.Mutex
+	tokensPendentes = map[*C.struct_xdg_activation_token_v1]chan string{}
+)
+
+//export gio_onActivationTokenDone
+func gio_onActivationTokenDone(data unsafe.Pointer, tok *C.struct_xdg_activation_token_v1, token *C.char) {
+	tokensMu.Lock()
+	ch := tokensPendentes[tok]
+	delete(tokensPendentes, tok)
+	tokensMu.Unlock()
+	if ch != nil {
+		ch <- C.GoString(token)
+	}
+	// destruir AQUI: o callback já roda na thread do laço de eventos,
+	// que é a única de onde se pode mexer na conexão Wayland.
+	C.xdg_activation_token_v1_destroy(tok)
+}
+
+// IniciarTokenAtivacao pede ao compositor um token em nome desta
+// janela, que precisa ser a que TEM o foco — é o foco dela que autoriza
+// a troca.
+//
+// Não espera a resposta, e isso não é preguiça: o "done" do compositor
+// chega pelo laço de eventos, nesta mesma thread. Bloquear aqui seria
+// esperar por uma mensagem que só chega quando esta função retornar.
+// Quem chama espera no canal, de fora.
+func (w *window) IniciarTokenAtivacao() (chan string, error) {
+	if w.disp.activation == nil {
+		return nil, errors.New("o compositor não expõe xdg_activation_v1")
+	}
+	tok := C.xdg_activation_v1_get_activation_token(w.disp.activation)
+	if tok == nil {
+		return nil, errors.New("não consegui criar o token de ativação")
+	}
+	ch := make(chan string, 1)
+	tokensMu.Lock()
+	tokensPendentes[tok] = ch
+	tokensMu.Unlock()
+	C.xdg_activation_token_v1_add_listener(tok, &C.gio_xdg_activation_token_v1_listener, nil)
+	if w.disp.seat != nil {
+		C.xdg_activation_token_v1_set_serial(tok, w.disp.seat.serial, w.disp.seat.seat)
+	}
+	C.xdg_activation_token_v1_set_surface(tok, w.surf)
+	C.xdg_activation_token_v1_commit(tok)
+	C.wl_display_flush(w.disp.disp)
+	return ch, nil
+}
+
+// AtivarCom traz esta janela para a frente usando um token obtido pela
+// janela que tinha o foco.
+func (w *window) AtivarCom(token string) error {
+	if w.disp.activation == nil {
+		return errors.New("o compositor não expõe xdg_activation_v1")
+	}
+	if token == "" {
+		return errors.New("token vazio")
+	}
+	ctoken := C.CString(token)
+	defer C.free(unsafe.Pointer(ctoken))
+	C.xdg_activation_v1_activate(w.disp.activation, ctoken, w.surf)
+	C.wl_display_flush(w.disp.disp)
+	return nil
 }

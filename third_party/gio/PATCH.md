@@ -90,6 +90,47 @@ GL/EGL do Linux (`egl_wayland.go`, `egl_x11.go`): o resize ali
 (`wl_egl_window_resize`/`glViewport`) não falha desse jeito, então não há
 o que hardening aqui traria para lá.
 
+Um nono patch, em `app/os.go`, `app/window.go` e `app/os_wayland.go`
+(`updateOpaqueRegion` e o `Configure`): a opção nova `app.Translucent`.
+O Gio declara a superfície inteira como OPACA para o compositor, o que é
+ganho de desempenho numa janela comum mas impede translucidez — o
+compositor pula a composição e o que o app desenhou com alfa aparece como
+lixo de memória. A caixa de busca (`cmd/acessos/buscapop.go`) é um cartão
+de vidro com sombra e cantos arredondados flutuando sobre o desktop, e
+sem isso os cantos saíam quebrados e a margem, suja. Com `Translucent`
+a região opaca fica VAZIA. O campo precisou ser copiado à mão dentro do
+`Configure`, porque ali o Gio copia campo a campo para `w.config` e um
+campo novo que ninguém copia nunca chega em quem o consome.
+
+Um décimo patch, em `app/os_wayland.go`, `app/os_wayland.c`,
+`app/window.go` e os arquivos gerados `app/wayland_xdg_activation.{c,h}`:
+suporte a **xdg-activation**, com dois métodos novos em `app.Window` —
+`TokenAtivacao()` e `AtivarCom(token)`.
+
+No Wayland um cliente não pode se trazer para a frente sozinho (senão
+qualquer programa em segundo plano pularia na frente de quem está
+trabalhando). O que o protocolo permite é a janela QUE TEM O FOCO pedir
+um token ao compositor e ceder a vez a outra. É exatamente o caso de dois
+janelas do mesmo app: a caixa de busca tem o foco, o usuário escolhe uma
+máquina, e quem deve ficar à frente é a janela principal, onde a aba
+nasceu. O Gio de origem não conhece o protocolo, e implementa
+`system.ActionRaise` só em Windows, X11 e macOS — no Wayland ele é
+silêncio.
+
+O pedido do token é ASSÍNCRONO de propósito: o `done` do compositor chega
+pelo laço de eventos da própria janela, então esperar por ele de dentro
+do laço seria esperar por uma mensagem que só é processada depois de a
+espera acabar. `IniciarTokenAtivacao` devolve um canal e quem chama
+espera de fora, com teto de 2s.
+
+Os arquivos `wayland_xdg_activation.{c,h}` são gerados por
+`wayland-scanner` a partir de
+`staging/xdg-activation/xdg-activation-v1.xml`, do mesmo jeito que o Gio
+já faz com xdg-shell e xdg-decoration (o XML vem do SDK do Freedesktop
+que o Flatpak já traz — não é preciso instalar `wayland-protocols-devel`
+na máquina). A tag `//go:build` no `.c` é acrescentada à mão depois de
+gerar, seguindo o que os `//go:generate` do próprio Gio fazem.
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).

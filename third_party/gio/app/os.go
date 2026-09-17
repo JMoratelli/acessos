@@ -45,6 +45,9 @@ type Config struct {
 	CustomRenderer bool
 	// Decorated reports whether window decorations are provided automatically.
 	Decorated bool
+	// Translucent reports whether the window content is meant to be
+	// composited with what is behind it. See [Translucent].
+	Translucent bool
 	// TopMost windows render above all other non-top-most windows.
 	TopMost bool
 	// Focused reports whether the window is focused.

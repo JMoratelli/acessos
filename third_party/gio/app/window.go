@@ -978,6 +978,74 @@ func Decorated(enabled bool) Option {
 	}
 }
 
+// Translucent marks the window content as composited with whatever is
+// behind it, so that pixels drawn with alpha below 1 let the desktop
+// show through.
+//
+// Gio otherwise declares the whole surface opaque to the compositor,
+// which is a performance win for ordinary windows but makes translucency
+// impossible and leaves uncomposited garbage wherever the app draws
+// transparent pixels.
+//
+// Translucent windows are supported on Wayland.
+func Translucent(enabled bool) Option {
+	return func(_ unit.Metric, cnf *Config) {
+		cnf.Translucent = enabled
+	}
+}
+
+// ativador é o backend que sabe passar o foco entre janelas do mesmo
+// app (hoje só o Wayland; nas outras plataformas system.ActionRaise já
+// resolve e o Gio o implementa).
+type ativador interface {
+	IniciarTokenAtivacao() (chan string, error)
+	AtivarCom(string) error
+}
+
+// TokenAtivacao pede ao sistema uma autorização para trazer OUTRA janela
+// deste app para a frente. Tem que ser chamada na janela que está com o
+// foco: é o foco dela que o compositor está deixando ela ceder.
+//
+// O token vale uma vez só e expira; peça na hora de usar.
+func (w *Window) TokenAtivacao() (string, error) {
+	var (
+		ch  chan string
+		err error
+	)
+	w.Run(func() {
+		a, ok := w.driver.(ativador)
+		if !ok {
+			err = errors.New("esta plataforma não passa foco entre janelas")
+			return
+		}
+		ch, err = a.IniciarTokenAtivacao()
+	})
+	if err != nil {
+		return "", err
+	}
+	select {
+	case tk := <-ch:
+		return tk, nil
+	case <-time.After(2 * time.Second):
+		return "", errors.New("o compositor não devolveu o token de ativação")
+	}
+}
+
+// AtivarCom traz ESTA janela para a frente com um token obtido por
+// TokenAtivacao na janela que tinha o foco.
+func (w *Window) AtivarCom(token string) error {
+	var err error
+	w.Run(func() {
+		a, ok := w.driver.(ativador)
+		if !ok {
+			err = errors.New("esta plataforma não passa foco entre janelas")
+			return
+		}
+		err = a.AtivarCom(token)
+	})
+	return err
+}
+
 // TopMost windows will be rendered above all other non-top-most windows.
 //
 // TopMost windows are supported on macOS, Windows.
