@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.2.1" date="2026-09-16">
+      <description>
+        <p>Terminal SSH: corrige um travamento real do app inteiro — Ctrl+Shift+C sem nenhuma selecao feita congelava a janela. Cursor virou barra piscando em vez de bloco solido. Clique, arrasto e roda do mouse agora sao repassados pro programa remoto quando ele pede (htop, less, mc e afins), com Shift forcando selecao local mesmo assim. Colar so envolve o texto na marcacao de "bracketed paste" quando o programa remoto pediu, em vez de sempre. Tema claro passa a valer tambem dentro do terminal (fundo, texto e cores de shell), nao so no resto da interface.</p>
+        <p>Corrige teclas do proprio app (fechar aba, regua de depuracao) roubando combinacoes que o terminal remoto usa de verdade — apagar palavra e busca no bash/nano, por exemplo. Passam a valer so fora de uma sessao remota.</p>
+        <p>Corrige a janela as vezes reagindo sozinha (abrindo nova conexao, fechando a aba) enquanto se digitava dentro de uma sessao remota — um botao que tinha ficado em foco continuava recebendo Enter/Espaco digitados na sessao.</p>
+        <p>Corrige a execucao em massa mandando o nome de uma credencial do chaveiro ("!Nome") em vez da senha de verdade, quando usada nos campos de usuario/senha da propria tela ou numa maquina cujo usuario salvo aponta para o chaveiro.</p>
+      </description>
+    </release>
     <release version="2.2.0" date="2026-09-16">
       <description>
         <p>Cada sessao RDP passa a rodar em processo separado. Uma falha dentro do cliente RDP deixa de derrubar o programa inteiro: morre so aquela aba, que reconecta sozinha, e as demais sessoes continuam abertas como se nada tivesse acontecido. Ate agora uma queda abrupta da conexao RDP fechava tudo de uma vez, com o trabalho das outras abas junto.</p>
