@@ -43,12 +43,7 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// que não depende de Ctrl e não colide com nada
 				// usado dentro de uma sessão remota (tmux, vim,
 				// readline etc. não usam F12), diferente do
-				// antigo Ctrl+B. Ctrl+W fecha a aba ativa — esse
-				// ainda é reservado do jeito que um navegador
-				// reserva Ctrl+W independente da página. Ainda
-				// repassamos Ctrl em si pro remoto logo abaixo
-				// (Ctrl+C etc. têm que continuar funcionando); só
-				// a tecla W some quando combinada com Ctrl.
+				// antigo Ctrl+B.
 				const ctrlL, ctrlR = 0xffe3, 0xffe4
 				const f12 = 0xffc9
 				if keysym == ctrlL || keysym == ctrlR {
@@ -58,18 +53,6 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 					pendingToggleSidebar.Store(true)
 					w.Invalidate()
 					return
-				}
-				if ctrlDown.Load() && pressed {
-					switch keysym {
-					case 'w', 'W':
-						pendingCloseActive.Store(true)
-						w.Invalidate()
-						return
-					case 'g', 'G':
-						reguaLigada = !reguaLigada
-						w.Invalidate()
-						return
-					}
 				}
 				// Com diálogo aberto, ou com o cursor num campo de
 				// texto do próprio app (a busca da lateral, por
@@ -83,9 +66,42 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// teclado cru. No painel (ou numa aba de
 				// arquivos) as teclas têm que seguir o caminho
 				// normal do Gio, senão a busca não digita.
-				if t := activeTab(); t != nil && querTeclado(t) {
-					t.HandleKey(keysym, keycodeX11, pressed)
+				t := activeTab()
+				remoto := t != nil && querTeclado(t)
+				// Ctrl+W/Ctrl+G só são atalho do APP fora de uma
+				// sessão remota: dentro de uma, são do programa que
+				// está rodando lá — Ctrl+W é "apagar palavra" no
+				// readline do bash E "Where Is" no nano, Ctrl+G é
+				// "abortar" no readline e "Get Help" no nano. Um
+				// terminal de verdade nunca rouba essas duas pra
+				// si; a aba continua fechando pelo X dela.
+				if !remoto && ctrlDown.Load() && pressed {
+					switch keysym {
+					case 'w', 'W':
+						pendingCloseActive.Store(true)
+						w.Invalidate()
+						return
+					case 'g', 'G':
+						reguaLigada = !reguaLigada
+						w.Invalidate()
+						return
+					}
 				}
+				if !remoto {
+					return
+				}
+				// O Wayland entrega esta MESMA tecla também ao
+				// wl_keyboard interno do Gio (não existe
+				// exclusividade entre dois listeners do mesmo
+				// wl_seat) — se algum botão ficou com o foco de
+				// teclado do Gio de antes de abrir esta aba (o "+"
+				// de nova conexão, o "x" de fechar, etc.), um
+				// Enter/Espaço digitado aqui dentro (confirmar
+				// `nano arquivo`, salvar e sair) o ativa de novo.
+				// Limpar o foco a cada tecla tira esse fluxo
+				// paralelo de cima de qualquer widget.
+				pendingLimparFocoGio.Store(true)
+				t.HandleKey(keysym, keycodeX11, pressed)
 			},
 			func(text string) {
 				// SEMPRE grava, não só na aba ativa: é o que faz colar

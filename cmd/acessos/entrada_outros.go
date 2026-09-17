@@ -79,9 +79,9 @@ func tratarTecladoFrame(w *app.Window, gtx layout.Context, activeTab func() Tab)
 		}
 		pressed := ke.State == key.Press
 
-		// Mesmos atalhos do grab Linux (ver entrada_linux.go), pelo mesmo
+		// Mesmo atalho do grab Linux (ver entrada_linux.go), pelo mesmo
 		// motivo: F12 não depende de Ctrl e não colide com nada usado
-		// dentro de uma sessão remota; Ctrl+W fecha a aba ativa.
+		// dentro de uma sessão remota.
 		if ke.Name == key.NameCtrl {
 			ctrlDown.Store(pressed)
 		}
@@ -90,7 +90,13 @@ func tratarTecladoFrame(w *app.Window, gtx layout.Context, activeTab func() Tab)
 			w.Invalidate()
 			continue
 		}
-		if ctrlDown.Load() && pressed {
+		// Ctrl+W/Ctrl+G só são atalho do app aqui FORA de uma sessão
+		// remota (podeTeclado falso) — dentro de uma são do programa
+		// rodando lá: Ctrl+W é "apagar palavra" no readline do bash e
+		// "Where Is" no nano, Ctrl+G é "abortar" no readline e "Get
+		// Help" no nano. Mesma correção do lado Linux, ver o
+		// comentário lá.
+		if !podeTeclado && ctrlDown.Load() && pressed {
 			switch ke.Name {
 			case "W":
 				pendingCloseActive.Store(true)

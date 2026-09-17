@@ -20,6 +20,7 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -382,6 +383,19 @@ var (
 	ctrlDown             atomic.Bool
 	pendingToggleSidebar atomic.Bool
 	pendingCloseActive   atomic.Bool
+	// pendingLimparFocoGio: o grab do Wayland entrega teclado cru a uma
+	// aba remota por FORA do roteador do Gio, mas o Wayland ainda manda o
+	// MESMO evento pro wl_keyboard interno do Gio também (não existe
+	// exclusividade entre dois listeners do mesmo wl_seat). Se algum
+	// widget (o "+" de nova conexão, o "x" de fechar aba, etc.) ficou com
+	// o FOCO DE TECLADO do Gio de antes de trocar pra aba remota, ele
+	// continua "ouvindo" esse fluxo paralelo — e Enter/Espaço digitados
+	// dentro da sessão (confirmar `nano arquivo`, salvar e sair) reativam
+	// aquele botão como se tivesse sido clicado de novo. Limpar o foco
+	// aqui é o mesmo remédio que ControlesSessao já usa por botão
+	// (sshtab.go), só que geral: sem foco nenhum, o fluxo paralelo não
+	// tem em quem cair.
+	pendingLimparFocoGio atomic.Bool
 )
 
 func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), painel *dashTab) error {
@@ -529,6 +543,9 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			}
 			if pendingCloseActive.Swap(false) {
 				bar.closeActive()
+			}
+			if pendingLimparFocoGio.Swap(false) {
+				gtx.Execute(key.FocusCmd{Tag: nil})
 			}
 
 			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
