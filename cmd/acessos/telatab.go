@@ -5,9 +5,27 @@ package main
 import (
 	"image"
 	"sync/atomic"
+	"time"
 
 	"acessos-go/internal/telaproc"
 )
+
+// creditarConformeVisibilidade libera o próximo quadro: na hora se a aba
+// está à vista, depois de um respiro se não está. parar corta a espera
+// quando a aba fecha.
+func creditarConformeVisibilidade(proc *telaproc.Processo, ativa bool, parar <-chan struct{}) {
+	if ativa {
+		_ = proc.Credito()
+		return
+	}
+	go func() {
+		select {
+		case <-time.After(intervaloSegundoPlano):
+			_ = proc.Credito()
+		case <-parar:
+		}
+	}()
+}
 
 // O que as abas de tela remota (VNC e RDP) compartilham do lado do
 // PROCESSO PRINCIPAL: montar a tela a partir dos retângulos que o filho
@@ -32,6 +50,26 @@ const (
 	// comportamento que estas abas sempre tiveram.
 	fimFalhou
 )
+
+// intervaloSegundoPlano é de quanto em quanto tempo uma aba que NÃO está
+// à vista pede o próximo quadro.
+//
+// Existe porque o crédito é o acelerador da sessão: enquanto a aba devolve
+// crédito, o filho captura, converte e manda a tela inteira pelo socket. A
+// aba visível deve fazer isso o mais rápido que conseguir desenhar; uma
+// aba escondida, não — ninguém está olhando.
+//
+// Sem isto o custo era real e grande: no teste de estresse com 40 sessões
+// VNC, NENHUMA delas à vista, passaram 62 GB de pixels em dois minutos.
+// O desenho antigo (tela convertida dentro do Layout) não tinha esse
+// problema por acidente: Layout só roda para a aba ativa. Ao mover a
+// conversão para fora da thread de desenho, o freio saiu junto — este
+// intervalo é o freio de volta.
+//
+// Um segundo, e não "nunca": a aba escondida continua viva e razoavelmente
+// atual, então trocar para ela mostra a tela de agora em vez de uma
+// lembrança, e a sessão não parece congelada ao voltar.
+const intervaloSegundoPlano = time.Second
 
 // aplicarQuadro cola o retângulo recebido na tela acumulada, criando ou
 // trocando a imagem quando a resolução remota muda.

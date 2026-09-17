@@ -317,8 +317,9 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.w.Invalidate()
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
-			// aqui consome.
-			_ = proc.Credito()
+			// aqui consome. E sai devagar quando a aba não está à vista —
+			// ver intervaloSegundoPlano.
+			creditarConformeVisibilidade(proc, ehAbaAtiva(t), t.stop)
 
 		case telaproc.EvtDesconectado:
 			reg("[%s] sessão caiu: %s", t.title, string(corpo))
