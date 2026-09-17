@@ -56,53 +56,104 @@ texto certo do outro lado. A ponte é a mesma função-quadro do item 1
 `clipboard.ReadCmd`/`WriteCmd` do próprio Gio, que no Windows já
 resolvem contra a API do sistema — só faltava alguém chamando.
 
-## 3. Terminal SSH: teclas de navegação e cursor — A VERIFICAR
+## 3. Terminal SSH: teclas de navegação e cursor — RESOLVIDO PARA LINUX (2026-09-16)
 
-Relatado em 2026-09-16, ainda **sem reproduzir com método**. É hoje o
-candidato a "o que mais precisa de melhoria" no app. Sintomas, como
-chegaram:
+Testado ao vivo contra um servidor de verdade
+([sshtab_aovivo_test.go](cmd/acessos/sshtab_aovivo_test.go), desligado por
+padrão, ligado por `ACESSOS_SSH_AOVIVO`): seta pra cima recupera comando
+do histórico do bash, e um roteiro completo dentro do `nano` — abrir,
+descer com seta, ir pro fim da linha com End, digitar, salvar (Ctrl+O
++ Enter), sair (Ctrl+X) — bate exatamente com o que o `cat` lê de volta
+do disco depois. `HandleKey -> bytesDaTecla -> stdin -> PTY remoto`
+funciona ponta a ponta no caminho Linux/Wayland; **o caminho Windows
+continua sem teste ao vivo** (mesma ressalva do item 1).
 
-- as **setas não funcionam**;
-- o **cursor (`|` piscando) não funciona**;
-- **seta para cima não traz o último comando** no host.
+O que os testes tentaram reproduzir NÃO era o bug: era outro, achado no
+caminho. `copiarSelecao()` (Ctrl+Shift+C sem seleção nenhuma, "copia a
+tela inteira") fazia `t.term.Lock(); t.term.String(); t.term.Unlock()` —
+mas o `String()` do vt10x **tranca o mutex por conta própria**, ao
+contrário de `Cell`/`Cursor`/`Size`/`HistoryCell` (que exigem o chamador
+travar). Travar duas vezes o mesmo mutex não-reentrante na mesma goroutine
+trava pra sempre. Ou seja: **Ctrl+Shift+C sem nada selecionado no SSH
+congelava o app inteiro**, silenciosamente, desde sempre. Corrigido
+(removido o Lock/Unlock redundante); o vt10x segue sendo a única API do
+pacote que se comporta assim — vale desconfiar dela de novo se aparecer
+outro `.String()` em volta de Lock/Unlock.
 
-O terceiro sintoma é provavelmente o mesmo do primeiro, e não um item
-separado: quem traz o último comando é o readline DO OUTRO LADO, quando
-recebe `\x1b[A`. Se a seta não vira bytes, não há histórico a buscar.
-Confirmar isso antes de investigar os dois em separado.
+Cursor virou barra piscante (2dp, cor `tema.Azul` sólida, sem alfa —
+ver item da paleta clara abaixo), com o piscar suspenso por
+`piscarPeriodo` (530ms) sempre que uma tecla acabou de ser mandada, pra
+não "sumir" bem no instante em que a pessoa está olhando pra ele.
 
-O que JÁ foi conferido nesta anotação, para ninguém refazer:
+O que ficou de fora, de propósito:
 
-- **a tabela de tradução está certa.** `especiais` em
-  [keyencode.go](cmd/acessos/keyencode.go) mapeia os quatro keysyms de
-  seta (`0xff52`/`0xff54`/`0xff53`/`0xff51`) para `\x1b[A`/`B`/`C`/`D`,
-  que é o que qualquer terminal manda. Então o defeito NÃO está aqui —
-  está antes (a tecla não chegar em `bytesDaTecla`) ou depois (o shell
-  remoto não estar em modo de aplicação/PTY como se espera);
-- **o cursor não pisca porque piscada não existe.** Em
-  [sshtab.go](cmd/acessos/sshtab.go) ele é um retângulo azul sólido
-  (`tema.Azul` com alfa 150) preenchendo a célula — não há temporizador,
-  não há fase, e não é a barra `|` que o relato descreve. Ou seja, "não
-  pisca" é comportamento atual, não regressão; virar um `|` que pisca é
-  trabalho a fazer, não conserto.
+- **captura física do teclado no Wayland** ([internal/grab](internal/grab/))
+  não tem como ser exercitada por um teste — não existe compositor nem
+  teclado físico pra simular daqui. Revisão estática do C não achou nada
+  suspeito para as setas especificamente;
+- **AltGr e layouts não-US** continuam sem tabela (ver item 1);
+- **DECSCUSR** (a aplicação remota escolher a forma do cursor — é assim
+  que o vim vira barra no modo de inserção) não é suportado; o vt10x
+  vendorizado não interpreta esse código. O cursor daqui é sempre barra,
+  não segue pedido da aplicação. Se um dia isso importar, é mais um
+  patch local no mesmo espírito do scrollback/bracketed-paste abaixo.
 
-Por onde começar, e a pergunta que decide tudo: **em qual sistema isso foi
-visto?** Os dois caminhos de entrada são independentes e falham por
-motivos diferentes:
+## 3b. Terminal SSH: relato de mouse e colar condicional — RESOLVIDO (2026-09-16)
 
-- **Linux/Wayland** — [entrada_linux.go](cmd/acessos/entrada_linux.go),
-  alimentado pelo [internal/grab](internal/grab/), que entrega keysym X11
-  já resolvido pelo layout. Aqui a seta deveria chegar pronta;
-- **Windows** — [entrada_outros.go](cmd/acessos/entrada_outros.go) com as
-  tabelas de [teclado_outros.go](cmd/acessos/teclado_outros.go), montadas
-  a partir do `key.Event` do Gio. É o caminho mais novo e o mais provável
-  de ter buraco: conferir se `key.NameUpArrow` e companhia estão na
-  tabela E se o filtro de teclas do Gio as deixa passar (ver a pegadinha
-  do `key.Filter` sem `Optional` registrada no item 1 deste arquivo).
+Duas lacunas do terminal que o ficaram de fora da 2.x original, ambas
+testadas ao vivo contra um `htop` de verdade.
 
-Vale medir antes de mexer: registrar no diagnóstico o keysym que chega em
-`sshTab.HandleKey` ao apertar cada seta separa "não chegou" de "chegou e
-não virou bytes" numa tentativa só.
+**Relato de mouse** (clique/roda dentro de `htop`/`less`/`mc`): o vt10x
+já rastreava os modos (`ModeMouseButton`, `ModeMouseSgr` etc.) desde
+sempre, só que ninguém olhava pra eles. Agora `HandlePointer` checa
+`t.term.Mode()` — com algum modo de mouse ligado, clique/arrasto/roda
+viram sequência xterm (SGR quando disponível, senão o formato legado de 1
+byte por campo, limitado a 223 colunas/linhas por protocolo, não por
+escolha nossa) em vez de virar seleção/scrollback local. Shift força o
+comportamento local mesmo com o modo ligado — a mesma válvula de escape
+que xterm/gnome-terminal têm, pra copiar um pedaço de tela mesmo dentro de
+um TUI que capturou o mouse. Testado contra `htop 3.0.5` real: ele liga
+SGR ao abrir, e seis "rodas pra baixo" mandadas por `HandlePointer` fazem
+a lista de processos rolar de verdade (visível no antes/depois da tela).
+Onde mora: [sshtab_mouse.go](cmd/acessos/sshtab_mouse.go) (a montagem dos
+bytes, pura, testada em [sshtab_mouse_test.go](cmd/acessos/sshtab_mouse_test.go))
+e o `HandlePointer` em [sshtab.go](cmd/acessos/sshtab.go).
+
+**Bracketed paste condicional**: antes, todo Ctrl+Shift+V envolvia o
+texto em `\x1b[200~`/`\x1b[201~` incondicionalmente, mesmo quando o
+programa remoto não pediu (`CSI ?2004h`) nem entende a marcação — nesse
+caso os bytes de abertura/fechamento chegavam como se tivessem sido
+digitados. O vt10x vendorizado ganhou `ModeBracketPaste` (mais um patch
+local, documentado em [third_party/vt10x/PATCH.md](third_party/vt10x/PATCH.md),
+mesmo espírito do patch de scrollback) e `colarDoSistema` só envolve
+quando o modo está de fato ligado.
+
+Consequência: a linha "sem relato de mouse" na lista de limitações
+conhecidas no fim deste arquivo não vale mais — removida.
+
+## 3c. Tema claro no terminal SSH — RESOLVIDO (2026-09-16)
+
+`TermBg`/`TermFg` e a paleta ANSI de 16 cores eram fixos e escuros nos
+dois temas — o resto da interface trocava com `tema.Escuro`, o terminal
+não. Agora `Tema` carrega os tokens do terminal (`TermBg`, `TermFg`,
+`TermSel`, `Ansi [16]color.NRGBA`) e cada tema define a paleta inteira já
+calibrada pro próprio fundo, em vez de uma paleta única com o fundo
+trocado por baixo — o claro precisou escurecer bem mais o amarelo (o pior
+caso de contraste em terminal claro) e parar de usar branco puro pro
+índice 15, que sumiria contra o fundo.
+
+Decisão de propósito: **seleção e cursor viraram cor sólida, sem alfa em
+tempo de desenho** (`TermSel` por tema, cursor usa `tema.Azul` direto). O
+valor antigo era `tema.Azul` com alfa calculada em cima de um fundo fixo
+(`#0d1117`); virar tema deixaria essa conta errada por design — o mesmo
+alfa sobre um fundo bem mais claro lava quase invisível, e transparência
+calculada por cima de fundo variável é frágil de mexer depois. Os tons
+sólidos de `TermSel` foram pré-calculados a partir do que a transparência
+antiga resolvia visualmente, não escolhidos no escuro.
+
+Onde mora: `Tema` em [tema.go](cmd/acessos/tema.go) (`temaClaro`/
+`temaEscuro`); consumido em `corVT`/`desenharGrade` em
+[sshtab.go](cmd/acessos/sshtab.go).
 
 ## 4. Ícones no Windows
 
@@ -200,15 +251,55 @@ O que ficou de fora, de propósito:
 - **reportar upstream ao FreeRDP** continua valendo, e agora com menos
   pressa: o bug deixou de ser fatal aqui, mas segue sendo bug deles.
 
+## 8. Tela cheia
+
+Pedido em 2026-09-16: tela cheia estilo F11 do Chrome / cliente RDP da
+Microsoft / Remmina (a REFERÊNCIA de comportamento, não o atalho) — some a
+decoração, fica só o conteúdo da aba ativa ocupando a tela inteira, com
+uma barrinha FINA sempre visível no topo (não a tira de abas nem a barra
+de título de hoje inteiras) mostrando só status e quem está conectado.
+
+**Entrada é só por BOTÃO, sem atalho de teclado nenhum** — decisão
+explícita: dentro de uma sessão remota qualquer F-key pode colidir com o
+programa do outro lado (F11 especificamente é usado por vim em alguns
+binds, tmux, e diverge por distro), e a barra de sessão já tem lugar pros
+botões (`ControlesSessao` em [sshtab.go](cmd/acessos/sshtab.go) tem o
+padrão: `botaoSessao`/`toggleSessao`). Saída ainda em aberto — Ctrl+F11
+foi cogitado, mas o padrão exato (tecla, ou também um botão/X na
+barrinha) fica pra decidir na hora, não travar agora.
+
+Por onde entra:
+
+- **modo de janela**: o fork do Gio em `third_party/gio/app` já expõe
+  `WindowMode` (`Fullscreen`/`Windowed`) nas quatro plataformas que
+  importam aqui — `os_wayland.go`, `os_x11.go`, `os_windows.go` têm a
+  implementação nativa, não é preciso inventar nada na camada de SO;
+- a decoração de hoje é **desenhada pelo próprio app** (CSD — ver
+  `janelaRaio`, `sistemaDecora`, `fundoTitulo` em
+  [tema.go](cmd/acessos/tema.go)/[main.go](cmd/acessos/main.go)), então
+  entrar em tela cheia não pode só pedir o modo ao Gio: precisa TROCAR a
+  faixa de título + tira de abas de hoje pela barrinha fina pedida,
+  condicionado a um novo estado tipo `telaCheia bool`;
+- a barrinha reaproveita o que já existe: cada aba remota já implementa
+  `EstadoSessao() estadoSessao` (chip ATIVO/CAIU/AGUARDE + texto tipo
+  `usuario@host:porta`) — é exatamente o "status e quem está conectado"
+  pedido, sem inventar campo novo;
+- se a saída acabar usando alguma tecla (Ctrl+F11 ou o que for decidido),
+  ela só pode disparar quando `telaCheia` já está true — nunca competir
+  com o que a sessão remota também usa, mesmo cuidado que F12/Ctrl+W/
+  Ctrl+G já tiveram que ter (ver itens 1 e 3 deste arquivo).
+
 ## Limitações conhecidas, que NÃO estão no plano de corrigir
 
 Ficam registradas para ninguém "descobrir" de novo:
 
-- **Terminal SSH**: sem busca no scrollback (não existe scrollback:
-  o que sai da tela sai) e sem relato de mouse (programas que capturam
-  clique/scroll dentro do terminal, tipo `htop` ou um menu TUI, não
-  recebem o evento). É o escopo que foi combinado para o v1 do terminal.
-  A seleção com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não
+- **Terminal SSH**: sem busca no scrollback (o scrollback em si existe,
+  20000 linhas — é busca DENTRO dele que não tem, tipo o Ctrl+Shift+F de
+  um gnome-terminal). Relato de mouse para `htop`/`less`/TUIs em geral
+  passou a existir em 2026-09-16 (ver item 3b) — o que continua de fora é
+  o modo "qualquer movimento" (1003) sem nenhum botão apertado, que o Gio
+  não entrega nesta pilha (só chega evento de arrasto com botão). A
+  seleção com o mouse existe desde a 2.0.4, mas é da TELA VISÍVEL: não
   acompanha o conteúdo se o programa remoto redesenhar por baixo.
   (Tela alternativa — o modo que `vim`/`less`/`nano` usam para tela
   cheia — já é tratada pela biblioteca de terminal por baixo; testado
