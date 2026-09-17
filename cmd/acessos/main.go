@@ -481,7 +481,9 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 		buscaAberta = true
 		// painel.arq e não uma cópia: o .ini pode ter sido recarregado
 		// desde o start (Ajustes, edição de conexão), e a busca precisa
-		// enxergar o inventário de agora.
+		// enxergar o inventário de agora. Ler daqui é seguro porque esta
+		// função só roda no laço principal (ver abaixo) — é o mesmo laço
+		// que troca o painel.arq num recarregamento.
 		abrirJanelaBusca(th, painel.arq,
 			func(cx conexoes.Conexao, p conexoes.Protocolo, token string) {
 				naJanelaPrincipal(w, func() {
@@ -512,7 +514,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 	go func() {
 		a, err := registrarAtalhoGlobal("abrir-busca",
 			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
-			func() { abrirBusca() })
+			// O acionamento chega numa goroutine do D-Bus, e abrir a
+			// caixa lê painel.arq — que o laço principal troca quando o
+			// .ini é recarregado. Passar pela fila tira as duas pontas
+			// da mesma variável de goroutines diferentes.
+			func() { naJanelaPrincipal(w, abrirBusca) })
 		switch {
 		case err != nil:
 			// Desktop sem o portal, ou diálogo recusado: o app segue sem

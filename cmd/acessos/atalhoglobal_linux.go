@@ -35,11 +35,12 @@ const (
 	portalAtalhos = "org.freedesktop.portal.GlobalShortcuts"
 )
 
-// AtalhoGlobal é o registro vivo: mantém a sessão do portal aberta e
-// chama ao() a cada acionamento. Fechar a sessão desregistra o atalho.
+// AtalhoGlobal é o resultado do registro. A sessão do portal vive
+// enquanto o processo viver — não guardamos a conexão nem o caminho dela
+// porque o app nunca desregistra o atalho em vida; quem o solta é o fim
+// do processo, e quem o muda de tecla é o usuário, pelas Preferências do
+// Sistema (e aí o ShortcutsChanged atualiza o Gatilho abaixo).
 type AtalhoGlobal struct {
-	conn    *dbus.Conn
-	sessao  dbus.ObjectPath
 	Gatilho string // o que o SISTEMA amarrou; vazio = sem tecla
 }
 
@@ -106,7 +107,7 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlo
 		return nil, err
 	}
 
-	a := &AtalhoGlobal{conn: conn, sessao: dbus.ObjectPath(sessao)}
+	a := &AtalhoGlobal{}
 	a.Gatilho = gatilhoAmarrado(res, id)
 
 	go func() {

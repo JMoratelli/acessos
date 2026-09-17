@@ -59,6 +59,24 @@ Sem argumento ele abre o inventário padrão
 (`$XDG_CONFIG_HOME/acessos/conexoes.ini`), criando um exemplo comentado na
 primeira execução. `-ini` aponta para outro arquivo.
 
+## Atalho global
+
+`Ctrl+Shift+F12` abre uma caixa de busca pequena por cima do que estiver na
+tela, sem precisar ir até a janela do programa: digite parte do nome da
+máquina, escolha, e ela abre numa aba nova — com a janela do Acessos vindo
+para a frente junto. Máquina que já está aberta troca para a aba dela.
+
+Cada linha traz a mesma fileira de ícones do Painel: clicar no ícone abre
+aquele protocolo, `Enter` abre o preferido, `Esc` fecha. Um destino que não
+está cadastrado aparece como última linha quando a busca não acha nada.
+
+No Linux quem amarra a tecla é o sistema, não o app — é assim que o Wayland
+permite atalho global, pelo portal `GlobalShortcuts`. O app pede
+`Ctrl+Shift+F12`, e o KDE confirma **uma vez só** na primeira execução. Se
+esse diálogo for recusado, o atalho fica registrado sem tecla nenhuma e pode
+ser amarrado em Preferências do Sistema → Atalhos → Acessos; o app avisa no
+terminal quando isso acontece. No Windows ainda não há atalho global.
+
 ## Windows
 
 O mesmo código-fonte gera o executável e o instalador do Windows, a partir

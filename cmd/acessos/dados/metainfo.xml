@@ -64,6 +64,16 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.4.0" date="2026-09-17">
+      <description>
+        <p>Atalho global Ctrl+Shift+F12: abre uma caixa de busca pequena por cima do que estiver na tela, sem precisar ir ate a janela do programa. Digita parte do nome da maquina, escolhe, e ela abre numa aba nova — com a janela do Acessos vindo para a frente junto. Maquina que ja esta aberta troca para a aba dela, em vez de abrir uma segunda sessao.</p>
+        <p>Na caixa, cada linha e uma maquina e traz a mesma fileira de icones do Painel: clicar no icone abre aquele protocolo, e Enter abre o preferido. Um destino que nao esta cadastrado aparece como ultima linha quando a busca nao acha nada, com os quatro protocolos disponiveis.</p>
+        <p>No Linux o atalho e registrado pelo sistema (Preferencias do Sistema, Atalhos, Acessos), que e como o Wayland permite atalho global. A tecla pedida e Ctrl+Shift+F12, mas quem decide e o sistema, e a confirmacao aparece uma vez so: se ela for recusada, o atalho fica registrado sem tecla e pode ser amarrado ali. No Windows o programa ainda sobe sem atalho.</p>
+        <p>A busca passa a oferecer conexao avulsa tambem para nome de maquina sem dominio (por exemplo fc52002-lj06), e nao so para IP ou host com porta. O card aparece quando a busca nao casa com nenhuma maquina cadastrada.</p>
+        <p>Corrige o botao de minimizar funcionando uma vez so por execucao: depois de minimizar e restaurar, ele ficava inerte e a janela maximizada tambem parava de poder ser arrastada pela barra de titulo. Fechar continuava funcionando, o que tornava o sintoma confuso.</p>
+        <p>Corrige o F12 do programa (recolher a barra lateral) disparando com qualquer combinacao terminada em F12, inclusive Ctrl+Shift+F12.</p>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-09-17">
       <description>
         <p>Cada sessao VNC passa a rodar em processo separado, como o RDP ja fazia desde a 2.2.0. Uma falha dentro do cliente VNC deixa de derrubar o programa inteiro: morre so aquela aba, que reconecta sozinha, e as demais sessoes continuam abertas.</p>

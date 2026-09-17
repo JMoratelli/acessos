@@ -4,7 +4,7 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-16.
+Atualizado em 2026-09-17.
 
 ---
 
@@ -155,6 +155,36 @@ Onde mora: `Tema` em [tema.go](cmd/acessos/tema.go) (`temaClaro`/
 `temaEscuro`); consumido em `corVT`/`desenharGrade` em
 [sshtab.go](cmd/acessos/sshtab.go).
 
+## 3d. Busca por atalho global — o que ficou de fora da 2.4.0
+
+O atalho e a caixa estão funcionando (ver README e o metainfo da 2.4.0).
+Quatro pontas continuam abertas, em ordem de prioridade:
+
+- **Instância única.** Hoje cada instância do app registra o próprio
+  atalho no portal, então abrir o Acessos duas vezes faz UM aperto de
+  tecla abrir DUAS caixas. Foi diagnosticado exatamente assim durante o
+  desenvolvimento (duas instâncias vivas de teste), e a decisão de
+  desenho já tomada é: com o app fechado, o atalho abre só a caixa, e o
+  app grande sobe quando uma máquina for escolhida. Um socket em
+  `XDG_RUNTIME_DIR` resolve as duas coisas — acordar quem já roda e não
+  duplicar registro.
+- **Chave nos Ajustes para desligar o atalho** (padrão ligado), mais o
+  aviso na interface quando o atalho ficou **registrado sem tecla**. Isso
+  não é conforto: o diálogo do KDE aparece uma vez só por aplicativo, e
+  quem o fechar sem querer fica com um atalho morto sem nada na tela
+  explicando por quê. Hoje o app só avisa no terminal, que ninguém lê.
+- **`RegisterHotKey` no Windows.** Lá o atalho é mais simples que no
+  Linux: global de verdade e com a tecla por nossa conta, sem portal e
+  sem diálogo. O arquivo [atalhoglobal_outros.go](cmd/acessos/atalhoglobal_outros.go)
+  já é o lugar, e hoje só devolve erro.
+- **Soltar a captura de atalhos durante sessão remota.** Enquanto uma
+  tela remota está em foco o app inibe os atalhos do compositor (de
+  propósito: `Super` e `Alt+Tab` têm que chegar na máquina remota), e
+  não há como devolvê-los sem trocar de aba. O padrão dos outros
+  clientes remotos é uma tecla de soltura — `Ctrl+Alt` — com um aviso
+  visível na barra de sessão dizendo que a captura está ligada, sumindo
+  sozinho depois de uns segundos.
+
 ## 4. Ícones no Windows
 
 **Relatado no teste da 2.0.4: os ícones saem errados no Windows.** Falta
@@ -250,6 +280,41 @@ O que ficou de fora, de propósito:
   [processo.go](internal/telaproc/processo.go);
 - **reportar upstream ao FreeRDP** continua valendo, e agora com menos
   pressa: o bug deixou de ser fatal aqui, mas segue sendo bug deles.
+
+## 7b. Travamento no Windows ao mover a janela entre monitores
+
+**Relatado e diagnosticado em 2026-09-17, sem correção.** A janela congela
+e para de aceitar cliques ao ser arrastada de um monitor para o outro.
+
+O que já se sabe, de diagnóstico feito na máquina afetada (Windows 10,
+GeForce 210 com driver de 2015, feature level 10_1, dois monitores 1920x1080
+no mesmo DPI):
+
+- o endurecimento do resize do D3D11 (item 8 do
+  [PATCH.md](third_party/gio/PATCH.md)) **já está** na versão testada, a
+  2.3.0. Ele converte ERRO do `ResizeBuffers`/`GetBuffer` em "dispositivo
+  perdido", que o Gio recupera recriando o contexto — mas não cobre
+  chamada que BLOQUEIA dentro do driver, que é o que o sintoma sugere: no
+  Gio, quem desenha é a mesma thread que bombeia as mensagens do Windows;
+- não reproduziu em nenhuma tentativa automatizada **sem sessão remota
+  ativa** (arraste simulado atravessando os monitores, ~50 verificações de
+  responsividade por tentativa, todas respondendo). Reforça que o gatilho
+  depende de quadros chegando de verdade no momento da troca de saída de
+  vídeo, e/ou de monitores com DPI diferentes;
+- o Visualizador de Eventos não tinha nenhum "Hang detected" para o
+  processo.
+
+Próximo passo, quando alguém puder mexer na máquina afetada: uma build com
+marcação de tempo em volta do `Refresh`/`Present` gravando no `log.txt` que
+o app já mantém. Se o log terminar em "entrei" sem o "saí", está provado o
+bloqueio no driver; se parar antes, o assunto é outro. Um dump do processo
+travado (`procdump -ma`) responde o mesmo com mais precisão, com a vantagem
+de que aqui existem os símbolos.
+
+Atenção a uma armadilha: um diagnóstico de caixa-preta feito por strings do
+binário concluiu que o app é Rust com egui/wgpu/winit. Não é — é Go com
+Gio, e no Windows o Gio desenha por Direct3D 11. As recomendações daquele
+relatório apontam para APIs que não existem aqui.
 
 ## 8. Tela cheia
 
