@@ -3,7 +3,20 @@
 package main
 
 // Teste de ESTRESSE: muitas sessões remotas ao mesmo tempo, contra máquinas
-// de verdade. Desligado por padrão; liga com ACESSOS_ESTRESSE_HOSTS.
+// de verdade. Desligado por padrão.
+//
+// Rodando no terminal, ele PERGUNTA em quais máquinas bater:
+//
+//	go test ./cmd/acessos/ -run Estresse -v -timeout 30m
+//
+// Perguntar é melhor que exigir variável de ambiente por dois motivos: a
+// senha digitada não fica no histórico do shell nem no /proc/<pid>/environ
+// de quem passar por perto, e a confirmação com a lista expandida na tela
+// é a última chance de perceber que se digitou a faixa errada — do outro
+// lado costumam estar caixas em operação, não laboratório.
+//
+// Para rodar sem ninguém olhando (script, CI), as variáveis continuam
+// valendo e desligam a pergunta:
 //
 //	ACESSOS_ESTRESSE_HOSTS=192.168.0.101-140 ACESSOS_ESTRESSE_SENHA=... \
 //	go test ./cmd/acessos/ -run Estresse -v -timeout 30m
@@ -33,6 +46,7 @@ package main
 // cgo (ver telaworker_filho_test.go).
 
 import (
+	"bufio"
 	"fmt"
 	"image"
 	"os"
@@ -44,7 +58,80 @@ import (
 	"time"
 
 	"acessos-go/internal/telaproc"
+
+	"golang.org/x/term"
 )
+
+// ---------------------------------------------------------- perguntas
+//
+// As perguntas saem no STDERR, e não via t.Log: o testing guarda o que
+// passa por ele e só imprime no fim do teste, o que faria a pergunta
+// aparecer depois da resposta.
+
+func interativo() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
+func perguntar(rotulo string) string {
+	fmt.Fprint(os.Stderr, rotulo)
+	linha, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && linha == "" {
+		return ""
+	}
+	return strings.TrimSpace(linha)
+}
+
+func perguntarSenha(rotulo string) string {
+	fmt.Fprint(os.Stderr, rotulo)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// alvoEstresse decide em quem bater: variáveis de ambiente quando
+// definidas, pergunta quando há alguém no terminal, e desiste quando não há
+// nem uma coisa nem outra.
+func alvoEstresse(t *testing.T) (hosts []string, senha, usuario string) {
+	t.Helper()
+
+	spec := os.Getenv("ACESSOS_ESTRESSE_HOSTS")
+	senha = os.Getenv("ACESSOS_ESTRESSE_SENHA")
+	usuario = os.Getenv("ACESSOS_ESTRESSE_USUARIO")
+	perguntou := false
+
+	if spec == "" {
+		if !interativo() {
+			t.Skip("teste de estresse desligado: rode num terminal para ele perguntar," +
+				" ou defina ACESSOS_ESTRESSE_HOSTS")
+		}
+		spec = perguntar("Hosts para estressar (ex.: 10.0.0.101-140, ou separados por vírgula): ")
+		if spec == "" {
+			t.Skip("nenhum host informado")
+		}
+		perguntou = true
+	}
+
+	hosts, err := expandirHosts(spec)
+	if err != nil {
+		t.Fatalf("hosts: %v", err)
+	}
+
+	if perguntou {
+		if senha == "" {
+			senha = perguntarSenha("Senha (vazio se não houver): ")
+		}
+		// Confirmação com a lista expandida: é aqui que se percebe a faixa
+		// digitada errada, ANTES de abrir conexão em máquina de gente
+		// trabalhando.
+		fmt.Fprintf(os.Stderr, "\n%d máquinas: %s … %s\n",
+			len(hosts), hosts[0], hosts[len(hosts)-1])
+		if r := perguntar("Confirma bater em todas elas? [s/N]: "); !strings.EqualFold(r, "s") {
+			t.Skip("cancelado por quem rodou")
+		}
+	}
+	return hosts, senha, usuario
+}
 
 // expandirHosts aceita "192.168.0.101-140", "a,b,c" ou os dois juntos.
 func expandirHosts(spec string) ([]string, error) {
@@ -109,14 +196,7 @@ type resultadoSessao struct {
 }
 
 func TestEstresseMuitasSessoes(t *testing.T) {
-	spec := os.Getenv("ACESSOS_ESTRESSE_HOSTS")
-	if spec == "" {
-		t.Skip("ACESSOS_ESTRESSE_HOSTS não definido — teste de estresse desligado")
-	}
-	hosts, err := expandirHosts(spec)
-	if err != nil {
-		t.Fatalf("hosts: %v", err)
-	}
+	hosts, senha, usuario := alvoEstresse(t)
 	proto := os.Getenv("ACESSOS_ESTRESSE_PROTO")
 	if proto == "" {
 		proto = "vnc"
@@ -142,7 +222,10 @@ func TestEstresseMuitasSessoes(t *testing.T) {
 		wg.Add(1)
 		go func(i int, host string) {
 			defer wg.Done()
-			resultados[i] = rodarSessaoEstresse(t, proto, host, porta, fim, &conectadas, i < visiveis)
+			resultados[i] = rodarSessaoEstresse(t, credenciaisEstresse{
+				proto: proto, host: host, porta: porta,
+				usuario: usuario, senha: senha,
+			}, fim, &conectadas, i < visiveis)
 		}(i, host)
 	}
 
@@ -167,7 +250,17 @@ func TestEstresseMuitasSessoes(t *testing.T) {
 	relatar(t, resultados, len(hosts))
 }
 
-func rodarSessaoEstresse(t *testing.T, proto, host string, porta int, fim time.Time, conectadas *atomic.Int32, visivel bool) resultadoSessao {
+// credenciaisEstresse junta o que uma sessão precisa para subir. É struct
+// e não seis parâmetros soltos porque a ordem de "usuario, senha" trocada
+// por engano não daria erro de compilação nenhum.
+type credenciaisEstresse struct {
+	proto, host    string
+	porta          int
+	usuario, senha string
+}
+
+func rodarSessaoEstresse(t *testing.T, cred credenciaisEstresse, fim time.Time, conectadas *atomic.Int32, visivel bool) resultadoSessao {
+	proto, host, porta := cred.proto, cred.host, cred.porta
 	r := resultadoSessao{host: host, visivel: visivel}
 	parar := make(chan struct{})
 	defer close(parar)
@@ -181,8 +274,7 @@ func rodarSessaoEstresse(t *testing.T, proto, host string, porta int, fim time.T
 
 	if err := proc.Conectar(telaproc.Ligacao{
 		Host: host, Porta: porta,
-		Usuario: os.Getenv("ACESSOS_ESTRESSE_USUARIO"),
-		Senha:   os.Getenv("ACESSOS_ESTRESSE_SENHA"),
+		Usuario: cred.usuario, Senha: cred.senha,
 	}); err != nil {
 		r.motivo = "não pedi a conexão: " + err.Error()
 		return r
