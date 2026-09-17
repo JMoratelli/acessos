@@ -50,6 +50,10 @@ const (
 	ModeFocus
 	ModeMouseX10
 	ModeMouseMany
+	// ModeBracketPaste: CSI ?2004h/l (patch acessos — ver PATCH.md). Sem
+	// isto, um colar não tinha como saber se a aplicação remota pediu a
+	// marcação \x1b[200~/\x1b[201~ ou não.
+	ModeBracketPaste
 	ModeMouseMask = ModeMouseButton | ModeMouseMotion | ModeMouseX10 | ModeMouseMany
 )
 
@@ -594,6 +598,8 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				t.modMode(set, ModeMouseSgr)
 			case 1034:
 				t.modMode(set, Mode8bit)
+			case 2004: // bracketed paste mode (patch acessos)
+				t.modMode(set, ModeBracketPaste)
 			case 1049, // = 1047 and 1048
 				47, 1047:
 				alt := t.mode&ModeAltScreen != 0

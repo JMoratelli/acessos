@@ -25,12 +25,12 @@ import (
 // Os valores são os MESMOS do tema.py (calibrados em tela real, não
 // derivados no papel).
 type Tema struct {
-	Fundo, Cartao, Borda, Borda2                color.NRGBA
-	Texto, Sec, Fraco                           color.NRGBA
+	Fundo, Cartao, Borda, Borda2 color.NRGBA
+	Texto, Sec, Fraco            color.NRGBA
 	// CardFraco é o Fraco QUANDO o texto está por cima do preenchimento
 	// translúcido do card (Vidro2/Vidro3), não do fundo da janela — ver
 	// comentário no valor de cada tema.
-	CardFraco color.NRGBA
+	CardFraco                                   color.NRGBA
 	Fundo1, Fundo2, Fundo3                      color.NRGBA
 	Luz1, Luz2                                  color.NRGBA
 	Vidro1, Vidro2, Vidro3                      color.NRGBA
@@ -41,16 +41,23 @@ type Tema struct {
 	Abas1, Abas2                                color.NRGBA
 	TopoTxt, TopoSec                            color.NRGBA
 	Vidro, VidroH, VidroB                       color.NRGBA
-	Palco, TermBg, TermFg                       color.NRGBA
-	Hover, Campo                                color.NRGBA
-	OkBg, OkFg                                  color.NRGBA
-	ErroBg, ErroFg, ErroH                       color.NRGBA
-	AtencaoBg, AtencaoFg                        color.NRGBA
-	Azul, AzulH, Verde, Roxo                    color.NRGBA
-	AzulFraco, VerdeFraco                       color.NRGBA
-	RoxoFraco                                   color.NRGBA
-	Hero1, Hero2, HeroTxt                       color.NRGBA
-	HeroSec                                     color.NRGBA
+	Palco, TermBg, TermFg, TermSel              color.NRGBA
+	// Ansi é a paleta de 16 cores do terminal (índices 0-15 do ANSI
+	// clássico). Cor SÓLIDA, sem alfa nenhum — o terminal já tratava
+	// seleção/cursor com transparência calculada em cima de um fundo
+	// fixo; virar tema deixaria essa conta errada (o mesmo alfa sobre um
+	// fundo bem mais claro lava quase invisível). Cada tema define a
+	// paleta inteira já calibrada pro próprio TermBg.
+	Ansi                     [16]color.NRGBA
+	Hover, Campo             color.NRGBA
+	OkBg, OkFg               color.NRGBA
+	ErroBg, ErroFg, ErroH    color.NRGBA
+	AtencaoBg, AtencaoFg     color.NRGBA
+	Azul, AzulH, Verde, Roxo color.NRGBA
+	AzulFraco, VerdeFraco    color.NRGBA
+	RoxoFraco                color.NRGBA
+	Hero1, Hero2, HeroTxt    color.NRGBA
+	HeroSec                  color.NRGBA
 	// Escuro diz qual paleta é esta — fundoCanto usa pra saber que o
 	// Gio compõe overlay translúcido mais forte sobre fundo escuro
 	// (espaço linear, não sRGB) e precisa de alfa bem mais baixo ali.
@@ -91,7 +98,22 @@ var temaClaro = Tema{
 	// Sobre cromo CLARO quem modula é PRETO translúcido — branco sobre
 	// barra clara resolve para a própria cor da barra e some (tema.py).
 	Vidro: rgba(0x11161a, 0.05), VidroH: rgba(0x11161a, 0.11), VidroB: rgba(0x11161a, 0.12),
-	Palco: hex(0x0b0f14), TermBg: hex(0x0d1117), TermFg: hex(0xd7dee6),
+	Palco: hex(0x0b0f14),
+	// Terminal claro: branco cheio (mesmo valor de Cartao, de propósito —
+	// é a "proposta A" aprovada), sem o vidro translúcido do resto da UI,
+	// que ficaria ilegível em cima de texto de shell. Paleta ANSI e
+	// seleção vêm recalibradas pro fundo claro, não é a paleta escura
+	// com o alfa tirado: branco (15) deixa de ser #ffffff (some no
+	// fundo), e o amarelo (3/11) — o pior caso de contraste em terminal
+	// claro — escurece bem mais que o resto.
+	TermBg: hex(0xffffff), TermFg: hex(0x1b232b),
+	TermSel: hex(0xd8dffd), // = Azul a ~22% sobre branco, pré-calculado (sem alfa em tempo de desenho)
+	Ansi: [16]color.NRGBA{
+		hex(0x383f47), hex(0xc2334a), hex(0x128a63), hex(0xa87909),
+		hex(0x2f4cd6), hex(0x8b3fc9), hex(0x0f8a8f), hex(0x6b7684),
+		hex(0x8a97a3), hex(0xd94f5c), hex(0x1aa877), hex(0xc99a1f),
+		hex(0x4c6ef5), hex(0x9a5fdb), hex(0x159aa0), hex(0xcfd6dc),
+	},
 	Hover: hex(0xeef2f5), Campo: hex(0xffffff),
 	OkBg: hex(0xdcf5ec), OkFg: hex(0x0b7a63),
 	ErroBg: hex(0xfde4e4), ErroFg: hex(0xb02a37), ErroH: hex(0x8d1f2a),
@@ -103,8 +125,8 @@ var temaClaro = Tema{
 	// texto secundário dele tem que vir da paleta ESCURA. Usar o topo_sec
 	// do tema claro (#5b6976) sobre um hero quase preto é o mesmo erro da
 	// "faixa preta acidental" que a skill descreve, só que invertido.
-	HeroSec: hex(0x9aa6b2),
-	Escuro:  false,
+	HeroSec:    hex(0x9aa6b2),
+	Escuro:     false,
 	SombraBase: 6, SombraPasso: 3,
 }
 
@@ -118,7 +140,7 @@ var temaEscuro = Tema{
 	// hover/selecionado (Vidro3, translúcido a mais ainda). CardFraco é
 	// um degrau mais claro, só pra texto que fica sobre o card.
 	CardFraco: hex(0x8a97a3),
-	Fundo1: hex(0x1a212b), Fundo2: hex(0x10141a), Fundo3: hex(0x080b0f),
+	Fundo1:    hex(0x1a212b), Fundo2: hex(0x10141a), Fundo3: hex(0x080b0f),
 	// As luzes vão bem abaixo do alfa do tema.py (0.16/0.10 lá). O Gio
 	// compõe em espaço LINEAR, o GTK/cairo em sRGB: a mesma rgba() sobre
 	// um fundo quase preto sai bem mais forte aqui. Uma primeira redução
@@ -135,7 +157,7 @@ var temaEscuro = Tema{
 	// quase preto isso lê como BRILHO, não como borda de material. Um
 	// azul-acinzentado neutro em vez de branco resolve isso sem mudar o
 	// matiz frio do resto da paleta escura.
-	LuzB: rgba(0x8fa0b8, 0.16),
+	LuzB:     rgba(0x8fa0b8, 0.16),
 	Barra:    rgba(0x10141a, 0.86),
 	HeroLuz1: rgba(0x748ffc, 0.13), HeroLuz2: rgba(0x38d9a9, 0.08),
 	Topo1: hex(0x080a0d), Topo2: hex(0x12171d),
@@ -144,6 +166,16 @@ var temaEscuro = Tema{
 	TopoTxt: hex(0xffffff), TopoSec: hex(0x9aa6b2),
 	Vidro: rgba(0xffffff, 0.06), VidroH: rgba(0xffffff, 0.13), VidroB: rgba(0xffffff, 0.10),
 	Palco: hex(0x06080a), TermBg: hex(0x0d1117), TermFg: hex(0xd7dee6),
+	// = tema.Azul (0x748ffc) a 35% sobre TermBg (0x0d1117), pré-calculado
+	// — era isso que a seleção pintava por cima do fundo antes de virar
+	// cor sólida.
+	TermSel: hex(0x313d67),
+	Ansi: [16]color.NRGBA{
+		hex(0x1b1f24), hex(0xd2414f), hex(0x2fa87c), hex(0xd79a28),
+		hex(0x4c6ef5), hex(0x9a6ee0), hex(0x1ba8a0), hex(0xc6ccd4),
+		hex(0x5c6570), hex(0xe05561), hex(0x38d9a9), hex(0xe0b458),
+		hex(0x748ffc), hex(0xb197fc), hex(0x3bc9db), hex(0xffffff),
+	},
 	Hover: hex(0x1e242b), Campo: hex(0x171b21),
 	OkBg: hex(0x0d2f28), OkFg: hex(0x4fd1b0),
 	ErroBg: hex(0x341a1e), ErroFg: hex(0xc9414d), ErroH: hex(0xe05561),

@@ -90,6 +90,16 @@ type sshTab struct {
 	selAtiva   bool
 	arrastando bool
 
+	// mouseRelatando: true entre o Press e o Release de uma sequência
+	// que está sendo REPORTADA pro remoto (htop, less, mc…) em vez de
+	// virar seleção local — decidido uma vez no Press e mantido até o
+	// Release, pra um Drag no meio do caminho não mudar de ideia se o
+	// programa remoto alternar o modo de mouse bem nesse instante.
+	// mouseBotaoRel guarda QUAL botão abriu a sequência, pro Release e o
+	// Motion (Drag) do meio saberem qual código xterm usar.
+	mouseRelatando bool
+	mouseBotaoRel  int
+
 	// rolagem: 0 = acompanhando a saída ao vivo (o fundo da tela); N =
 	// rolado N linhas para dentro do histórico. Roda do mouse SEM Ctrl
 	// mexe aqui (com Ctrl continua mudando o corpo da fonte, como sempre
@@ -119,6 +129,46 @@ type sshTab struct {
 	btnRec      widget.Clickable
 	btnAuto     widget.Clickable
 	btnSnip     widget.Clickable
+
+	// ultimaTecla marca a última vez que uma tecla foi enviada — ver
+	// cursorAceso().
+	ultimaTecla time.Time
+}
+
+// piscarPeriodo é o intervalo de troca aceso/apagado do cursor — mesma
+// faixa que terminais de verdade usam (gnome-terminal e afins ficam perto
+// de 500-600ms).
+const piscarPeriodo = 530 * time.Millisecond
+
+// cursorAceso decide se o cursor deve aparecer neste quadro: sempre aceso
+// logo depois de uma tecla digitada (sem isto, digitar rápido podia
+// "apagar" o cursor bem no instante em que a pessoa está olhando pra
+// ele, se o quadro caísse na fase escura do piscar) e alternando num
+// período fixo quando ocioso.
+func (t *sshTab) cursorAceso() bool {
+	t.mu.Lock()
+	desdeTecla := time.Since(t.ultimaTecla)
+	t.mu.Unlock()
+	if desdeTecla < piscarPeriodo {
+		return true
+	}
+	return (time.Now().UnixMilli()/piscarPeriodo.Milliseconds())%2 == 0
+}
+
+// piscarCursor invalida a aba periodicamente enquanto ela existir, só
+// para o piscar do cursor ter quadro pra acontecer quando ninguém digita
+// nem chega saída nova — sem isto o cursor congelaria na fase em que
+// estava da última vez que algo mais pediu um quadro.
+func (t *sshTab) piscarCursor() {
+	tk := time.NewTicker(piscarPeriodo)
+	defer tk.Stop()
+	for !t.encerrada() {
+		<-tk.C
+		if t.encerrada() {
+			return
+		}
+		t.invalidar()
+	}
 }
 
 // celula é uma posição na grade: coluna e linha.
@@ -170,6 +220,7 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 	t.term = vt10x.New(vt10x.WithSize(t.cols, t.rows), vt10x.WithWriter(escritorEntrada{t}),
 		vt10x.WithScrollback(20000))
 	go t.laco()
+	go t.piscarCursor()
 	return t, nil
 }
 
@@ -496,6 +547,9 @@ func (t *sshTab) HandleKey(keysym, _ uint32, pressed bool) {
 	if rolava {
 		t.invalidar()
 	}
+	t.mu.Lock()
+	t.ultimaTecla = time.Now()
+	t.mu.Unlock()
 	t.enviar(bytesDaTecla(keysym, t.mods))
 }
 
@@ -505,9 +559,12 @@ func (t *sshTab) HandleKey(keysym, _ uint32, pressed bool) {
 func (t *sshTab) copiarSelecao() {
 	texto, houve := t.textoSelecionado()
 	if !houve {
-		t.term.Lock()
+		// SEM Lock/Unlock em volta: ao contrário de Cell/Cursor/Size (que
+		// exigem o chamador travar), o String() do vt10x tranca o mutex
+		// POR CONTA PRÓPRIA — travar aqui também travava um mutex não
+		// reentrante duas vezes na mesma goroutine e travava o app inteiro
+		// (Ctrl+Shift+C sem seleção nenhuma, direto do HandleKey).
 		texto = t.term.String()
-		t.term.Unlock()
 		publicarClipboard(t.w, strings.TrimRight(texto, "\n \t"))
 		t.setEstado("tela copiada")
 		return
@@ -595,6 +652,17 @@ func (t *sshTab) colarDoSistema() {
 	if texto == "" {
 		return
 	}
+	// Só envolve na marcação se a aplicação remota PEDIU (CSI ?2004h) —
+	// ver o patch de ModeBracketPaste em third_party/vt10x/PATCH.md. Sem
+	// isto, um programa que não pediu (e não entende) recebe os bytes de
+	// abertura/fechamento como se tivessem sido digitados de verdade.
+	t.term.Lock()
+	bracketed := t.term.Mode()&vt10x.ModeBracketPaste != 0
+	t.term.Unlock()
+	if !bracketed {
+		t.enviar([]byte(texto))
+		return
+	}
 	t.enviar([]byte(marcaColadoIni + texto + marcaColadoFim))
 }
 
@@ -613,19 +681,55 @@ func (t *sshTab) celulaEm(p f32.Point) celula {
 	return celula{x: min(max(x, 0), cols-1), y: min(max(y, 0), rows-1)}
 }
 
+// modoMouse lê o modo de mouse atual do vt10x — o que o programa remoto
+// pediu com CSI ?1000h e afins. ModeMouseMask em zero quer dizer "ninguém
+// pediu nada": mouse é só interface local (seleção, roda = scrollback),
+// do jeito que sempre foi.
+func (t *sshTab) modoMouse() vt10x.ModeFlag {
+	t.term.Lock()
+	m := t.term.Mode()
+	t.term.Unlock()
+	return m
+}
+
 // HandlePointer: Ctrl+roda muda o corpo da fonte, 6 a 32, como no VTE do
-// app original. Sem Ctrl a roda rola o histórico. O botão esquerdo
-// seleciona texto, arrastando.
+// app original. Sem Ctrl a roda rola o histórico.
+//
+// Clique/arrasto/roda vão pro REMOTO (htop, less, mc, qualquer coisa que
+// pediu relato de mouse) sempre que o vt10x tiver algum modo de mouse
+// ligado — é o que falta pra rolar a roda dentro do less ou clicar um
+// processo no htop fazer alguma coisa, igual um terminal de verdade.
+// Shift força o comportamento LOCAL de propósito (seleção de texto, roda
+// = scrollback) mesmo com o modo ligado — a mesma válvula de escape que
+// xterm/gnome-terminal têm, pra sempre dar pra copiar um pedaço da tela
+// mesmo dentro de um TUI que capturou o mouse. Ctrl continua reservado
+// pro zoom da fonte, com ou sem modo de mouse.
 func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
+	modo := t.modoMouse()
+	relatar := modo&vt10x.ModeMouseMask != 0 && !t.mods.shift
+
 	switch ev.Kind {
 	case pointer.Press:
+		if ev.Buttons&(pointer.ButtonPrimary|pointer.ButtonSecondary|pointer.ButtonTertiary) == 0 {
+			break
+		}
+		c := t.celulaEm(ev.Position)
+		if relatar {
+			botao, ok := botaoXterm(ev.Buttons)
+			if !ok {
+				return
+			}
+			t.mu.Lock()
+			t.mouseRelatando, t.mouseBotaoRel = true, botao
+			t.mu.Unlock()
+			t.enviar(sequenciaMouse(modo, mousePress, botao, t.mods, c.x, c.y))
+			return
+		}
 		if ev.Buttons&pointer.ButtonPrimary == 0 {
 			break
 		}
 		// Um clique simples LIMPA a seleção: é o que todo terminal faz, e
 		// é a única forma de desmarcar sem precisar de outro atalho.
-		// A célula é calculada ANTES do Lock — celulaEm também tranca.
-		c := t.celulaEm(ev.Position)
 		t.mu.Lock()
 		t.selA, t.selB = c, c
 		t.selAtiva, t.arrastando = false, true
@@ -633,6 +737,14 @@ func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
 		t.invalidar()
 		return
 	case pointer.Drag:
+		t.mu.Lock()
+		relatando, botao := t.mouseRelatando, t.mouseBotaoRel
+		t.mu.Unlock()
+		if relatando {
+			c := t.celulaEm(ev.Position)
+			t.enviar(sequenciaMouse(modo, mouseMotion, botao, t.mods, c.x, c.y))
+			return
+		}
 		t.mu.Lock()
 		arrastando := t.arrastando
 		t.mu.Unlock()
@@ -647,15 +759,34 @@ func (t *sshTab) HandlePointer(ev pointer.Event, _ image.Point) {
 		return
 	case pointer.Release:
 		t.mu.Lock()
-		t.arrastando = false
+		relatando, botao := t.mouseRelatando, t.mouseBotaoRel
+		t.mouseRelatando, t.arrastando = false, false
 		t.mu.Unlock()
+		if relatando {
+			c := t.celulaEm(ev.Position)
+			t.enviar(sequenciaMouse(modo, mouseRelease, botao, t.mods, c.x, c.y))
+			return
+		}
 		t.invalidar()
 		return
 	}
 	if ev.Kind != pointer.Scroll {
 		return
 	}
-	if !(t.mods.ctrl || ctrlPressionado()) {
+	if t.mods.ctrl || ctrlPressionado() {
+		// zoom da fonte, tratado abaixo — reservado independente do modo
+		// de mouse, mesma prioridade que já tinha.
+	} else if relatar {
+		tipo := mouseScrollDown
+		if ev.Scroll.Y < 0 {
+			tipo = mouseScrollUp
+		} else if ev.Scroll.Y == 0 {
+			return
+		}
+		c := t.celulaEm(ev.Position)
+		t.enviar(sequenciaMouse(modo, tipo, 0, t.mods, c.x, c.y))
+		return
+	} else {
 		t.rolarHistorico(ev)
 		return
 	}
@@ -877,8 +1008,11 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 		}
 
 		// A marcação entra DEPOIS dos fundos e ANTES dos glifos: por cima
-		// do texto, mesmo translúcida, ela suja a leitura justamente do
-		// trecho que a pessoa quer conferir antes de copiar.
+		// do texto, ela suja a leitura justamente do trecho que a pessoa
+		// quer conferir antes de copiar. tema.TermSel é sólido de
+		// propósito (ver o comentário no campo, em tema.go) — o mesmo
+		// alfa calculado para o terminal escuro lavava quase invisível
+		// sobre o fundo branco do terminal claro.
 		if temSel && y >= selA.y && y <= selB.y {
 			xi, xf := 0, cols-1
 			if y == selA.y {
@@ -888,9 +1022,7 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 				xf = selB.x
 			}
 			if xi <= xf {
-				marca := tema.Azul
-				marca.A = 90
-				paint.FillShape(gtx.Ops, marca, clip.Rect{
+				paint.FillShape(gtx.Ops, tema.TermSel, clip.Rect{
 					Min: image.Pt(px(xi), y*ch),
 					Max: image.Pt(px(xf+1), (y+1)*ch),
 				}.Op())
@@ -930,27 +1062,23 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 
 	// Cursor só faz sentido no fundo da tela: rolado pro histórico, a
 	// posição dele não corresponde a linha nenhuma das que estão à vista.
-	if rolagem == 0 && t.term.CursorVisible() {
+	//
+	// Barra piscante, não mais o bloco sólido: mais perto do que
+	// alacritty/gnome-terminal mostram. t.cursorAceso() decide o piscar —
+	// sempre visível logo depois de uma tecla digitada (senão o cursor
+	// "sumiria" bem no instante em que a pessoa está olhando pra ele), e
+	// alternando num período fixo quando ocioso.
+	if rolagem == 0 && t.term.CursorVisible() && t.cursorAceso() {
 		c := t.term.Cursor()
 		if c.X < cols && c.Y < rows {
+			larg := max(gtx.Dp(2), 1)
 			r := clip.Rect{
 				Min: image.Pt(px(c.X), c.Y*ch),
-				Max: image.Pt(px(c.X+1), (c.Y+1)*ch),
+				Max: image.Pt(px(c.X)+larg, (c.Y+1)*ch),
 			}
-			cur := tema.Azul
-			cur.A = 150
-			paint.FillShape(gtx.Ops, cur, r.Op())
+			paint.FillShape(gtx.Ops, tema.Azul, r.Op())
 		}
 	}
-}
-
-// paleta ANSI padrão (as 16 primeiras), com as claras um pouco puxadas
-// pro tema: são as cores que qualquer prompt colorido usa.
-var paletaANSI = [16]color.NRGBA{
-	hex(0x1b1f24), hex(0xd2414f), hex(0x2fa87c), hex(0xd79a28),
-	hex(0x4c6ef5), hex(0x9a6ee0), hex(0x1ba8a0), hex(0xc6ccd4),
-	hex(0x5c6570), hex(0xe05561), hex(0x38d9a9), hex(0xe0b458),
-	hex(0x748ffc), hex(0xb197fc), hex(0x3bc9db), hex(0xffffff),
 }
 
 func corVT(c vt10x.Color) (color.NRGBA, bool) {
@@ -958,7 +1086,10 @@ func corVT(c vt10x.Color) (color.NRGBA, bool) {
 	case c == vt10x.DefaultFG || c == vt10x.DefaultBG:
 		return color.NRGBA{}, false
 	case c < 16:
-		return paletaANSI[c], true
+		// tema.Ansi, não uma paleta fixa: o terminal claro precisa de
+		// tons recalibrados pro fundo claro (ver o comentário em
+		// temaClaro), não da mesma paleta com o fundo trocado por baixo.
+		return tema.Ansi[c], true
 	case c < 256:
 		return corXterm(int(c)), true
 	}
