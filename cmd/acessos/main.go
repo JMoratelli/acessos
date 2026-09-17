@@ -22,6 +22,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -465,6 +466,66 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 	}
 	tb := &topBar{}
 
+	// ------------------------------------------- caixa de busca global
+	// Segunda janela, pipocada pelo atalho do sistema. Ela não mexe em
+	// nada do app direto: o que escolhe volta pela fila do laço
+	// principal (filajanela.go).
+	var buscaMu sync.Mutex
+	buscaAberta := false
+	abrirBusca := func() {
+		buscaMu.Lock()
+		defer buscaMu.Unlock()
+		if buscaAberta {
+			return // já há uma na tela; apertar de novo não empilha
+		}
+		buscaAberta = true
+		// painel.arq e não uma cópia: o .ini pode ter sido recarregado
+		// desde o start (Ajustes, edição de conexão), e a busca precisa
+		// enxergar o inventário de agora.
+		abrirJanelaBusca(th, painel.arq,
+			func(cx conexoes.Conexao, p conexoes.Protocolo, token string) {
+				naJanelaPrincipal(w, func() {
+					abrirConexao(w, bar, painel.arq, cx, p)
+					// Trazer a janela principal para a frente: no Wayland
+					// isso só é possível com o token que a caixa de busca
+					// pediu enquanto TINHA o foco. Fora do Wayland o
+					// ActionRaise do Gio já resolve sozinho.
+					if token != "" {
+						if err := w.AtivarCom(token); err != nil {
+							fmt.Fprintf(os.Stderr, "busca: %v\n", err)
+						}
+					} else {
+						w.Perform(system.ActionRaise)
+					}
+				})
+			},
+			func() {
+				buscaMu.Lock()
+				buscaAberta = false
+				buscaMu.Unlock()
+			})
+	}
+
+	// O registro do atalho é assíncrono de propósito: na primeira vez o
+	// KDE abre um diálogo e fica esperando a pessoa confirmar, e o app
+	// não pode ficar parado na tela de partida por causa disso.
+	go func() {
+		a, err := registrarAtalhoGlobal("abrir-busca",
+			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
+			func() { abrirBusca() })
+		switch {
+		case err != nil:
+			// Desktop sem o portal, ou diálogo recusado: o app segue sem
+			// atalho. A busca continua existindo dentro da janela.
+			fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
+		case a.Gatilho == "":
+			fmt.Fprintln(os.Stderr, "atalho global registrado SEM TECLA — "+
+				"amarre em Preferências do Sistema → Atalhos → Acessos")
+		default:
+			fmt.Printf("atalho global: %s\n", a.Gatilho)
+		}
+	}()
+
 	activeTab := func() Tab { return bar.active() }
 
 	for {
@@ -495,6 +556,9 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 			janelaMaximizada = e.Config.Mode != app.Windowed
 
 		case app.FrameEvent:
+			// Trabalho vindo de outras janelas (a caixa de busca) roda
+			// AQUI, antes do quadro — ver filajanela.go.
+			drenarFilaJanela()
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
 			atualizarInibicao(activeTab())

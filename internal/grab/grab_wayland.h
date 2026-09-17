@@ -43,6 +43,9 @@ typedef void (*cb_clip_oferta)(int fd_leitura);
  * um degrada sozinho se o compositor nao suportar aquele pedaco).
  *
  * ao_teclar e ao_clip podem ser NULL se so o grab de atalhos interessar. */
+/* Estado atual dos modificadores: 1=Ctrl 2=Shift 4=Alt 8=Super. */
+int grab_modificadores(Grab *g);
+
 Grab *grab_iniciar(void *display, void *surface, cb_tecla ao_teclar,
                     cb_clip_oferta ao_clip);
 

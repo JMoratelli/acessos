@@ -30,10 +30,14 @@ type Tema struct {
 	// CardFraco é o Fraco QUANDO o texto está por cima do preenchimento
 	// translúcido do card (Vidro2/Vidro3), não do fundo da janela — ver
 	// comentário no valor de cada tema.
-	CardFraco                                   color.NRGBA
-	Fundo1, Fundo2, Fundo3                      color.NRGBA
-	Luz1, Luz2                                  color.NRGBA
-	Vidro1, Vidro2, Vidro3                      color.NRGBA
+	CardFraco              color.NRGBA
+	Fundo1, Fundo2, Fundo3 color.NRGBA
+	Luz1, Luz2             color.NRGBA
+	Vidro1, Vidro2, Vidro3 color.NRGBA
+	// BuscaVidro é o fundo da caixa de busca do atalho global, que
+	// flutua sobre o DESKTOP e não sobre o fundo do app — por isso não
+	// reaproveita Vidro*: aqui o que está atrás é imprevisível.
+	BuscaVidro                                  color.NRGBA
 	LuzB                                        color.NRGBA
 	Barra                                       color.NRGBA
 	HeroLuz1, HeroLuz2                          color.NRGBA
@@ -81,6 +85,7 @@ var temaClaro = Tema{
 	Fundo1: hex(0xeef2f9), Fundo2: hex(0xd9e2ee), Fundo3: hex(0x9aabc4),
 	Luz1: rgba(0x4c6ef5, 0.10), Luz2: rgba(0x0ca678, 0.07),
 	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.86), Vidro3: rgba(0xffffff, 1.00),
+	BuscaVidro: rgba(0xf4f7fb, 0.82),
 	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
 	// ver o relato de bordas "dissolvendo" no tema claro.
 	LuzB:     rgba(0x11161a, 0.17),
@@ -153,6 +158,7 @@ var temaEscuro = Tema{
 	// claro que a conta previa, um cinza lavado que atropelava até o
 	// contraste do texto secundário em cima do card.
 	Vidro1: rgba(0xffffff, 0.045), Vidro2: rgba(0xffffff, 0.075), Vidro3: rgba(0xffffff, 0.13),
+	BuscaVidro: rgba(0x171b21, 0.72),
 	// A borda do card em repouso era branco puro translúcido — sobre fundo
 	// quase preto isso lê como BRILHO, não como borda de material. Um
 	// azul-acinzentado neutro em vez de branco resolve isso sem mudar o

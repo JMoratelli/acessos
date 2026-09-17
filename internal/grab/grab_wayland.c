@@ -200,6 +200,29 @@ static void *rep_loop(void *arg) {
     }
 }
 
+/* grab_modificadores: estado AUTORITATIVO dos modificadores, vindo do
+ * evento wl_keyboard.modifiers que o compositor manda (teclado_modifiers,
+ * acima), e nao de contar press/release no app.
+ *
+ * A diferenca importa: quando o compositor captura uma combinacao como
+ * atalho GLOBAL dele, ele consome o evento, e o release dos modificadores
+ * nunca chega aqui. Quem conta press/release fica com o modificador preso
+ * em "apertado" para sempre — e ai o atalho de tecla limpa do app (F12)
+ * nunca mais dispara. */
+int grab_modificadores(Grab *g) {
+    if (!g || !g->xkb_state) return 0;
+    int m = 0;
+    if (xkb_state_mod_name_is_active(g->xkb_state, XKB_MOD_NAME_CTRL,
+                                     XKB_STATE_MODS_EFFECTIVE) > 0) m |= 1;
+    if (xkb_state_mod_name_is_active(g->xkb_state, XKB_MOD_NAME_SHIFT,
+                                     XKB_STATE_MODS_EFFECTIVE) > 0) m |= 2;
+    if (xkb_state_mod_name_is_active(g->xkb_state, XKB_MOD_NAME_ALT,
+                                     XKB_STATE_MODS_EFFECTIVE) > 0) m |= 4;
+    if (xkb_state_mod_name_is_active(g->xkb_state, XKB_MOD_NAME_LOGO,
+                                     XKB_STATE_MODS_EFFECTIVE) > 0) m |= 8;
+    return m;
+}
+
 static void teclado_tecla(void *dados, struct wl_keyboard *kbd,
                           uint32_t serial, uint32_t tempo, uint32_t key,
                           uint32_t estado) {

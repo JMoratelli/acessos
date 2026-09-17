@@ -43,13 +43,24 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// que não depende de Ctrl e não colide com nada
 				// usado dentro de uma sessão remota (tmux, vim,
 				// readline etc. não usam F12), diferente do
-				// antigo Ctrl+B.
+				// antigo Ctrl+B. Mas F12 SOZINHO: ver logo abaixo.
 				const ctrlL, ctrlR = 0xffe3, 0xffe4
 				const f12 = 0xffc9
 				if keysym == ctrlL || keysym == ctrlR {
 					ctrlDown.Store(pressed)
 				}
-				if keysym == f12 && pressed {
+				// F12 LIMPO, e não "qualquer coisa + F12": o atalho
+				// global do sistema é Ctrl+Shift+F12, e sem esta
+				// checagem ele recolhia a lateral em vez de abrir a
+				// busca sempre que a janela do app estava à frente.
+				//
+				// A máscara vem do compositor (grab.Modificadores) e
+				// não de contar press/release aqui: o KWin CONSOME a
+				// combinação que virou atalho global dele, então o
+				// release do Ctrl e do Shift não chega — contando,
+				// eles ficariam presos e o F12 sozinho nunca mais
+				// funcionaria.
+				if keysym == f12 && pressed && currentGrab.Load().Modificadores() == 0 {
 					pendingToggleSidebar.Store(true)
 					w.Invalidate()
 					return

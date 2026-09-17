@@ -82,6 +82,22 @@ func Start(display, surface unsafe.Pointer,
 	return &Handle{g: g}
 }
 
+// Modificadores devolve quais modificadores estão ativos AGORA, como
+// máscara: 1=Ctrl, 2=Shift, 4=Alt, 8=Super.
+//
+// Vem do evento wl_keyboard.modifiers do compositor, e não de contar
+// press/release — é a diferença entre saber e adivinhar. Quando o
+// compositor captura uma combinação como atalho global dele, ele consome
+// o evento e o release dos modificadores nunca chega ao app; quem conta
+// fica com a tecla presa em "apertada" e passa a errar todo teste de
+// tecla limpa a partir dali.
+func (h *Handle) Modificadores() int {
+	if h == nil || h.g == nil {
+		return 0
+	}
+	return int(C.grab_modificadores(h.g))
+}
+
 // Inibir liga ou desliga a captura dos atalhos do compositor (Alt+Tab e
 // afins). Nasce DESLIGADA: só deve ficar ligada enquanto a aba em foco
 // for uma sessão remota — com ela ligada no painel, o usuário perde os

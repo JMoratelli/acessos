@@ -85,7 +85,11 @@ func tratarTecladoFrame(w *app.Window, gtx layout.Context, activeTab func() Tab)
 		if ke.Name == key.NameCtrl {
 			ctrlDown.Store(pressed)
 		}
-		if ke.Name == key.NameF12 && pressed {
+		// F12 LIMPO. No Windows o Modifiers do Gio é confiável (foi o
+		// que o item 1 do BACKLOG apurou), então dá para exigir aqui o
+		// mesmo que o lado Linux exige pelos modificadores crus: sem
+		// isso, o Ctrl+Shift+F12 do atalho global recolheria a lateral.
+		if ke.Name == key.NameF12 && pressed && ke.Modifiers == 0 {
 			pendingToggleSidebar.Store(true)
 			w.Invalidate()
 			continue

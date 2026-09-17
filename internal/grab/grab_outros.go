@@ -22,5 +22,6 @@ func Start(display, surface unsafe.Pointer,
 }
 
 func (h *Handle) Inibir(bool)             {}
+func (h *Handle) Modificadores() int      { return 0 }
 func (h *Handle) SetClipboardText(string) {}
 func (h *Handle) Stop()                   {}
