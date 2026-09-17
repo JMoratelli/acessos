@@ -80,6 +80,20 @@ modules:
       - type: archive
         url: https://github.com/LibVNC/libvncserver/archive/refs/tags/LibVNCServer-0.9.15.tar.gz
         sha256: 62352c7795e231dfce044beb96156065a05a05c974e5de9e023d688d8ff675d7
+      # Correções de segurança do libvncclient que NÃO existem em release
+      # nenhuma: a 0.9.15 é a última (dez/2024) e as falhas são posteriores
+      # a ela, então subir de versão não resolveria — não há para onde subir.
+      # Vêm direto de commits do master do LibVNC, na ordem cronológica em
+      # que foram feitos. O porquê de cada uma está em
+      # patches/libvncserver/PATCH.md; em resumo, as duas de tight.c são de
+      # severidade ALTA e são disparadas pelo servidor, que é o lado que o
+      # nosso cliente não controla.
+      - type: patch
+        path: patches/libvncserver/009008e2.patch
+      - type: patch
+        path: patches/libvncserver/5b270544.patch
+      - type: patch
+        path: patches/libvncserver/540332be.patch
 
   # ---------------------------------------------------------- RDP
   # WITH_X11=OFF: este porte é Wayland (o X11 do Gio é só reserva de
