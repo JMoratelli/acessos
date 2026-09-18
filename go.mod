@@ -10,6 +10,7 @@ require (
 	gio.tools/icons v0.0.0-20240708021058-44790e75e701
 	gioui.org v0.10.2
 	gioui.org/x v0.10.2
+	github.com/godbus/dbus/v5 v5.0.6
 	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/pkg/sftp v1.13.11
 	golang.org/x/crypto v0.57.0
@@ -22,7 +23,6 @@ require (
 	gioui.org/shader v1.0.9 // indirect
 	git.wow.st/gmp/jni v0.0.0-20210610011705-34026c7e22d0 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
-	github.com/godbus/dbus/v5 v5.0.6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/image v0.26.0 // indirect
