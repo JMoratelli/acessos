@@ -4,7 +4,7 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-Atualizado em 2026-09-17.
+Atualizado em 2026-09-18.
 
 ---
 
@@ -158,7 +158,33 @@ Onde mora: `Tema` em [tema.go](cmd/acessos/tema.go) (`temaClaro`/
 ## 3d. Busca por atalho global — o que ficou de fora da 2.4.0
 
 O atalho e a caixa estão funcionando (ver README e o metainfo da 2.4.0).
-Quatro pontas continuam abertas, em ordem de prioridade:
+Cinco pontas continuam abertas, em ordem de prioridade:
+
+- **Perguntar a senha quando ela não está disponível** (pedido em
+  2026-09-17). Hoje a caixa de busca chama `abrirConexao` direto — ver o
+  `abrirJanelaBusca` em [main.go](cmd/acessos/main.go) —, enquanto o
+  Painel roteia por `pedirCredenciaisEfemeras`
+  ([efemera.go](cmd/acessos/efemera.go)) quando o destino não tem
+  credencial guardada. Isso deixa dois caminhos com comportamentos
+  diferentes para a mesma ação, e o VNC é onde dói mais: sem senha a
+  sessão só devolve autenticação recusada, sem dizer o que fazer.
+
+  São dois casos, e vale cobrir os dois:
+
+  1. **Destino avulso** escolhido na última linha da caixa (o que
+     `alvoRascunho` monta). Pelo Painel ele pede credencial; pela busca,
+     não. Mesma caixa de diálogo, mesmo fluxo.
+  2. **Máquina cadastrada com a senha no cofre trancado.** A senha
+     cifrada não abre, e a conexão falha sem explicação. O certo é
+     perguntar — a senha da sessão, ou a mestra para destrancar o cofre.
+
+  Atenção ao ponto que torna isto mais que um `if`: a caixa de busca é
+  uma janela SEPARADA, e quem abre a conexão é o laço principal, pela
+  fila de [filajanela.go](cmd/acessos/filajanela.go). O diálogo de
+  credencial tem que nascer na janela principal, já com ela à frente
+  (o token de ativação do Wayland só vale enquanto a caixa tem foco —
+  ver o `AtivarCom` em main.go), senão o operador digita a senha numa
+  janela que está atrás de tudo, ou pior, não vê que ela foi pedida.
 
 - **Instância única.** Hoje cada instância do app registra o próprio
   atalho no portal, então abrir o Acessos duas vezes faz UM aperto de
