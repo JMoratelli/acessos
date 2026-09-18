@@ -60,11 +60,12 @@ import (
 	"gioui.org/widget/material"
 )
 
-// Quantas linhas a lista mostra de uma vez. Não é rolagem: a busca é
-// para ACHAR, e uma lista que passa de meia dúzia quer dizer que o termo
-// ainda não discrimina o bastante — mais uma letra resolve melhor que
-// mais scroll.
-const buscaMaxLinhas = 6
+// Quantas linhas a lista mostra de uma vez. UMA, de propósito: a busca é
+// para ACHAR, e mais de um resultado quer dizer que o termo ainda não
+// discrimina — mais uma letra resolve melhor que uma lista para escolher
+// com o olho. Também deixa a caixa do tamanho de um campo, que é o que se
+// quer de algo que pipoca por cima do que a pessoa estava fazendo.
+const buscaMaxLinhas = 1
 
 const (
 	buscaLinhaAlt = unit.Dp(38)
@@ -98,6 +99,11 @@ type janelaBusca struct {
 	achados []conexoes.Conexao
 	sel     int
 	termo   string
+	// total é quantas máquinas o termo casou ao todo, antes do corte para
+	// buscaMaxLinhas. Não vira linha — vira um aviso no rodapé, porque
+	// escolher a única linha mostrada sem saber que havia outras cinco é
+	// abrir sessão na máquina errada.
+	total int
 	// rascunho é o destino não cadastrado ("fc52002-lj06", "10.1.1.99"),
 	// oferecido quando a busca não casa com nada. Mesma regra do card do
 	// Painel — ver efemera.go.
@@ -196,19 +202,20 @@ func (j *janelaBusca) buscar() {
 	if termo == j.termo {
 		return
 	}
-	j.termo, j.sel = termo, 0
+	j.termo, j.sel, j.total = termo, 0, 0
 	j.achados, j.temRascunho = nil, false
 	if termo == "" || j.arq == nil {
 		return
 	}
 	todos := filtrar(j.arq.Conexoes, termo)
+	j.total = len(todos)
 	if len(todos) > buscaMaxLinhas {
 		todos = todos[:buscaMaxLinhas]
 	}
 	j.achados = todos
 	// Destino avulso pela MESMA regra do Painel: nome cru só vira destino
 	// quando a busca não achou nada (ver ehDestinoPlausivel).
-	j.rascunho, j.temRascunho = alvoRascunho(j.campo.Text(), len(filtrar(j.arq.Conexoes, termo)) == 0)
+	j.rascunho, j.temRascunho = alvoRascunho(j.campo.Text(), j.total == 0)
 	for len(j.cliques) < len(j.achados)+1 {
 		j.cliques = append(j.cliques, widget.Clickable{})
 		j.cliquesProto = append(j.cliquesProto, make([]widget.Clickable, len(protocolos)))
@@ -249,7 +256,13 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 			return
 		}
 	}
-	if j.aoEscolher == nil || j.escolhendo {
+	if j.escolhendo {
+		// Escolha já a caminho (o token de ativação ainda não voltou).
+		// Ignorar é o certo: fechar aqui derrubava a abertura pendente
+		// junto com a janela.
+		return
+	}
+	if j.aoEscolher == nil {
 		w.Perform(system.ActionClose)
 		return
 	}
@@ -434,7 +447,33 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		j.naJanela(w, func() { w.Option(app.Size(buscaLarg, alt)) })
 	}
 	for i := range j.cliques[:min(len(j.cliques), j.linhas())] {
-		if j.cliques[i].Clicked(gtx) {
+		// O ícone de protocolo fica DENTRO da linha, e no Gio o clique
+		// nele dispara os dois: o botão do ícone e o Clickable da linha
+		// que o contém. Por isso os ícones são lidos PRIMEIRO e o clique
+		// da linha é descartado quando um deles pegou.
+		//
+		// Ler na ordem inversa (linha antes, ícone depois) era o que
+		// quebrava clicar no ícone: a linha escolhia o protocolo
+		// preferido e marcava a escolha como em andamento, e aí a vez do
+		// ícone caía na guarda de "já estou escolhendo" — que fechava a
+		// janela e levava junto a abertura que ainda estava a caminho.
+		// Resultado visível: clicar em QUALQUER ícone fechava a caixa sem
+		// abrir nada.
+		naIcone := false
+		for k, e := range protocolos {
+			for j.cliquesProto[i][k].Clicked(gtx) {
+				naIcone = true
+				j.escolher(i, e.p, w)
+			}
+		}
+		// O clique da linha é drenado mesmo quando o ícone venceu: deixar
+		// evento acumulado no widget faria ele disparar no quadro
+		// seguinte, fora de hora.
+		naLinha := false
+		for j.cliques[i].Clicked(gtx) {
+			naLinha = true
+		}
+		if naLinha && !naIcone {
 			j.escolher(i, "", w)
 		}
 		// Passar o mouse move a seleção: senão o Enter abriria uma linha
@@ -442,13 +481,6 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		// caixa. Mesma regra da lista do Painel.
 		if j.cliques[i].Hovered() {
 			j.sel = i
-		}
-		// os ícones vêm DEPOIS da linha: clicar num deles também conta
-		// como clique na linha, e o protocolo do ícone é que manda.
-		for k, e := range protocolos {
-			if j.cliquesProto[i][k].Clicked(gtx) {
-				j.escolher(i, e.p, w)
-			}
 		}
 	}
 
@@ -486,12 +518,24 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 							// Pelo mesmo motivo sobe de 9sp (tamanho de
 							// metadado) para 11sp.
 							layout.Rigid(rotulo(j.th, fonteMono, spSecundario,
-								"Enter conecta · Esc fecha", tema.Sec)),
+								j.rodape(), tema.Sec)),
 						)
 					})
 			}),
 		)
 	})
+}
+
+// rodapé: a ajuda de teclas e, quando o termo casou com mais de uma
+// máquina, quantas ficaram de fora. Cabe na linha que já existe — não
+// custa altura nenhuma e evita conectar na máquina errada por não saber
+// que havia outras.
+func (j *janelaBusca) rodape() string {
+	base := "Enter conecta · Esc fecha"
+	if sobra := j.total - len(j.achados); sobra > 0 {
+		return fmt.Sprintf("%s · mais %d — refine o termo", base, sobra)
+	}
+	return base
 }
 
 // caixa é o campo em si — mesmo desenho do campo do Painel
