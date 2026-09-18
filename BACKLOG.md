@@ -316,6 +316,63 @@ binário concluiu que o app é Rust com egui/wgpu/winit. Não é — é Go com
 Gio, e no Windows o Gio desenha por Direct3D 11. As recomendações daquele
 relatório apontam para APIs que não existem aqui.
 
+## 7c. Ações de janela e entrega de teclas — RESOLVIDO (2026-09-17)
+
+Dois congelamentos com o mesmo sintoma (interface viva na tela, morta ao
+clique), corrigidos juntos:
+
+- **Windows**, minimizar/maximizar voltando congelado: `w.Perform` era
+  chamado de dentro do layout, com o quadro em voo. Agora as ações são
+  enfileiradas e executadas pelo PRÓPRIO laço, no topo da iteração seguinte
+  (`drenarAcoesJanela`, em [acaojanela.go](cmd/acessos/acaojanela.go)).
+- **Linux**, botões travando com sessão aberta: o callback de tecla escrevia
+  no socket do processo-filho com bloqueio de até 5s, de dentro do dispatch
+  do Wayland — que neste backend é a própria goroutine do laço. A entrega
+  passou para uma goroutine dedicada com fila FIFO estrita
+  ([filateclas_linux.go](cmd/acessos/filateclas_linux.go)).
+
+**Isto veio de um lote externo que precisou ser refeito. Três armadilhas
+ficaram documentadas no código; se alguém receber uma "correção" parecida
+de novo, confira estes pontos ANTES de aplicar:**
+
+1. Despachar ação de janela numa goroutine separada **quebra o Linux**. No
+   Wayland/X11 o `Window.Run` executa `f()` na goroutine de quem chama
+   (`third_party/gio/app/os_wayland.go:1602`), então sair do laço põe
+   `driver.Configure` em paralelo com o desenho. O bug do quadro em voo é
+   só do Windows; a corrida seria nova, e na plataforma principal.
+2. Guardar o "soltou" que não coube numa lista paralela **prende a tecla no
+   remoto**: ele fura a fila e sai na frente do "apertou" correspondente.
+   Coberto por `TestReleaseNaoUltrapassaPress`.
+3. O laço de quadro **é** a goroutine que despacha o Wayland
+   (`app.Window.Event()` → `driver.Event()` → `dispatch`). Texto afirmando
+   o contrário já circulou e levou a conclusões erradas sobre corrida no
+   `cmd/acessos`.
+
+## 7d. Clipboard: o `write()` bloqueante congela a janela
+
+**Diagnosticado em 2026-09-17, sem correção.** Não é corrida — é bloqueio, e
+é anterior a qualquer mudança recente.
+
+Quando outro programa pede o nosso clipboard, o compositor chama
+`fonte_enviar` (`internal/grab/grab_wayland.c`), que escreve o texto num pipe
+com `write()` em laço até terminar. Esse callback roda de dentro do dispatch
+do Wayland, ou seja, **na goroutine do laço de eventos**. Se quem está lendo
+do outro lado for lento (ou parar de ler), o `write()` bloqueia no pipe cheio
+e leva a interface inteira junto: sem clique, sem hover, sem redesenho.
+
+Quanto mais texto, mais fácil de ver — colar um clipboard grande de uma
+sessão RDP num programa lento é o caso plausível.
+
+Instrução básica para quando for corrigir: o `fd` recebido em `fonte_enviar`
+não pode ser escrito ali. O caminho é entregar esse descritor para fora do
+dispatch — uma thread própria (ou uma goroutine, devolvendo o `fd` ao lado Go
+como já é feito na LEITURA, em `goClipOferta`) que escreve e fecha por conta
+própria. O `fd` é do processo e continua válido depois que o callback retorna;
+o texto já é copiado sob `clip_m` antes do write, então a cópia pode viajar
+junto sem nova trava. Cuidado com dois detalhes: garantir o `close(fd)` em
+todo caminho de saída, e não deixar acumular uma thread por pedido se algum
+consumidor nunca ler.
+
 ## 8. Tela cheia
 
 Pedido em 2026-09-16: tela cheia estilo F11 do Chrome / cliente RDP da
