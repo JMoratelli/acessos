@@ -314,9 +314,18 @@ static BOOL hook_pointer_set(rdpContext *context, rdpPointer *ptr) {
     if (getenv("RS_LOG"))
         fprintf(stderr, "[rdp] pointer set: %ux%u hot=(%u,%u) mascara=%p\n",
                 mp->w, mp->h, ptr->xPos, ptr->yPos, (void *)mp->mascara);
-    if (s && s->ao_cursor && mp->mascara)
+    if (!s || !s->ao_cursor) return TRUE;
+    if (mp->mascara) {
         s->ao_cursor(s->pyctx, (int)ptr->xPos, (int)ptr->yPos,
                      (int)mp->w, (int)mp->h, mp->mascara);
+    } else {
+        /* Sem máscara (decodificação falhou, ou ponteiro de tamanho zero)
+         * o lado Go PRECISA saber mesmo assim: ficar calado deixava o
+         * cursor anterior valendo, e era assim que a mão ficava presa na
+         * tela depois de passar por um cursor que não decodificou. Sem
+         * forma = volta pro padrão. */
+        s->ao_cursor(s->pyctx, 0, 0, 0, 0, NULL);
+    }
     return TRUE;
 }
 

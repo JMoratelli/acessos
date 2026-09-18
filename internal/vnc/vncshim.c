@@ -331,8 +331,15 @@ static void hook_cursor(rfbClient *cl, int xhot, int yhot, int w, int h,
     if (getenv("VS_LOG"))
         fprintf(stderr, "[vnc] cursor: %dx%d hot=(%d,%d) rcMask=%p\n",
                 w, h, xhot, yhot, (void *)cl->rcMask);
-    if (s && s->ao_cursor && cl->rcMask)
+    if (!s || !s->ao_cursor) return;
+    if (cl->rcMask && w > 0 && h > 0) {
         s->ao_cursor(s->ctx, xhot, yhot, w, h, cl->rcMask);
+    } else {
+        /* Cursor sem máscara (o servidor escondeu o ponteiro, ou mandou
+         * tamanho zero): avisar assim mesmo. Calar aqui deixava o cursor
+         * anterior valendo para sempre — mesmo defeito do lado RDP. */
+        s->ao_cursor(s->ctx, 0, 0, 0, 0, NULL);
+    }
 }
 
 /* ---- API exposta ao Python ---- */

@@ -52,8 +52,11 @@ func (wk *workerRDP) ligarCallbacks() {
 		wk.bomba.dano.tudo()
 		wk.bomba.sinalizar()
 	}
-	s.OnCursor = func(_, _, w, h int, mask []byte) {
-		_ = wk.c.EnviarCursor(uint32(wk.classCursor.classificar(w, h, mask)))
+	// O ponto quente (xhot/yhot) entra na conta: é o sinal mais forte de
+	// QUE cursor é (quina superior esquerda = seta, meio = redimensionar)
+	// e era descartado aqui. Ver cursorforma.go.
+	s.OnCursor = func(xhot, yhot, w, h int, mask []byte) {
+		_ = wk.c.EnviarCursor(uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask)))
 	}
 	s.OnClipboardText = func(texto string) {
 		_ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto))
