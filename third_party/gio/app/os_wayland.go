@@ -175,6 +175,16 @@ type window struct {
 	lastPos     f32.Point
 	lastTouch   f32.Point
 
+	// arrasto: --- patch acessos (ver third_party/gio/PATCH.md) ---
+	// Arrastar a janela pela titlebar só começa depois de o ponteiro
+	// andar um tanto com o botão apertado. O clique fica ARMADO aqui até
+	// lá; ver gio_onPointerButton e onPointerMotion.
+	arrasto struct {
+		armado bool
+		serial C.uint32_t
+		origem f32.Point
+	}
+
 	cursor struct {
 		theme  *C.struct_wl_cursor_theme
 		cursor *C.struct_wl_cursor
@@ -955,7 +965,16 @@ func gio_onPointerEnter(data unsafe.Pointer, pointer *C.struct_wl_pointer, seria
 	w := callbackLoad(unsafe.Pointer(surf)).(*window)
 	s.pointerFocus = w
 	w.setCursor(pointer, serial)
-	w.lastPos = f32.Point{X: fromFixed(x), Y: fromFixed(y)}
+	// --- patch acessos --- o Gio de origem guardava esta posição SEM a
+	// escala, ao contrário do onPointerMotion logo abaixo. Numa tela com
+	// escala 2 isso deixa lastPos valendo metade do certo até o primeiro
+	// movimento — o que erra o ActionAt do clique (a faixa de título pode
+	// nem ser reconhecida) e erraria a origem do limiar de arrasto de
+	// janela, que é medida a partir daqui.
+	w.lastPos = f32.Point{
+		X: fromFixed(x) * float32(w.scale),
+		Y: fromFixed(y) * float32(w.scale),
+	}
 }
 
 //export gio_onPointerLeave
@@ -964,6 +983,9 @@ func gio_onPointerLeave(data unsafe.Pointer, p *C.struct_wl_pointer, serial C.ui
 	s := callbackLoad(data).(*wlSeat)
 	s.serial = serial
 	s.pointerFocus = nil
+	// --- patch acessos --- o ponteiro saiu da janela (inclusive porque o
+	// compositor pegou o arrasto): não há mais clique armado aqui.
+	w.arrasto.armado = false
 	if w.inCompositor {
 		w.inCompositor = false
 		w.ProcessEvent(pointer.Event{Kind: pointer.Cancel})
@@ -1016,20 +1038,23 @@ func gio_onPointerButton(data unsafe.Pointer, p *C.struct_wl_pointer, serial, t,
 			switch act {
 			case system.ActionMove:
 				// --- patch acessos (ver third_party/gio/PATCH.md) ---
-				// Original: só inicia o move em modo Windowed. Como a
-				// titlebar é nossa (CSD), arrastar uma janela MAXIMIZADA
-				// não fazia nada — em todo software "padrão" isso restaura
-				// pra tamanho de janela e já continua o arrasto. Restaura
-				// primeiro (pedido assíncrono ao compositor) e inicia o
-				// move com o MESMO serial: KWin/Mutter aceitam o move
-				// interativo mesmo com o unmaximize ainda pendente.
-				if w.config.Mode == Maximized {
-					w.unmaximizeForDrag()
-				}
-				if w.config.Mode == Windowed {
-					w.move(serial)
-				}
-				return
+				// Original: pedia o xdg_toplevel_move JÁ NO CLIQUE, e
+				// engolia o evento de press. Duas consequências ruins:
+				// um clique curto sem querer, com o mínimo de tremida na
+				// mão, arrancava a janela do maximizado; e a faixa de
+				// título nunca recebia press nenhum.
+				//
+				// Agora o clique só ARMA o arrasto. Quem o dispara é o
+				// ponteiro andar mais que limiarArrasto a partir daqui
+				// (ver onPointerMotion) — com o MESMO serial deste
+				// clique, que é o que o protocolo exige e o que os
+				// compositores aceitam.
+				w.arrasto.armado = true
+				w.arrasto.serial = serial
+				w.arrasto.origem = w.lastPos
+				// sem return: o press segue para o app como qualquer
+				// outro. Se o arrasto acontecer, o Cancel do
+				// gio_onPointerLeave desfaz o que ele tiver começado.
 			}
 		}
 	}
@@ -1040,6 +1065,9 @@ func gio_onPointerButton(data unsafe.Pointer, p *C.struct_wl_pointer, serial, t,
 		kind = pointer.Release
 		// Move or resize gestures no longer applies.
 		w.inCompositor = false
+		// --- patch acessos --- soltou sem andar o bastante: era clique,
+		// não arrasto.
+		w.arrasto.armado = false
 	case 1:
 		w.pointerBtns |= btn
 		kind = pointer.Press
@@ -1838,11 +1866,39 @@ func (w *window) flushScroll() {
 	})
 }
 
+// limiarArrastoDp: --- patch acessos (ver third_party/gio/PATCH.md) ---
+// Quanto o ponteiro precisa andar, com o botão apertado na faixa de
+// título, para o arrasto de janela começar de verdade. Existe para o
+// clique curto sem querer não arrancar a janela do maximizado.
+//
+// 12dp é bem mais que o limiar de arrasto de conteúdo dos toolkits (GTK
+// usa 8, o Windows usa 4 para seleção): mover a JANELA é uma ação
+// deliberada, e errar nela custa refazer o layout da tela inteira. Quem
+// quiser afrouxar/apertar mexe só aqui.
+const limiarArrastoDp = 12
+
 func (w *window) onPointerMotion(x, y C.wl_fixed_t, t C.uint32_t) {
 	w.flushScroll()
 	w.lastPos = f32.Point{
 		X: fromFixed(x) * float32(w.scale),
 		Y: fromFixed(y) * float32(w.scale),
+	}
+	// --- patch acessos --- clique armado na titlebar: só agora, depois
+	// de andar o bastante, é que isto vira arrasto de janela.
+	if w.arrasto.armado && w.passouLimiarArrasto() {
+		w.arrasto.armado = false
+		// Restaurar primeiro: a titlebar é nossa (CSD) e arrastar uma
+		// janela maximizada, em qualquer desktop, a devolve ao tamanho
+		// de janela e segue o cursor. O move sai com o serial do CLIQUE,
+		// não o de agora — é o evento que abriu o grab implícito, e é o
+		// que KWin/Mutter aceitam, mesmo com o unmaximize ainda pendente.
+		if w.config.Mode == Maximized {
+			w.unmaximizeForDrag()
+		}
+		if w.config.Mode == Windowed {
+			w.move(w.arrasto.serial)
+			return
+		}
 	}
 	w.ProcessEvent(pointer.Event{
 		Kind:      pointer.Move,
@@ -1857,6 +1913,17 @@ func (w *window) onPointerMotion(x, y C.wl_fixed_t, t C.uint32_t) {
 		w.cursor.system = c
 		w.updateCursor()
 	}
+}
+
+// passouLimiarArrasto: --- patch acessos --- distância andada desde o
+// clique armado, em pixels de tela, contra limiarArrastoDp convertido
+// pela escala corrente da janela.
+func (w *window) passouLimiarArrasto() bool {
+	_, cfg := w.getConfig()
+	limiar := float32(cfg.Dp(limiarArrastoDp))
+	dx := w.lastPos.X - w.arrasto.origem.X
+	dy := w.lastPos.Y - w.arrasto.origem.Y
+	return dx*dx+dy*dy >= limiar*limiar
 }
 
 // updateCursor updates the system gesture cursor according to the pointer

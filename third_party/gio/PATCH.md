@@ -131,6 +131,26 @@ que o Flatpak já traz — não é preciso instalar `wayland-protocols-devel`
 na máquina). A tag `//go:build` no `.c` é acrescentada à mão depois de
 gerar, seguindo o que os `//go:generate` do próprio Gio fazem.
 
+Um décimo primeiro patch, em `app/os_wayland.go` (`gio_onPointerButton`,
+`gio_onPointerLeave`, `onPointerMotion` e o novo `passouLimiarArrasto`):
+**limiar de arrasto na titlebar**. O quarto patch, acima, pedia o
+`xdg_toplevel_move` JÁ NO CLIQUE — que é o que o Gio de origem também faz.
+Na prática isso deixa a janela sensível demais: um clique curto sem querer
+na faixa de título, com a tremida normal da mão, arrancava a janela do
+maximizado e a soltava no meio da tela. O patch faz o clique apenas ARMAR
+o arrasto; ele só começa quando o ponteiro anda mais que `limiarArrastoDp`
+(12dp) a partir do ponto do clique, com o serial daquele clique — que é o
+evento de grab implícito que o protocolo exige. De quebra, o press deixou
+de ser engolido: a faixa de título passa a receber evento como qualquer
+outra área.
+
+No mesmo décimo primeiro patch, uma linha em `gio_onPointerEnter`: o Gio de
+origem guarda ali a posição do ponteiro SEM multiplicar pela escala da
+janela, ao contrário do `onPointerMotion`. Numa tela com escala 2, a
+posição vale metade do certo até o primeiro movimento — o `ActionAt` do
+clique pode não reconhecer a faixa de título, e a origem do limiar de
+arrasto sairia errada pelo mesmo motivo.
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).
