@@ -151,6 +151,15 @@ posição vale metade do certo até o primeiro movimento — o `ActionAt` do
 clique pode não reconhecer a faixa de título, e a origem do limiar de
 arrasto sairia errada pelo mesmo motivo.
 
+Um décimo segundo patch, em `app/window.go` (novo
+`(*Window).PedirTokenAtivacao`): é a metade SÍNCRONA do `TokenAtivacao` do
+décimo patch. Juntas, as duas metades daquele método têm exigências
+opostas — o pedido precisa sair da goroutine do laço (no Wayland/X11 o
+`Window.Run` executa na goroutine de quem chama, e chamar de fora põe o
+driver em paralelo com o desenho), e a espera não pode ficar nela (a
+resposta chega pelo próprio laço). Quem chama agora pede de dentro do
+laço e espera o canal numa goroutine. Ver `cmd/acessos/buscapop.go`.
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).

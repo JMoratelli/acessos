@@ -22,7 +22,6 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -78,6 +77,8 @@ func main() {
 	filtro := flag.String("filtro", "", "já abre o Painel filtrado por este termo")
 	temaFlag := flag.String("tema", "", "claro|escuro — sobrepõe o [geral] tema do .ini")
 	flag.BoolVar(&reguaLigada, "regua", false, "desenha a régua de alinhamento por cima da interface (Ctrl+G liga/desliga)")
+	servico := flag.Bool("servico", false,
+		"roda sem janela, só segurando o atalho global e a caixa de busca (ver servico_linux.go)")
 	flag.Parse()
 
 	// Sem argumento nenhum o app NÃO pede uso e sai: ele abre no
@@ -92,6 +93,27 @@ func main() {
 	// Vem antes de tudo o que pode falhar e depois do caminho do .ini,
 	// porque é ao lado dele que o arquivo mora.
 	iniciarLog(filepath.Dir(*ini))
+
+	// -servico: este processo não tem janela. Ele segura o atalho global,
+	// atende o socket e pipoca a caixa de busca. Ver servico_linux.go.
+	if *servico {
+		rodarServico(*ini)
+		return
+	}
+
+	// Instância única, e o serviço do atalho de quebra. Antes daqui não
+	// há nada caro montado: se já existe uma janela grande, esta invocação
+	// só entrega o que veio na linha de comando e sai — e não fica uma
+	// segunda janela sobre o mesmo inventário, nem um segundo registro do
+	// mesmo atalho global (que fazia UM aperto de tecla abrir DUAS caixas).
+	cliServico, jaTemApp := ligarNoServico(*ini, specs)
+	if jaTemApp {
+		fmt.Println("já há um Acessos aberto; mandei o pedido para ele")
+		return
+	}
+	if cliServico != nil {
+		defer cliServico.Fechar()
+	}
 
 	filtroInicial = *filtro
 
@@ -334,7 +356,7 @@ func main() {
 	checarAtualizacao(w)
 
 	go func() {
-		if err := runApp(w, th, bar, recarregarIni, painelRef); err != nil {
+		if err := runApp(w, th, bar, recarregarIni, painelRef, cliServico); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		for _, t := range bar.tabs {
@@ -399,7 +421,8 @@ var (
 	pendingLimparFocoGio atomic.Bool
 )
 
-func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), painel *dashTab) error {
+func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
+	painel *dashTab, cli *clienteServico) error {
 	var ops op.Ops
 	explorerAcessos = explorer.NewExplorer(w)
 	sb := newSidebar()
@@ -467,80 +490,59 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 	tb := &topBar{}
 
 	// ------------------------------------------- caixa de busca global
-	// Segunda janela, pipocada pelo atalho do sistema. Ela não mexe em
-	// nada do app direto: o que escolhe volta pela fila do laço
-	// principal (filajanela.go).
-	var buscaMu sync.Mutex
-	buscaAberta := false
-	abrirBusca := func() {
-		buscaMu.Lock()
-		defer buscaMu.Unlock()
-		if buscaAberta {
+	// A caixa é uma SEGUNDA janela. Quem segura o atalho do sistema não é
+	// mais este processo: é o serviço (ver instancia.go e
+	// servico_linux.go). Com o app aberto ele manda o pedido para cá — a
+	// janela que acabou de ser usada é a que o compositor deixa tomar o
+	// foco; com o app fechado ele abre a caixa sozinho.
+	//
+	// Foi assim que duas coisas se resolveram de uma vez: abrir o Acessos
+	// duas vezes deixou de registrar o atalho duas vezes (um aperto, duas
+	// caixas), e o atalho passou a existir sem o app aberto.
+	var buscaAberta atomic.Bool
+	abrirBusca := func(token string) {
+		if !buscaAberta.CompareAndSwap(false, true) {
 			return // já há uma na tela; apertar de novo não empilha
 		}
-		buscaAberta = true
-		// painel.arq e não uma cópia: o .ini pode ter sido recarregado
-		// desde o start (Ajustes, edição de conexão), e a busca precisa
-		// enxergar o inventário de agora. Ler daqui é seguro porque esta
-		// função só roda no laço principal (ver abaixo) — é o mesmo laço
-		// que troca o painel.arq num recarregamento.
-		abrirJanelaBusca(th, painel.arq,
-			func(cx conexoes.Conexao, p conexoes.Protocolo, token string) {
+		// O inventário é RELIDO aqui, e não tirado de painel.arq: esta
+		// função roda na goroutine do socket e painel.arq é do laço
+		// principal. Reler um .ini é barato, e de quebra a máquina
+		// cadastrada depois de o app abrir já aparece na busca.
+		arq, err := conexoes.Carregar(caminhoINI)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "busca: %v\n", err)
+			buscaAberta.Store(false)
+			return
+		}
+		abrirJanelaBusca(th, arq, token,
+			func(cx conexoes.Conexao, p conexoes.Protocolo, avulso bool, tk string) {
 				naJanelaPrincipal(w, func() {
-					abrirConexao(w, bar, painel.arq, cx, p)
-					// Trazer a janela principal para a frente: no Wayland
-					// isso só é possível com o token que a caixa de busca
-					// pediu enquanto TINHA o foco. Fora do Wayland o
-					// ActionRaise do Gio já resolve sozinho.
-					//
-					// ATENÇÃO: as duas saem por foraDoQuadro. Este bloco roda
-					// dentro do drenarFilaJanela(), que é chamado NO COMEÇO do
-					// FrameEvent — ou seja, com um quadro em voo. AtivarCom e
-					// Perform passam por Window.Run, que é síncrono, e no
-					// Windows o ActionRaise chama ShowWindow/SetForegroundWindow
-					// reentrantemente. Mesmo congelamento do botão de
-					// minimizar; ver acaojanela.go.
-					if token != "" {
-						foraDoQuadro(func() {
-							if err := w.AtivarCom(token); err != nil {
-								fmt.Fprintf(os.Stderr, "busca: %v\n", err)
-							}
-						})
-					} else {
-						foraDoQuadro(func() { w.Perform(system.ActionRaise) })
-					}
+					abrirEscolhaDaBusca(w, bar, painel, cx, p, avulso, tk)
 				})
 			},
-			func() {
-				buscaMu.Lock()
-				buscaAberta = false
-				buscaMu.Unlock()
-			})
+			func() { buscaAberta.Store(false) })
 	}
 
-	// O registro do atalho é assíncrono de propósito: na primeira vez o
-	// KDE abre um diálogo e fica esperando a pessoa confirmar, e o app
-	// não pode ficar parado na tela de partida por causa disso.
-	go func() {
-		a, err := registrarAtalhoGlobal("abrir-busca",
-			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
-			// O acionamento chega numa goroutine do D-Bus, e abrir a
-			// caixa lê painel.arq — que o laço principal troca quando o
-			// .ini é recarregado. Passar pela fila tira as duas pontas
-			// da mesma variável de goroutines diferentes.
-			func() { naJanelaPrincipal(w, abrirBusca) })
-		switch {
-		case err != nil:
-			// Desktop sem o portal, ou diálogo recusado: o app segue sem
-			// atalho. A busca continua existindo dentro da janela.
-			fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
-		case a.Gatilho == "":
-			fmt.Fprintln(os.Stderr, "atalho global registrado SEM TECLA — "+
-				"amarre em Preferências do Sistema → Atalhos → Acessos")
-		default:
-			fmt.Printf("atalho global: %s\n", a.Gatilho)
-		}
-	}()
+	if cli != nil {
+		go func() {
+			for m := range cli.Msgs {
+				switch m.Tipo {
+				case msgBusca:
+					// Direto, sem passar pela fila do laço principal: a
+					// caixa tem janela e goroutine próprias. Depender de um
+					// quadro da janela grande era parte do "às vezes abre,
+					// às vezes não" — com a janela minimizada o pedido
+					// ficava na fila sem ninguém para drená-la.
+					abrirBusca(m.Token)
+				case msgAbrir:
+					pedido := m
+					naJanelaPrincipal(w, func() {
+						aplicarPedidoDeAbrir(w, bar, painel, pedido)
+					})
+				}
+			}
+		}()
+	}
 
 	activeTab := func() Tab { return bar.active() }
 

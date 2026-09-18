@@ -17,9 +17,13 @@ package main
 //     vazio, que o app usa para avisar em vez de parecer quebrado;
 //   - a identidade vem do app id, então isso só funciona direito no
 //     Flatpak. Binário solto herda a identidade de quem o lançou;
-//   - o Activated NÃO traz activation_token no KDE. Não faz falta: o
-//     KWin dá foco à janela nova por conta própria (medido em
-//     cmd/janelatest).
+//   - o Activated NÃO trazia activation_token no KDE quando isto foi
+//     medido. Ele passou a ser LIDO assim mesmo (é opcional no protocolo
+//     e outros desktops mandam): quem abre a caixa de busca agora é o
+//     serviço, um processo de segundo plano, e é exatamente aí que a
+//     prevenção de roubo de foco do compositor morde. Com token, a janela
+//     nasce à frente; sem ele, seguimos dependendo de o compositor dar o
+//     foco sozinho, como antes.
 
 import (
 	"fmt"
@@ -42,12 +46,17 @@ const (
 // Sistema (e aí o ShortcutsChanged atualiza o Gatilho abaixo).
 type AtalhoGlobal struct {
 	Gatilho string // o que o SISTEMA amarrou; vazio = sem tecla
+
+	// Caiu fecha quando a sessão do portal acaba (portal reiniciado,
+	// sessão encerrada pelo desktop). Sem isto o atalho morria calado e
+	// só voltava reiniciando o app: quem escuta registra de novo.
+	Caiu chan struct{}
 }
 
 // registrarAtalhoGlobal pede o atalho e começa a escutar. Devolve erro
 // quando o desktop não tem o portal — e aí o app segue sem atalho, que é
 // degradação aceitável: a busca continua existindo dentro da janela.
-func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlobal, error) {
+func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string)) (*AtalhoGlobal, error) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		return nil, fmt.Errorf("barramento de sessão: %w", err)
@@ -59,6 +68,14 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlo
 		return nil, err
 	}
 	if err := conn.AddMatchSignal(dbus.WithMatchInterface(portalAtalhos)); err != nil {
+		return nil, err
+	}
+	// A sessão do portal avisa a própria morte por este sinal. É o que
+	// permite registrar de novo em vez de ficar com um atalho fantasma.
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchInterface("org.freedesktop.portal.Session"),
+		dbus.WithMatchMember("Closed"),
+	); err != nil {
 		return nil, err
 	}
 	sinais := make(chan *dbus.Signal, 32)
@@ -107,16 +124,17 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlo
 		return nil, err
 	}
 
-	a := &AtalhoGlobal{}
+	a := &AtalhoGlobal{Caiu: make(chan struct{})}
 	a.Gatilho = gatilhoAmarrado(res, id)
 
 	go func() {
+		defer close(a.Caiu)
 		for s := range sinais {
 			switch s.Name {
 			case portalAtalhos + ".Activated":
 				if len(s.Body) > 1 {
 					if quem, _ := s.Body[1].(string); quem == id && ao != nil {
-						ao()
+						ao(tokenDeAtivacao(s.Body))
 					}
 				}
 			case portalAtalhos + ".ShortcutsChanged":
@@ -124,10 +142,29 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlo
 				if len(s.Body) > 1 {
 					a.Gatilho = gatilhoDaLista(s.Body[1], id)
 				}
+			case "org.freedesktop.portal.Session.Closed":
+				if string(s.Path) == sessao {
+					return
+				}
 			}
 		}
 	}()
 	return a, nil
+}
+
+// tokenDeAtivacao tira o activation_token das opções do Activated. O
+// campo é OPCIONAL no protocolo: vazio não é erro, é desktop que não
+// manda (ver o cabeçalho deste arquivo).
+func tokenDeAtivacao(corpo []any) string {
+	if len(corpo) < 4 {
+		return ""
+	}
+	opcoes, ok := corpo[3].(map[string]dbus.Variant)
+	if !ok {
+		return ""
+	}
+	tk, _ := opcoes["activation_token"].Value().(string)
+	return tk
 }
 
 // gatilhoAmarrado tira do Response a tecla que o sistema amarrou de

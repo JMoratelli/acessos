@@ -3,8 +3,31 @@ package main
 // Janela de busca: a caixinha que o atalho global pipoca por cima de
 // tudo, com um campo só, para abrir uma máquina sem ir até o app.
 //
-// Ela é pipocada pelo atalho global (ver atalhoglobal_linux.go) e some
-// ao escolher uma máquina, ao apertar Esc ou ao perder o foco.
+// Ela é pipocada pelo atalho global (ver atalhoglobal_linux.go e
+// servico_linux.go) e some ao escolher uma máquina, ao apertar Esc ou ao
+// perder o foco.
+//
+// ----------------------------------------------------------------------
+// TRÊS DEFEITOS QUE ESTAVAM AQUI (e por que o desenho é este)
+// ----------------------------------------------------------------------
+//
+//  1. **A janela não crescia.** O tamanho era fixo em buscaAlt e nada
+//     nunca o trocava — a lista de resultados era desenhada abaixo da
+//     borda da janela, ou seja, invisível. Agora cada quadro calcula a
+//     altura que a lista precisa e pede o tamanho novo (fora do quadro,
+//     ver acoes abaixo).
+//  2. **w.Perform de goroutine.** Fechar a janela e pedir o token saíam de
+//     uma goroutine própria. No Wayland/X11 o Window.Run executa f() na
+//     goroutine de quem chama (ver acaojanela.go), então isso mexia no
+//     driver EM PARALELO com o laço que desenhava. Agora a goroutine só
+//     ESPERA o token; tudo o que toca a janela volta pela fila `acoes`,
+//     drenada pelo próprio laço.
+//  3. **Sem foco, sem saída.** A janela fecha ao perder o foco, mas só
+//     depois de tê-lo ganho uma vez. Se o compositor nunca desse o foco
+//     (o serviço é um processo de segundo plano, e é justamente o caso em
+//     que a prevenção de roubo de foco morde), ela ficava boiando sem
+//     receber tecla nenhuma. Agora existe prazo: sem foco em
+//     buscaPrazoFoco, ela se fecha em vez de virar lixo na tela.
 //
 // Duas coisas medidas em janela solta antes de escrever isto aqui, e que
 // explicam o desenho: no Wayland/KWin a janela nasce com o foco do
@@ -21,8 +44,8 @@ package main
 import (
 	"fmt"
 	"os"
-
 	"strings"
+	"time"
 
 	"acessos-go/internal/conexoes"
 
@@ -54,7 +77,15 @@ const (
 	// com o campo, como decidido, e não reserva espaço para uma lista
 	// que talvez não venha.
 	buscaAlt = unit.Dp(104)
+	// Respiro entre o campo e a primeira linha da lista (o mesmo Spacer
+	// que `lista` insere) — entra na conta da altura da janela.
+	buscaRespiroLista = unit.Dp(10)
 )
+
+// buscaPrazoFoco: quanto se espera pelo foco antes de desistir. Medido em
+// janela solta, o KWin dá o foco em ~60ms; três segundos é folga de
+// sobra, e serve só para a caixa não ficar boiando sem receber tecla.
+const buscaPrazoFoco = 3 * time.Second
 
 // janelaBusca é o estado da caixinha. Vive enquanto a janela existir.
 type janelaBusca struct {
@@ -85,10 +116,63 @@ type janelaBusca struct {
 	jaFocou bool
 
 	// aoEscolher recebe o token de ativação junto: é com ele que a
-	// janela principal se traz para a frente (ver AtivarCom).
-	aoEscolher func(cx conexoes.Conexao, p conexoes.Protocolo, token string)
+	// janela principal se traz para a frente (ver AtivarCom). O bool diz
+	// se a linha era o DESTINO AVULSO (digitado, sem cadastro) — quem
+	// abre precisa saber para pedir credencial em vez de procurar uma
+	// máquina que não existe no inventário.
+	aoEscolher func(cx conexoes.Conexao, p conexoes.Protocolo, avulso bool, token string)
+	// tokenAtivacao é o que veio do portal junto com o acionamento do
+	// atalho, quando o desktop manda um. É com ele que esta janela, que
+	// nasce de um processo de segundo plano, consegue o foco.
+	tokenAtivacao string
+	// ativou marca que o token já foi gasto: ele vale uma vez só.
+	ativou bool
 	// escolhendo evita disparar duas vezes enquanto o token não volta.
 	escolhendo bool
+
+	// acoes é o que goroutines (a espera do token) querem que aconteça NA
+	// JANELA. Drenada no topo do laço, fora de qualquer quadro — mesma
+	// regra e mesmo motivo de acaojanela.go.
+	acoes chan func()
+	// alturaAtual é a última altura pedida ao sistema, em Dp. Guardada
+	// para não repetir o pedido a cada quadro.
+	alturaAtual unit.Dp
+}
+
+// naJanela agenda f para rodar no laço DESTA janela e acorda o laço. Não
+// bloqueia: fila cheia significa janela que não fecha quadro, e nesse
+// estado pendurar quem pede não ajudaria ninguém.
+func (j *janelaBusca) naJanela(w *app.Window, f func()) {
+	select {
+	case j.acoes <- f:
+		w.Invalidate()
+	default:
+	}
+}
+
+func (j *janelaBusca) drenar() {
+	for {
+		select {
+		case f := <-j.acoes:
+			f()
+		default:
+			return
+		}
+	}
+}
+
+// alturaDesejada é o tamanho que a janela precisa ter para caber o que
+// está desenhado agora. Sem isto a lista era desenhada abaixo da borda da
+// janela — ou seja, não aparecia.
+func (j *janelaBusca) alturaDesejada() unit.Dp {
+	n := j.linhas()
+	if n == 0 {
+		return buscaAlt
+	}
+	if n > buscaMaxLinhas+1 {
+		n = buscaMaxLinhas + 1 // +1: a linha do destino avulso
+	}
+	return buscaAlt + buscaRespiroLista + unit.Dp(n)*buscaLinhaAlt
 }
 
 // protocoloPreferido é o que o Enter abre quando o host tem mais de um.
@@ -158,6 +242,7 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 	if !ok {
 		return
 	}
+	avulso := j.temRascunho && i == len(j.achados)
 	if p == "" {
 		p, ok = protocoloPreferido(cx)
 		if !ok {
@@ -170,32 +255,55 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 	}
 	j.escolhendo = true
 
-	// Em goroutine, e não aqui: TokenAtivacao conversa com o compositor
-	// e espera a resposta, que chega pelo laço de eventos DESTA janela.
-	// Chamada de dentro do quadro, ela esperaria por uma mensagem que só
-	// seria processada depois de ela retornar — trava clássica.
+	// Três exigências que não cabem no mesmo lugar, e é por isso que este
+	// trecho tem esta forma:
 	//
-	// O token também tem que ser pedido ANTES de fechar: quem autoriza a
-	// troca de foco é a janela focada, e depois do close não há mais
-	// janela nem foco.
-	go func() {
-		token, err := w.TokenAtivacao()
+	//  1. o token tem de ser pedido ANTES de fechar — quem autoriza a
+	//     troca de foco é a janela que TEM o foco;
+	//  2. o PEDIDO não pode sair de dentro do quadro nem de uma goroutine
+	//     qualquer: ele passa pelo Window.Run, que no Windows espera o
+	//     laço (de dentro do quadro, isso trava) e no Wayland/X11 executa
+	//     na goroutine de quem chama (de fora, isso corre com o desenho).
+	//     O lugar certo é a fila, drenada no topo do laço;
+	//  3. a ESPERA não pode ficar no laço, porque a resposta do
+	//     compositor chega justamente por ele. Essa vai para a goroutine.
+	j.naJanela(w, func() {
+		ch, err := w.PedirTokenAtivacao()
 		if err != nil {
 			// Sem token a aba abre do mesmo jeito; o que se perde é a
 			// janela principal vir para a frente. Degradar assim é bem
 			// melhor que não abrir.
 			fmt.Fprintf(os.Stderr, "busca: sem token de ativação (%v)\n", err)
+			j.aoEscolher(cx, p, avulso, "")
+			w.Perform(system.ActionClose)
+			return
 		}
-		j.aoEscolher(cx, p, token)
-		w.Perform(system.ActionClose)
-	}()
+		go func() {
+			var token string
+			select {
+			case token = <-ch:
+			case <-time.After(2 * time.Second):
+				fmt.Fprintln(os.Stderr, "busca: o compositor não devolveu o token de ativação")
+			}
+			j.naJanela(w, func() {
+				j.aoEscolher(cx, p, avulso, token)
+				w.Perform(system.ActionClose)
+			})
+		}()
+	})
 }
 
 // abrirJanelaBusca cria a janela e roda o laço dela numa goroutine
-// própria. Devolve na hora — o app continua o que estava fazendo.
-func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo,
-	aoEscolher func(conexoes.Conexao, conexoes.Protocolo, string), aoFechar func()) {
-	j := &janelaBusca{th: th, arq: arq, aoEscolher: aoEscolher}
+// própria. Devolve na hora — quem chama continua o que estava fazendo.
+//
+// tokenAtivacao é o token do portal, quando o desktop manda um junto com o
+// atalho: sem ele, uma janela criada por processo de segundo plano pode
+// nascer sem foco (prevenção de roubo de foco do compositor). Vazio é
+// aceitável — no KDE medido, a janela ganha o foco sozinha.
+func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao string,
+	aoEscolher func(conexoes.Conexao, conexoes.Protocolo, bool, string), aoFechar func()) {
+	j := &janelaBusca{th: th, arq: arq, aoEscolher: aoEscolher, tokenAtivacao: tokenAtivacao,
+		acoes: make(chan func(), 8), alturaAtual: buscaAlt}
 	j.campo.SingleLine = true
 	j.campo.Submit = true
 
@@ -204,6 +312,8 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo,
 		app.Title("Acessos — busca"),
 		app.Decorated(false),
 		app.Size(buscaLarg, buscaAlt),
+		// Mínimo = tamanho fechado, e nada de máximo: é por app.Size que
+		// a janela cresce quando a lista aparece (ver alturaDesejada).
 		app.MinSize(buscaLarg, buscaAlt),
 		// Sem isto o Gio declara a superfície inteira opaca e o
 		// compositor pula a composição: a margem transparente em volta
@@ -211,6 +321,22 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo,
 		// quebrados. Ver o patch em third_party/gio (PATCH.md).
 		app.Translucent(true),
 	)
+
+	// Sem foco em buscaPrazoFoco a janela se fecha sozinha: uma caixa que
+	// não recebe tecla não serve para nada, e deixá-la na tela é pior que
+	// não tê-la aberto — dá a impressão de que o atalho travou o
+	// aplicativo. Acorda o laço para o prazo ser conferido mesmo sem
+	// nenhum evento chegando.
+	go func() {
+		time.Sleep(buscaPrazoFoco)
+		j.naJanela(w, func() {
+			if !j.jaFocou {
+				fmt.Fprintln(os.Stderr,
+					"busca: o compositor não deu foco à caixa; fechando")
+				w.Perform(system.ActionClose)
+			}
+		})
+	}()
 
 	go func() {
 		defer func() {
@@ -220,6 +346,11 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo,
 		}()
 		var ops op.Ops
 		for {
+			// Fora de qualquer quadro: aqui o FrameEvent anterior já
+			// retornou e o próximo ainda não começou. É deste ponto que
+			// saem os w.Option/w.Perform pedidos por goroutines e pelo
+			// próprio quadro (ver acaojanela.go, mesma regra).
+			j.drenar()
 			switch e := w.Event().(type) {
 			case app.DestroyEvent:
 				return
@@ -237,6 +368,18 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo,
 				gtx := app.NewContext(&ops, e)
 				j.quadro(gtx, w)
 				e.Frame(gtx.Ops)
+				// O token de ativação só pode ser gasto com o driver de
+				// pé, e sai pela fila para não ser mais um w.Run de
+				// dentro de um quadro (ver acaojanela.go).
+				if !j.ativou && j.tokenAtivacao != "" {
+					j.ativou = true
+					tk := j.tokenAtivacao
+					j.naJanela(w, func() {
+						if err := w.AtivarCom(tk); err != nil {
+							fmt.Fprintf(os.Stderr, "busca: ativação (%v)\n", err)
+						}
+					})
+				}
 			}
 		}
 	}()
@@ -283,9 +426,22 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		}
 	}
 	j.buscar()
+	// A janela acompanha a lista. O pedido sai pela fila e não daqui: um
+	// w.Option de dentro do quadro é a mesma reentrância documentada em
+	// acaojanela.go.
+	if alt := j.alturaDesejada(); alt != j.alturaAtual {
+		j.alturaAtual = alt
+		j.naJanela(w, func() { w.Option(app.Size(buscaLarg, alt)) })
+	}
 	for i := range j.cliques[:min(len(j.cliques), j.linhas())] {
 		if j.cliques[i].Clicked(gtx) {
 			j.escolher(i, "", w)
+		}
+		// Passar o mouse move a seleção: senão o Enter abriria uma linha
+		// e o clique, outra — duas ideias de "a escolhida" na mesma
+		// caixa. Mesma regra da lista do Painel.
+		if j.cliques[i].Hovered() {
+			j.sel = i
 		}
 		// os ícones vêm DEPOIS da linha: clicar num deles também conta
 		// como clique na linha, e o protocolo do ícone é que manda.

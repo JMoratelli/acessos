@@ -1031,6 +1031,38 @@ func (w *Window) TokenAtivacao() (string, error) {
 	}
 }
 
+// PedirTokenAtivacao é a metade SÍNCRONA de TokenAtivacao: fala com o
+// compositor e devolve o canal por onde o token vai chegar, sem esperar
+// por ele.
+//
+// Existe porque TokenAtivacao junta duas coisas com exigências opostas: o
+// pedido tem de sair da goroutine do laço da janela (no Wayland/X11 o
+// Window.Run executa f() na goroutine de quem chama — chamar de fora põe
+// o driver em paralelo com o desenho), e a espera NÃO pode ficar nela (a
+// resposta chega pelo próprio laço, então esperar ali é esperar por uma
+// mensagem que só é lida depois da espera acabar).
+//
+// Quem chama pede daqui, de dentro do laço, e espera o canal numa
+// goroutine.
+func (w *Window) PedirTokenAtivacao() (chan string, error) {
+	var (
+		ch  chan string
+		err error
+	)
+	w.Run(func() {
+		a, ok := w.driver.(ativador)
+		if !ok {
+			err = errors.New("esta plataforma não passa foco entre janelas")
+			return
+		}
+		ch, err = a.IniciarTokenAtivacao()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ch, nil
+}
+
 // AtivarCom traz ESTA janela para a frente com um token obtido por
 // TokenAtivacao na janela que tinha o foco.
 func (w *Window) AtivarCom(token string) error {

@@ -17,8 +17,11 @@ import "errors"
 
 type AtalhoGlobal struct {
 	Gatilho string
+	// Caiu existe para a mesma espera do lado Linux compilar aqui; nunca
+	// fecha, porque não há sessão de portal para cair.
+	Caiu chan struct{}
 }
 
-func registrarAtalhoGlobal(id, descricao, gatilho string, ao func()) (*AtalhoGlobal, error) {
+func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string)) (*AtalhoGlobal, error) {
 	return nil, errors.New("atalho global ainda não implementado nesta plataforma")
 }

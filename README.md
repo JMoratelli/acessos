@@ -70,8 +70,30 @@ Cada linha traz a mesma fileira de ícones do Painel: clicar no ícone abre
 aquele protocolo, `Enter` abre o preferido, `Esc` fecha. Um destino que não
 está cadastrado aparece como última linha quando a busca não acha nada.
 
+O atalho vale **com o app fechado**: quem o segura é um processo pequeno e
+sem janela (`acessos -servico`), que sobe junto com o app na primeira vez e
+continua vivo depois que a janela fecha. Com o app aberto, o atalho pipoca a
+caixa nele; com o app fechado, a caixa nasce no serviço e a janela grande só
+sobe quando uma máquina for escolhida. Esse mesmo serviço dá **instância
+única**: abrir o Acessos de novo manda o pedido para a janela que já existe
+em vez de abrir uma segunda (e, antes disso, um aperto de tecla chegava a
+abrir duas caixas, uma por instância).
+
+Para o atalho existir logo depois de um login, sem ninguém abrir o app
+antes, o serviço pede ao sistema — uma vez só — permissão para subir
+sozinho (portal `Background`). A resposta fica gravada em `[geral]
+atalho_autostart` no `conexoes.ini` (`1` aceito, `0` recusado); apagar a
+chave faz perguntar de novo.
+
+O serviço é um processo separado e proposital: ele NÃO morre junto com a
+janela. Para derrubá-lo (ao trocar de versão à mão, por exemplo),
+`pkill -f "acessos -servico"`; o socket dele fica em
+`$XDG_RUNTIME_DIR/acessos/servico.sock`. Uma versão nova do app pede a
+vaga sozinha ao subir, então numa atualização normal não é preciso fazer
+nada.
+
 No Linux quem amarra a tecla é o sistema, não o app — é assim que o Wayland
-permite atalho global, pelo portal `GlobalShortcuts`. O app pede
+permite atalho global, pelo portal `GlobalShortcuts`. O serviço pede
 `Ctrl+Shift+F12`, e o KDE confirma **uma vez só** na primeira execução. Se
 esse diálogo for recusado, o atalho fica registrado sem tecla nenhuma e pode
 ser amarrado em Preferências do Sistema → Atalhos → Acessos; o app avisa no
