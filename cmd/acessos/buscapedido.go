@@ -67,6 +67,13 @@ func abrirEscolhaDaBusca(w *app.Window, bar *tabBar, painel *dashTab,
 // caixa de busca, ou as conexões da linha de comando de uma SEGUNDA
 // invocação do app (`acessos -conn ...` com uma janela já aberta).
 func aplicarPedidoDeAbrir(w *app.Window, bar *tabBar, painel *dashTab, m mensagem) {
+	// Só trazer para a frente: é a segunda metade da escolha na caixa de
+	// busca, que chega depois da abertura porque o token de ativação
+	// demora o quanto o compositor quiser (ver buscapop.go).
+	if m.Tipo == msgAtivar {
+		trazerParaFrente(w, m.Token)
+		return
+	}
 	if a := m.Alvo; a != nil {
 		cx := conexoes.Conexao{Nome: a.Nome}
 		if a.Conexao != nil {

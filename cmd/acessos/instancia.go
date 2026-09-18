@@ -52,6 +52,7 @@ const (
 	msgOlaApp  = "ola-app" // o app se apresenta ao serviço
 	msgAbrir   = "abrir"   // abra estas conexões na janela grande
 	msgBusca   = "busca"   // pipoque a caixa de busca (o app tem foco, o serviço não)
+	msgAtivar  = "ativar"  // traga a janela grande para a frente com este token
 	msgPing    = "ping"
 	msgPong    = "pong"
 	msgOK      = "ok"

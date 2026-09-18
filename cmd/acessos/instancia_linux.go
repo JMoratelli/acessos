@@ -178,7 +178,7 @@ func (cli *clienteServico) ler() {
 		if err != nil {
 			return
 		}
-		if m.Tipo != msgAbrir && m.Tipo != msgBusca {
+		if m.Tipo != msgAbrir && m.Tipo != msgBusca && m.Tipo != msgAtivar {
 			continue // mensagem que esta versão não conhece: ignora
 		}
 		select {

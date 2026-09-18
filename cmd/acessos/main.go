@@ -520,6 +520,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 					abrirEscolhaDaBusca(w, bar, painel, cx, p, avulso, tk)
 				})
 			},
+			// A vinda para a frente chega depois, quando (e se) o
+			// compositor devolver o token — a aba já começou a abrir.
+			func(tk string) {
+				naJanelaPrincipal(w, func() { trazerParaFrente(w, tk) })
+			},
 			func() { buscaAberta.Store(false) })
 	}
 
@@ -534,7 +539,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 					// às vezes não" — com a janela minimizada o pedido
 					// ficava na fila sem ninguém para drená-la.
 					abrirBusca(m.Token)
-				case msgAbrir:
+				case msgAbrir, msgAtivar:
 					pedido := m
 					naJanelaPrincipal(w, func() {
 						aplicarPedidoDeAbrir(w, bar, painel, pedido)

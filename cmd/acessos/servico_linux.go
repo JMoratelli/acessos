@@ -41,6 +41,11 @@ type servico struct {
 	// buscaAberta evita empilhar caixas: apertar o atalho de novo com uma
 	// na tela não abre a segunda.
 	buscaAberta bool
+
+	// chegouApp avisa garantirApp na hora em que uma janela grande se
+	// apresenta. Antes ele só perguntava de 100 em 100ms, e essa espera
+	// caía inteira em cima de quem acabou de escolher a máquina.
+	chegouApp chan struct{}
 }
 
 // rodarServico é o modo -servico. Não retorna: ou o socket já tem dono (e
@@ -54,7 +59,7 @@ func rodarServico(caminhoINI string) {
 		fmt.Fprintf(os.Stderr, "serviço: %v\n", err)
 		return
 	}
-	s := &servico{ini: caminhoINI}
+	s := &servico{ini: caminhoINI, chegouApp: make(chan struct{}, 1)}
 
 	// O tema tem de estar pronto ANTES da primeira caixa: ela nasce de um
 	// sinal do D-Bus, e montar tema/fonte ali dentro atrasaria justo o que
@@ -129,6 +134,12 @@ func (s *servico) conversa(c net.Conn) {
 				souOApp = true
 			}
 			s.mu.Unlock()
+			if souOApp {
+				select {
+				case s.chegouApp <- struct{}{}:
+				default:
+				}
+			}
 			if ocupado {
 				if !responder(mensagem{Tipo: msgOcupado}) {
 					return
@@ -138,7 +149,7 @@ func (s *servico) conversa(c net.Conn) {
 			if !responder(mensagem{Tipo: msgOK}) {
 				return
 			}
-		case msgAbrir:
+		case msgAbrir, msgAtivar:
 			// Veio de uma SEGUNDA instância do app: encaminha para a
 			// janela que já existe.
 			if !s.mandarParaApp(m) {
@@ -191,23 +202,38 @@ func (s *servico) garantirApp() bool {
 		return false
 	}
 	go func() { _ = cmd.Wait() }()
+	partiu := time.Now()
 
-	// Espera ele se apresentar. O teto é generoso porque aqui nasce uma
+	// Espera ele se apresentar, acordando no INSTANTE em que isso
+	// acontece (ver chegouApp). O teto é generoso porque aqui nasce uma
 	// janela de verdade — contexto gráfico, fontes, inventário — e falhar
 	// por pressa deixaria a máquina escolhida sem abrir, que é o pior
 	// desfecho possível para quem apertou o atalho.
-	prazo := time.Now().Add(20 * time.Second)
-	for time.Now().Before(prazo) {
-		time.Sleep(100 * time.Millisecond)
+	temApp := func() bool {
 		s.mu.Lock()
-		tem = s.app != nil
-		s.mu.Unlock()
-		if tem {
-			return true
+		defer s.mu.Unlock()
+		return s.app != nil
+	}
+	prazo := time.After(20 * time.Second)
+	for {
+		select {
+		case <-s.chegouApp:
+			if temApp() {
+				fmt.Fprintf(os.Stderr, "serviço: o app subiu em %s\n",
+					time.Since(partiu).Round(time.Millisecond))
+				return true
+			}
+		case <-prazo:
+			// Última conferência antes de desistir: o aviso é um canal de
+			// um lugar só, e uma segunda espera em paralelo poderia ter
+			// consumido o daqui.
+			if temApp() {
+				return true
+			}
+			fmt.Fprintln(os.Stderr, "serviço: o app não se apresentou a tempo")
+			return false
 		}
 	}
-	fmt.Fprintln(os.Stderr, "serviço: o app não se apresentou a tempo")
-	return false
 }
 
 // ---------------------------------------------------------------- atalho
@@ -312,6 +338,13 @@ func (s *servico) abrirBuscaAqui(token string) {
 					fmt.Fprintln(os.Stderr, "busca: não consegui entregar ao app")
 				}
 			}()
+		},
+		// A ativação vai numa mensagem própria, depois da abertura: o
+		// token só serve para trazer a janela grande para a frente, e
+		// segurar a abertura à espera dele era o que fazia o app demorar
+		// a aparecer.
+		func(tk string) {
+			s.mandarParaApp(mensagem{Tipo: msgAtivar, Token: tk})
 		},
 		func() {
 			s.mu.Lock()

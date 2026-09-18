@@ -127,6 +127,10 @@ type janelaBusca struct {
 	// abre precisa saber para pedir credencial em vez de procurar uma
 	// máquina que não existe no inventário.
 	aoEscolher func(cx conexoes.Conexao, p conexoes.Protocolo, avulso bool, token string)
+	// aoAtivar é chamado DEPOIS, e só se o compositor devolver o token:
+	// ele pede que a janela grande venha para a frente. Separado de
+	// aoEscolher de propósito — ver escolher.
+	aoAtivar func(token string)
 	// tokenAtivacao é o que veio do portal junto com o acionamento do
 	// atalho, quando o desktop manda um. É com ele que esta janela, que
 	// nasce de um processo de segundo plano, consegue o foco.
@@ -268,38 +272,60 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 	}
 	j.escolhendo = true
 
-	// Três exigências que não cabem no mesmo lugar, e é por isso que este
-	// trecho tem esta forma:
+	// A ABERTURA SAI PRIMEIRO, o token vem depois. Esta ordem é o que
+	// tira a espera da frente do usuário: antes, a máquina só começava a
+	// abrir depois de o compositor devolver o token de ativação — até 2
+	// segundos parado, com a caixa ainda na tela, e era isso que fazia o
+	// app "demorar a ser chamado". O token serve para UMA coisa só,
+	// trazer a janela grande para a frente, e isso pode acontecer um
+	// instante depois da aba já estar nascendo.
 	//
-	//  1. o token tem de ser pedido ANTES de fechar — quem autoriza a
-	//     troca de foco é a janela que TEM o foco;
-	//  2. o PEDIDO não pode sair de dentro do quadro nem de uma goroutine
+	// O resto da forma deste trecho vem de três exigências que não cabem
+	// no mesmo lugar:
+	//
+	//  1. o token tem de ser PEDIDO antes de fechar, e com a caixa ainda
+	//     em foco — quem autoriza a troca de foco é a janela que o tem;
+	//  2. o pedido não pode sair de dentro do quadro nem de uma goroutine
 	//     qualquer: ele passa pelo Window.Run, que no Windows espera o
 	//     laço (de dentro do quadro, isso trava) e no Wayland/X11 executa
-	//     na goroutine de quem chama (de fora, isso corre com o desenho).
-	//     O lugar certo é a fila, drenada no topo do laço;
+	//     na goroutine de quem chama (de fora, corre com o desenho). O
+	//     lugar certo é a fila, drenada no topo do laço;
 	//  3. a ESPERA não pode ficar no laço, porque a resposta do
 	//     compositor chega justamente por ele. Essa vai para a goroutine.
 	j.naJanela(w, func() {
+		// pedido primeiro (precisa do foco), abertura logo em seguida
 		ch, err := w.PedirTokenAtivacao()
+		j.aoEscolher(cx, p, avulso, "")
 		if err != nil {
 			// Sem token a aba abre do mesmo jeito; o que se perde é a
-			// janela principal vir para a frente. Degradar assim é bem
+			// janela grande vir para a frente. Degradar assim é bem
 			// melhor que não abrir.
 			fmt.Fprintf(os.Stderr, "busca: sem token de ativação (%v)\n", err)
-			j.aoEscolher(cx, p, avulso, "")
 			w.Perform(system.ActionClose)
 			return
 		}
 		go func() {
 			var token string
+			pedido := time.Now()
 			select {
 			case token = <-ch:
 			case <-time.After(2 * time.Second):
 				fmt.Fprintln(os.Stderr, "busca: o compositor não devolveu o token de ativação")
 			}
+			// Só fala quando demora: é a medida que diz se uma queixa de
+			// lentidão é o compositor segurando o token (e aí a aba já
+			// abriu, só a janela é que tarda a vir) ou outra coisa.
+			if d := time.Since(pedido); d > 500*time.Millisecond {
+				fmt.Fprintf(os.Stderr, "busca: o token de ativação levou %s\n", d.Round(time.Millisecond))
+			}
 			j.naJanela(w, func() {
-				j.aoEscolher(cx, p, avulso, token)
+				// Chamado mesmo com token vazio: sem token, quem recebe
+				// cai no ActionRaise, que resolve fora do Wayland. Calar
+				// aqui deixaria a janela grande atrás de tudo em X11 e
+				// Windows por causa de um token que nem existe lá.
+				if j.aoAtivar != nil {
+					j.aoAtivar(token)
+				}
 				w.Perform(system.ActionClose)
 			})
 		}()
@@ -314,9 +340,10 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 // nascer sem foco (prevenção de roubo de foco do compositor). Vazio é
 // aceitável — no KDE medido, a janela ganha o foco sozinha.
 func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao string,
-	aoEscolher func(conexoes.Conexao, conexoes.Protocolo, bool, string), aoFechar func()) {
-	j := &janelaBusca{th: th, arq: arq, aoEscolher: aoEscolher, tokenAtivacao: tokenAtivacao,
-		acoes: make(chan func(), 8), alturaAtual: buscaAlt}
+	aoEscolher func(conexoes.Conexao, conexoes.Protocolo, bool, string),
+	aoAtivar func(string), aoFechar func()) {
+	j := &janelaBusca{th: th, arq: arq, aoEscolher: aoEscolher, aoAtivar: aoAtivar,
+		tokenAtivacao: tokenAtivacao, acoes: make(chan func(), 8), alturaAtual: buscaAlt}
 	j.campo.SingleLine = true
 	j.campo.Submit = true
 

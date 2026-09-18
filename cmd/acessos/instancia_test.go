@@ -75,6 +75,19 @@ func TestUmAppPorVez(t *testing.T) {
 	if m.Tipo != msgAbrir || len(m.Specs) != 1 || m.Specs[0]["host"] != "10.0.0.9" {
 		t.Fatalf("chegou %+v", m)
 	}
+
+	// O "traga-se para a frente" viaja separado da abertura: é o que
+	// tira a espera pelo token de ativação da frente de quem escolheu a
+	// máquina. Ele tem de chegar pelo mesmo caminho.
+	if err := escrever(c2, mensagem{Tipo: msgAtivar, Token: "tk-123"}); err != nil {
+		t.Fatalf("encaminhar ativar: %v", err)
+	}
+	if m, err = lerMensagem(r1); err != nil {
+		t.Fatalf("o primeiro app não recebeu o ativar: %v", err)
+	}
+	if m.Tipo != msgAtivar || m.Token != "tk-123" {
+		t.Fatalf("chegou %+v", m)
+	}
 }
 
 // App fechado libera a vaga: senão o serviço ficaria para sempre achando
