@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.4.1" date="2026-09-17">
+      <description>
+        <p>Corrige a janela voltando congelada depois de minimizar ou maximizar no Windows. A acao da barra de titulo passou a sair fora do desenho do quadro, que e o momento em que ela e segura; antes, restaurar podia deixar a tela parada na ultima imagem, com o botao preso e nada respondendo ao clique.</p>
+        <p>Corrige tecla ficando presa na sessao remota quando a maquina do outro lado engasgava. Com a fila de teclas cheia, o "soltou" podia chegar antes do "apertou" da mesma tecla, e dali em diante o Ctrl ou o Shift continuavam apertados do lado de la ate reconectar. A ordem passa a ser respeitada sempre; sob enxurrada o que se perde e "apertou", nunca "soltou".</p>
+        <p>As teclas digitadas dentro de uma sessao deixam de segurar a interface enquanto a sessao escreve. Era isso que fazia os botoes pararem de responder por alguns segundos, sempre com alguma conexao aberta e nunca sem.</p>
+        <p>Corrige uma queda do programa inteiro ao publicar a area de transferencia, que aparecia ao abrir varias telas de uma vez ou ao recortar dentro de uma sessao RDP.</p>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-09-17">
       <description>
         <p>Atalho global Ctrl+Shift+F12: abre uma caixa de busca pequena por cima do que estiver na tela, sem precisar ir ate a janela do programa. Digita parte do nome da maquina, escolhe, e ela abre numa aba nova — com a janela do Acessos vindo para a frente junto. Maquina que ja esta aberta troca para a aba dela, em vez de abrir uma segunda sessao.</p>
