@@ -64,6 +64,16 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.5.0" date="2026-09-18">
+      <description>
+        <p>O atalho Ctrl+Shift+F12 passa a funcionar com o programa fechado. Quem o segura agora e um processo pequeno, sem janela, que fica de pe depois que a janela do Acessos fecha: a caixa de busca aparece do mesmo jeito, e o programa inteiro so sobe quando uma maquina e escolhida. Depois de um login, ele sobe sozinho — o sistema pergunta uma vez se permite.</p>
+        <p>Abrir o Acessos duas vezes deixa de abrir duas janelas: a segunda vez manda o pedido para a que ja esta aberta e traz ela para a frente. Antes, com duas abertas, um aperto do atalho abria duas caixas de busca ao mesmo tempo.</p>
+        <p>A caixa de busca deixa de esconder os resultados. A janela nao crescia, entao a lista de maquinas era desenhada abaixo da borda e simplesmente nao aparecia. Ela tambem deixa de "as vezes nao abrir": com a janela minimizada o atalho nao fazia nada, e sem receber o foco do sistema a caixa ficava boiando sem aceitar tecla.</p>
+        <p>Escolher uma maquina na busca passa a pedir a senha quando ela nao esta disponivel, igual ao Painel: destino digitado na hora pede a credencial, e maquina com a senha no cofre trancado pede a senha mestra. Antes a conexao apenas falhava com "autenticacao recusada", sem dizer o que fazer.</p>
+        <p>Arrastar a janela pela barra de titulo ficou menos sensivel: agora e preciso arrastar um pouco mais para ela sair do lugar. Um clique rapido sem querer chegava a arrancar a janela do maximizado.</p>
+        <p>O cursor do mouse dentro das sessoes remotas passa a acompanhar o que a maquina do outro lado mostra: seta, mao, texto, ocupado, mover e as setas de redimensionar. Antes ele podia ficar preso na mao ate a sessao cair, e o cursor de ocupado nunca aparecia.</p>
+      </description>
+    </release>
     <release version="2.4.1" date="2026-09-17">
       <description>
         <p>Corrige a janela voltando congelada depois de minimizar ou maximizar no Windows. A acao da barra de titulo passou a sair fora do desenho do quadro, que e o momento em que ela e segura; antes, restaurar podia deixar a tela parada na ultima imagem, com o botao preso e nada respondendo ao clique.</p>
