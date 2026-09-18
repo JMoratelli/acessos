@@ -492,12 +492,22 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 					// isso só é possível com o token que a caixa de busca
 					// pediu enquanto TINHA o foco. Fora do Wayland o
 					// ActionRaise do Gio já resolve sozinho.
+					//
+					// ATENÇÃO: as duas saem por foraDoQuadro. Este bloco roda
+					// dentro do drenarFilaJanela(), que é chamado NO COMEÇO do
+					// FrameEvent — ou seja, com um quadro em voo. AtivarCom e
+					// Perform passam por Window.Run, que é síncrono, e no
+					// Windows o ActionRaise chama ShowWindow/SetForegroundWindow
+					// reentrantemente. Mesmo congelamento do botão de
+					// minimizar; ver acaojanela.go.
 					if token != "" {
-						if err := w.AtivarCom(token); err != nil {
-							fmt.Fprintf(os.Stderr, "busca: %v\n", err)
-						}
+						foraDoQuadro(func() {
+							if err := w.AtivarCom(token); err != nil {
+								fmt.Fprintf(os.Stderr, "busca: %v\n", err)
+							}
+						})
 					} else {
-						w.Perform(system.ActionRaise)
+						foraDoQuadro(func() { w.Perform(system.ActionRaise) })
 					}
 				})
 			},
@@ -535,6 +545,14 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(), p
 	activeTab := func() Tab { return bar.active() }
 
 	for {
+		// Ações de janela (minimizar/maximizar/raise) pedidas durante o
+		// quadro anterior saem AQUI: o FrameEvent que as pediu já retornou
+		// por completo e o w.Event() abaixo ainda não foi chamado, então
+		// não há quadro em voo. Roda na goroutine do laço de propósito —
+		// no Wayland/X11 o Window.Run executa f() na goroutine de quem
+		// chama, e despachar isso de uma goroutine própria criava corrida
+		// com o desenho. Ver acaojanela.go.
+		drenarAcoesJanela()
 		e := w.Event()
 		switch e := e.(type) {
 		case app.DestroyEvent:

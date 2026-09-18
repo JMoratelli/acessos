@@ -80,8 +80,12 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 	for t.fonte.Clicked(gtx) {
 		a.trocarFonte()
 	}
+	// ATENÇÃO: minimizar/maximizar/desmaximizar passam por foraDoQuadro.
+	// w.Perform aqui é chamada de DENTRO do layout, com um quadro em voo —
+	// no Windows isso congela a janela ao restaurar. O porquê inteiro está
+	// em acaojanela.go; não volte a chamar w.Perform direto daqui.
 	for t.minimizar.Clicked(gtx) {
-		w.Perform(system.ActionMinimize)
+		foraDoQuadro(func() { w.Perform(system.ActionMinimize) })
 	}
 	for t.maximizar.Clicked(gtx) {
 		// janelaMaximizada vem do app.ConfigEvent (main.go), não de um
@@ -90,12 +94,15 @@ func (t *topBar) layout(gtx layout.Context, w *app.Window, th *material.Theme, c
 		// bool só nosso ficava dessincronizado — o ícone continuava
 		// mostrando "maximizar" numa janela já maximizada pelo KWin.
 		if janelaMaximizada {
-			w.Perform(system.ActionUnmaximize)
+			foraDoQuadro(func() { w.Perform(system.ActionUnmaximize) })
 		} else {
-			w.Perform(system.ActionMaximize)
+			foraDoQuadro(func() { w.Perform(system.ActionMaximize) })
 		}
 	}
 	for t.fechar.Clicked(gtx) {
+		// Fechar pode ir direto: no Windows ActionClose vira PostMessage,
+		// que é assíncrono e não reentra no windowProc. É a única das
+		// quatro que não precisa de foraDoQuadro.
 		w.Perform(system.ActionClose)
 	}
 

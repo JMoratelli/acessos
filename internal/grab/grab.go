@@ -117,11 +117,29 @@ func (h *Handle) Inibir(ligar bool) {
 // da seleção do wl_data_device). Sem efeito num Handle nil ou sem suporte
 // do compositor a wl_data_device_manager.
 //
-// CHAME SÓ DA THREAD QUE DESPACHA O WAYLAND (no app, o laço de quadro).
-// O wl_data_source criado aqui é destruído e recriado a cada chamada, e as
-// callbacks dele rodam nessa mesma thread: duas goroutines publicando ao
-// mesmo tempo derrubam o processo dentro do cgo. Ver clipboard.go no app,
-// que enfileira a publicação para o quadro seguinte.
+// CHAME DE UMA GOROUTINE SÓ. O wl_data_source é destruído e recriado a cada
+// chamada, e os callbacks dele (fonte_enviar, fonte_cancelada) rodam de
+// dentro do dispatch do Wayland.
+//
+// Neste backend, o dispatch acontece na PRÓPRIA goroutine do laço de
+// eventos: app.Window.Event() cai em driver.Event()
+// (third_party/gio/app/os_wayland.go:1582), que chama dispatch() quando não
+// há evento pendente. Então, para quem publica do laço de quadro, os dois
+// lados são a mesma goroutine e não há corrida nenhuma.
+//
+// JÁ ESTEVE ESCRITO AQUI o contrário — que "o laço de quadro é a goroutine
+// do cliente e quem despacha é uma thread interna do Gio, threads
+// DIFERENTES". É falso, e a conclusão tirada dali (que existia um uso após
+// liberação no cmd/acessos) também era.
+//
+// Quem de fato corre são os binários que publicam FORA do laço:
+// cmd/vncview e cmd/rdpview chamam este método direto de sess.OnCutText, na
+// goroutine da sessão. É por causa deles que o lado C protege `fonte` e
+// `clip_local` com mutex (ver grab_wayland.c) — não remova a trava achando
+// que o app não precisa dela.
+//
+// No cmd/acessos a regra continua sendo: quem publica é o laço, nunca as
+// goroutines das sessões — ver clipboard.go no app.
 func (h *Handle) SetClipboardText(text string) {
 	if h == nil || h.g == nil {
 		return

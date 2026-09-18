@@ -37,6 +37,9 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 	// superfície original, poderia ficar desatualizado — trade-off
 	// aceitável perto de derrubar o processo inteiro.
 	if ev.Valid() && currentGrab.Load() == nil {
+		// Sobe antes do grab: a partir do grab.Start abaixo já podem
+		// chegar teclas, e elas precisam de alguém drenando a fila.
+		iniciarFilaTeclas()
 		gh := grab.Start(ev.Display, ev.Surface,
 			func(keysym, keycodeX11 uint32, pressed bool) {
 				// F12 recolhe a lateral — atalho do PRÓPRIO app,
@@ -112,7 +115,16 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// Limpar o foco a cada tecla tira esse fluxo
 				// paralelo de cima de qualquer widget.
 				pendingLimparFocoGio.Store(true)
-				t.HandleKey(keysym, keycodeX11, pressed)
+				// ATENÇÃO: NÃO chame t.HandleKey direto daqui. Este
+				// callback roda de dentro do dispatch do Wayland, que
+				// neste backend acontece na PRÓPRIA goroutine do laço
+				// de eventos (app.Window.Event() → driver.Event() →
+				// dispatch, em os_wayland.go:1582) — o grab compartilha
+				// a fila default de propósito. HandleKey escreve no
+				// socket do processo-filho com bloqueio de até 5s, ou
+				// seja, daqui ele congela a interface inteira. O porquê
+				// completo está em filateclas_linux.go.
+				enfileirarTecla(t, keysym, keycodeX11, pressed)
 			},
 			func(text string) {
 				// SEMPRE grava, não só na aba ativa: é o que faz colar

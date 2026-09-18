@@ -111,6 +111,30 @@ struct Grab {
     int n_mimes_pendentes;
 
     /* nossa propria oferta (o que OFERECEMOS para o resto do sistema) */
+    /* POR QUE EXISTE clip_m — e de onde vem a corrida DE VERDADE.
+     *
+     * Os callbacks do data source (fonte_enviar, fonte_cancelada) rodam de
+     * dentro do dispatch do Wayland. Neste backend do Gio o dispatch
+     * acontece na propria goroutine do laco de eventos: app.Window.Event()
+     * cai em driver.Event() (third_party/gio/app/os_wayland.go:1582), que
+     * chama dispatch() quando nao ha evento pendente.
+     *
+     * Logo, em cmd/acessos NAO ha corrida: publicarClipboard so enfileira, e
+     * quem chama grab_clip_definir e o laco de quadro (clipboard.go) — a
+     * mesma goroutine que despacha, tudo serializado. Ja existiu aqui um
+     * comentario afirmando que "sao threads DIFERENTES"; era falso.
+     *
+     * A corrida real esta nos OUTROS binarios: cmd/vncview e cmd/rdpview
+     * chamam gh.SetClipboardText() direto de sess.OnCutText, ou seja, da
+     * goroutine da sessao, sem passar por laco nenhum (ver
+     * cmd/vncview/clipboard.go:35). Ali sim um free(clip_local) podia cair
+     * em cima do compositor pedindo o texto: uso apos liberacao, derrubando
+     * o processo dentro do cgo sem rastro em Go. E por causa DELES que a
+     * trava existe — nao apague achando que o app nao precisa.
+     *
+     * REGRA: nao toque em `fonte` nem em `clip_local` sem clip_m. E nao
+     * segure clip_m durante o write() do fonte_enviar — ver la o porque. */
+    pthread_mutex_t clip_m;
     struct wl_data_source *fonte;
     char *clip_local;      /* copia utf-8 do texto atual */
     int clip_local_len;
@@ -367,13 +391,33 @@ static const struct wl_data_device_listener ouvinte_dispositivo = {
 static void fonte_enviar(void *dados, struct wl_data_source *fonte,
                          const char *mime, int fd) {
     Grab *g = (Grab *)dados;
+    (void)fonte;
+
+    /* Copia SOB TRAVA, escreve FORA dela. O write abaixo e num pipe que o
+     * outro lado pode estar lendo devagar — pode bloquear por tempo
+     * indeterminado. Segurar clip_m durante ele penduraria o laco de quadro
+     * na proxima publicacao de clipboard, trocando um bug de corrida por um
+     * de travamento. */
+    char *copia = NULL;
+    int tam = 0;
+    pthread_mutex_lock(&g->clip_m);
     if (g->clip_local && g->clip_local_len > 0) {
+        copia = (char *)malloc((size_t)g->clip_local_len);
+        if (copia) {
+            memcpy(copia, g->clip_local, (size_t)g->clip_local_len);
+            tam = g->clip_local_len;
+        }
+    }
+    pthread_mutex_unlock(&g->clip_m);
+
+    if (copia) {
         ssize_t escrito = 0;
-        while (escrito < g->clip_local_len) {
-            ssize_t n = write(fd, g->clip_local + escrito, g->clip_local_len - escrito);
+        while (escrito < tam) {
+            ssize_t n = write(fd, copia + escrito, (size_t)(tam - escrito));
             if (n <= 0) break;
             escrito += n;
         }
+        free(copia);
     }
     close(fd);
 }
@@ -388,8 +432,23 @@ static void fonte_enviar(void *dados, struct wl_data_source *fonte,
  * cancelar). Dai zerar o campo ANTES de destruir. */
 static void fonte_cancelada(void *dados, struct wl_data_source *fonte) {
     Grab *g = (Grab *)dados;
-    if (g && g->fonte == fonte) g->fonte = NULL;
-    wl_data_source_destroy(fonte);
+    if (!g) { wl_data_source_destroy(fonte); return; }
+
+    /* O destroy fica DENTRO da trava, e SÓ se a fonte ainda for a nossa
+     * atual. Deixar o destroy fora (como ja esteve) reabria o double-free
+     * por outro caminho: esta funcao chega com `fonte` na mao e para na
+     * trava; enquanto isso grab_clip_definir, que ja a segura, destroi
+     * essa mesma fonte e cria outra. Ao passar, a comparacao falha, nao
+     * zeravamos nada — mas destruiamos `fonte` de novo, ja liberada.
+     *
+     * Se g->fonte != fonte, quem trocou ja destruiu: aqui nao ha o que
+     * fazer alem de sair. */
+    pthread_mutex_lock(&g->clip_m);
+    if (g->fonte == fonte) {
+        g->fonte = NULL;
+        wl_data_source_destroy(fonte);
+    }
+    pthread_mutex_unlock(&g->clip_m);
 }
 
 static void fonte_alvo(void *d, struct wl_data_source *f, const char *m) {}
@@ -438,7 +497,12 @@ void grab_parar(Grab *g) {
     }
     if (g->inibidor) zwp_keyboard_shortcuts_inhibitor_v1_destroy(g->inibidor);
     if (g->manager) zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(g->manager);
-    if (g->fonte) wl_data_source_destroy(g->fonte);
+    /* sob a trava, pelo mesmo motivo de fonte_cancelada: a goroutine de uma
+     * sessao pode estar publicando clipboard neste instante (e em
+     * cmd/vncview e cmd/rdpview ela publica direto, sem passar pelo laco). */
+    pthread_mutex_lock(&g->clip_m);
+    if (g->fonte) { wl_data_source_destroy(g->fonte); g->fonte = NULL; }
+    pthread_mutex_unlock(&g->clip_m);
     if (g->data_dev) wl_proxy_destroy((struct wl_proxy *)g->data_dev);
     if (g->data_mgr) wl_proxy_destroy((struct wl_proxy *)g->data_mgr);
     if (g->keyboard) wl_keyboard_release(g->keyboard);
@@ -448,6 +512,7 @@ void grab_parar(Grab *g) {
     xkb_keymap_unref(g->xkb_keymap);
     xkb_context_unref(g->xkb_ctx);
     free(g->clip_local);
+    pthread_mutex_destroy(&g->clip_m);
     free(g);
 }
 
@@ -467,6 +532,11 @@ Grab *grab_iniciar(void *display, void *surface, cb_tecla ao_teclar,
      * (400ms / ~30 por segundo, o padrao usual de xterm/GNOME) — sem isto a
      * primeira tecla segurada antes do evento chegar nao repetiria. */
     pthread_mutex_init(&g->rep.m, NULL);
+    /* clip_m protege fonte/clip_local contra a thread de despacho do Gio —
+     * ver o comentario na struct Grab. Inicializar AQUI, antes de qualquer
+     * registro de listener: a partir do roundtrip abaixo o compositor ja
+     * pode chamar fonte_cancelada. */
+    pthread_mutex_init(&g->clip_m, NULL);
     g->rep.atraso_ms = 400;
     g->rep.intervalo_ms = 33;
     if (pthread_create(&g->rep.thread, NULL, rep_loop, g) == 0) {
@@ -535,6 +605,13 @@ void grab_inibir(Grab *g, int ligar) {
 void grab_clip_definir(Grab *g, const char *utf8, int tam) {
     if (!g || !g->data_mgr || !g->data_dev) return;
 
+    /* Tudo o que mexe em clip_local/fonte fica sob clip_m — ver o comentario
+     * na struct. Nenhuma das chamadas libwayland daqui dispara callback
+     * sincrono (destroy/create/offer/set_selection so ENFILEIRAM requisicao,
+     * e flush nao despacha), entao segurar a trava aqui nao arrisca
+     * reentrar em fonte_enviar e travar contra nos mesmos. */
+    pthread_mutex_lock(&g->clip_m);
+
     free(g->clip_local);
     g->clip_local = NULL;
     g->clip_local_len = 0;
@@ -547,13 +624,17 @@ void grab_clip_definir(Grab *g, const char *utf8, int tam) {
     }
 
     if (g->fonte) wl_data_source_destroy(g->fonte);
-    g->fonte = NULL;
     g->fonte = wl_data_device_manager_create_data_source(g->data_mgr);
-    if (!g->fonte) return;
+    if (!g->fonte) {
+        pthread_mutex_unlock(&g->clip_m);
+        return;
+    }
     wl_data_source_add_listener(g->fonte, &ouvinte_fonte, g);
     for (size_t i = 0; i < N_MIME_ESCRITA; i++)
         wl_data_source_offer(g->fonte, MIME_ESCRITA[i]);
 
     wl_data_device_set_selection(g->data_dev, g->fonte, g->ultimo_serial);
     wl_display_flush(g->display);
+
+    pthread_mutex_unlock(&g->clip_m);
 }
