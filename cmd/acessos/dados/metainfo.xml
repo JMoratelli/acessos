@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.5.1" date="2026-09-18">
+      <description>
+        <p>Corrige o clique nos icones de protocolo da caixa de busca: em qualquer um dos quatro, a caixa fechava sem abrir sessao nenhuma. Agora o icone abre o protocolo dele, e Enter continua abrindo o preferido.</p>
+        <p>A caixa passa a mostrar um resultado so. Quando o que foi digitado casa com mais maquinas, o rodape diz quantas ficaram de fora, para ninguem conectar na maquina errada sem saber que havia outras.</p>
+      </description>
+    </release>
     <release version="2.5.0" date="2026-09-18">
       <description>
         <p>O atalho Ctrl+Shift+F12 passa a funcionar com o programa fechado. Quem o segura agora e um processo pequeno, sem janela, que fica de pe depois que a janela do Acessos fecha: a caixa de busca aparece do mesmo jeito, e o programa inteiro so sobe quando uma maquina e escolhida. Depois de um login, ele sobe sozinho — o sistema pergunta uma vez se permite.</p>
