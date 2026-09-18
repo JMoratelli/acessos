@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.5.2" date="2026-09-18">
+      <description>
+        <p>A maquina escolhida na caixa de busca passa a abrir na hora. Antes a abertura so comecava depois de o sistema devolver a autorizacao para trazer a janela do Acessos para a frente — o que podia levar ate dois segundos com a caixa parada na tela. Agora a sessao comeca primeiro e a janela vem em seguida.</p>
+        <p>Com o Acessos fechado, o atalho tambem ficou mais rapido: a caixa deixa de esperar em intervalos fixos e atende no instante em que o programa termina de subir.</p>
+      </description>
+    </release>
     <release version="2.5.1" date="2026-09-18">
       <description>
         <p>Corrige o clique nos icones de protocolo da caixa de busca: em qualquer um dos quatro, a caixa fechava sem abrir sessao nenhuma. Agora o icone abre o protocolo dele, e Enter continua abrindo o preferido.</p>
