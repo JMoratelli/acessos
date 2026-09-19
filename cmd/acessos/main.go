@@ -594,6 +594,16 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 	activeTab := func() Tab { return bar.active() }
 
 	for {
+		// Trabalho vindo de outras janelas (a caixa de busca) e do socket
+		// (segunda invocação do app) roda AQUI, e não mais no começo do
+		// quadro: JANELA MINIMIZADA NÃO TEM QUADRO — nem no Windows nem
+		// no Wayland —, e ali a fila ficava parada. O efeito era escolher
+		// uma máquina no atalho global com o app minimizado e não
+		// acontecer nada: a caixa fechava, a aba não nascia e a janela
+		// não voltava. O w.Invalidate() de naJanelaPrincipal acorda o
+		// laço de qualquer jeito (o Gio entrega um wakeup mesmo sem
+		// quadro), e é este ponto que o recebe. Ver filajanela.go.
+		drenarFilaJanela()
 		// Ações de janela (minimizar/maximizar/raise) pedidas durante o
 		// quadro anterior saem AQUI: o FrameEvent que as pediu já retornou
 		// por completo e o w.Event() abaixo ainda não foi chamado, então
@@ -601,6 +611,10 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 		// no Wayland/X11 o Window.Run executa f() na goroutine de quem
 		// chama, e despachar isso de uma goroutine própria criava corrida
 		// com o desenho. Ver acaojanela.go.
+		//
+		// Vem DEPOIS da fila acima de propósito: o que ela enfileira (o
+		// trazerParaFrente da escolha) sai na mesma volta, e não na
+		// seguinte.
 		drenarAcoesJanela()
 		e := w.Event()
 		switch e := e.(type) {
@@ -629,9 +643,6 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			janelaMaximizada = e.Config.Mode != app.Windowed
 
 		case app.FrameEvent:
-			// Trabalho vindo de outras janelas (a caixa de busca) roda
-			// AQUI, antes do quadro — ver filajanela.go.
-			drenarFilaJanela()
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
 			atualizarInibicao(activeTab())
