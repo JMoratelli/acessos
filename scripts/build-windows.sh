@@ -53,10 +53,18 @@ ICO=$SAIDA/acessos.ico
 if [ ! -f "$ICO" ] || [ icones/acessos.svg -nt "$ICO" ]; then
     echo ">> gerando o ícone"
     tmp=$(mktemp -d)
+    # A ORDEM das imagens dentro do .ico importa: o Windows trata a
+    # PRIMEIRA entrada como padrão em vários lugares (Explorer, Alt+Tab,
+    # instalador), e a convenção é ascendente. A lista é montada à mão de
+    # propósito — deixar o shell expandir "$tmp"/*.png ordenava por NOME,
+    # e o .ico saía 128, 16, 24, 256, 32, 48, 64: o de 128 no papel de
+    # padrão, com o Explorer escolhendo o tamanho errado conforme o caso.
+    pngs=()
     for lado in 16 24 32 48 64 128 256; do
-        rsvg-convert -w $lado -h $lado icones/acessos.svg -o "$tmp/$lado.png"
+        rsvg-convert -w "$lado" -h "$lado" icones/acessos.svg -o "$tmp/$lado.png"
+        pngs+=("$tmp/$lado.png")
     done
-    magick "$tmp"/*.png "$ICO"
+    magick "${pngs[@]}" "$ICO"
     rm -rf "$tmp"
 fi
 
