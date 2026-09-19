@@ -64,6 +64,15 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.6.0" date="2026-09-19">
+      <description>
+        <p>Conectar agora mostra um cartão com os passos da conexao, nas quatro abas — SSH, RDP, VNC e SFTP. Se a rede demorar demais ou uma tentativa falhar, aparece um botao para conectar de novo na hora, em vez de depender de achar o Reconectar escondido na barra de sessao.</p>
+        <p>O atalho global Ctrl+Shift+F12 passa a existir tambem no Windows: aperta em qualquer lugar do sistema e abre a busca de maquinas, do mesmo jeito que ja funcionava no Linux.</p>
+        <p>Corrige o fundo do RDP e do VNC aparecendo preto no tema claro antes da tela remota chegar — preto agora so aparece com uma tela remota de verdade; sem ela, o fundo acompanha o tema escolhido.</p>
+        <p>Execucao em massa: um PDV Windows que cai no meio de um comando e detectado na hora, em vez de prender o worker ate 30 minutos esperando um timeout.</p>
+        <p>SFTP: corrige a chance rara de o app dizer "transferido" com o arquivo truncado do outro lado, quando o disco ou compartilhamento de destino fica sem espaco bem no ultimo pedaco do arquivo.</p>
+      </description>
+    </release>
     <release version="2.5.2" date="2026-09-18">
       <description>
         <p>A maquina escolhida na caixa de busca passa a abrir na hora. Antes a abertura so comecava depois de o sistema devolver a autorizacao para trazer a janela do Acessos para a frente — o que podia levar ate dois segundos com a caixa parada na tela. Agora a sessao comeca primeiro e a janela vem em seguida.</p>
