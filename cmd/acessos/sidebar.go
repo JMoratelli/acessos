@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"os"
 	"strings"
 
 	"acessos-go/internal/conexoes"
@@ -112,16 +111,7 @@ var lateralInicialOculta bool
 // do clique, e não ao sair: fechar o app pelo botão da janela — ou uma
 // queda — não pode custar a preferência.
 func lembrarLateral(oculta bool) {
-	if caminhoINI == "" {
-		return
-	}
-	v := "1"
-	if oculta {
-		v = "0"
-	}
-	if err := conexoes.SalvarGeral(caminhoINI, map[string]string{"lateral": v}); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
+	lembrarGeral("lateral", simNao(!oculta))
 }
 
 func (s *sidebar) clique(chave string) *widget.Clickable {

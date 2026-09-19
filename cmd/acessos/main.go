@@ -715,24 +715,9 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 						// A+ cicla 0 → 1 → 2 → 0 e grava no .ini na hora:
 						// é preferência de quem usa, não da sessão.
 						trocarFonte: func() {
-							n := proximoNivelFonte()
-							if caminhoINI == "" {
-								return
-							}
-							if err := conexoes.SalvarGeral(caminhoINI,
-								map[string]string{"fonte": strconv.Itoa(n)}); err != nil {
-								fmt.Fprintln(os.Stderr, err)
-							}
+							lembrarGeral("fonte", strconv.Itoa(proximoNivelFonte()))
 						},
-						trocarTema: func() {
-							// tema é um dicionário só: trocar a variável
-							// troca o app inteiro (ver tema.go).
-							if tema.Fundo == temaClaro.Fundo {
-								tema = temaEscuro
-							} else {
-								tema = temaClaro
-							}
-						},
+						trocarTema: alternarTema,
 					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

@@ -602,6 +602,24 @@ func icone(gtx layout.Context, ic *widget.Icon, cor color.NRGBA, tam unit.Dp) la
 	return ic.Layout(gtx, cor)
 }
 
+// alternarTema troca claro <-> escuro. O tema é um dicionário só: trocar
+// a variável troca o app inteiro.
+//
+// A GRAVAÇÃO mora aqui, colada na troca, e não no botão que chama isto:
+// ela já ficou de fora uma vez — o botão trocava o tema, a tela toda
+// mudava, e o app reabria no claro porque ninguém tinha escrito
+// [geral] tema no .ini (relatado no Windows; valia nos dois sistemas).
+// Enquanto as duas linhas forem a mesma função, não dá para esquecer
+// uma. Ver tema_lembrar_test.go.
+func alternarTema() {
+	if tema.Fundo == temaClaro.Fundo {
+		tema = temaEscuro
+	} else {
+		tema = temaClaro
+	}
+	lembrarGeral("tema", nomeDoTema())
+}
+
 // ------------------------------------------------------ régua de alinhamento
 
 // janelaRaio é o arredondamento dos cantos da janela quando ela NÃO está

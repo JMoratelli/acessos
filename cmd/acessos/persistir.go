@@ -31,3 +31,22 @@ func simNao(b bool) string {
 	}
 	return "0"
 }
+
+// lembrarGeral grava uma chave do [geral] — tema, fonte, lateral: as
+// preferências DA PESSOA, não da sessão. Grava NA HORA do clique e não ao
+// sair, pelo mesmo motivo do gravarPreferencia acima: fechar pelo botão
+// da janela (ou uma queda) não pode custar a preferência.
+//
+// Existe para não repetir "confere caminhoINI, chama SalvarGeral, cospe o
+// erro no stderr" em cada botão que lembra alguma coisa — foi assim que o
+// TEMA ficou de fora: o A+ e a lateral gravavam, o tema só trocava a
+// variável em memória e o app reabria sempre no claro (relatado no
+// Windows, mas valia para os dois sistemas).
+func lembrarGeral(chave, valor string) {
+	if caminhoINI == "" {
+		return
+	}
+	if err := conexoes.SalvarGeral(caminhoINI, map[string]string{chave: valor}); err != nil {
+		fmt.Fprintf(os.Stderr, "gravar [geral] %s: %v\n", chave, err)
+	}
+}
