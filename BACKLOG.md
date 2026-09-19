@@ -6,11 +6,9 @@ git e o metainfo contam essa parte).
 
 A numeração tem buracos de propósito: os itens resolvidos foram removidos
 e os que ficaram mantiveram o número, porque é por ele que mensagens de
-commit e conversas antigas se referem a eles. O que sobreviveu de um item
-resolvido (limitação que continua valendo) está no fim do arquivo, não no
-item.
+commit e conversas antigas se referem a eles.
 
-Atualizado em 2026-09-18.
+Atualizado em 2026-09-19.
 
 ---
 
@@ -19,14 +17,15 @@ Atualizado em 2026-09-18.
 O atalho, a caixa e o serviço estão funcionando (ver README). Estas
 pontas continuam abertas:
 
-- **Chave nos Ajustes para desligar o atalho** (padrão ligado), mais o
-  aviso na interface quando o atalho ficou **registrado sem tecla**. Isso
-  não é conforto: o diálogo do KDE aparece uma vez só por aplicativo, e
-  quem o fechar sem querer fica com um atalho morto sem nada na tela
-  explicando por quê. Hoje o app só avisa no terminal, que ninguém lê.
-  A chave `[geral] atalho_autostart` (ver autostart_linux.go) já existe e
-  é editável à mão; falta o mesmo para ligar/desligar o atalho em si, e
-  falta a interface das duas.
+- **Aviso na interface quando o atalho ficou registrado SEM TECLA.** O
+  diálogo do KDE aparece uma vez só por aplicativo, e quem o fechar sem
+  querer fica com um atalho morto sem nada na tela explicando por quê.
+  Hoje o app só avisa no terminal, que ninguém lê — o lugar natural é a
+  mesma linha da caixa nova dos Ajustes (ver abaixo), que já sabe se o
+  atalho está ligado mas não se ele pegou tecla.
+- **Interface para o `[geral] atalho_autostart`** (ver
+  autostart_linux.go): a chave existe e é editável à mão, mas não tem
+  caixa nos Ajustes como a do atalho em si já tem.
 - **Soltar a captura de atalhos durante sessão remota.** Enquanto uma
   tela remota está em foco o app inibe os atalhos do compositor (de
   propósito: `Super` e `Alt+Tab` têm que chegar na máquina remota), e
@@ -48,18 +47,27 @@ rdpshim já imprime tamanho e hotspot de cada uma; falta despejar os bytes)
 e virar caso de teste. Sem isso, os limiares continuam calibrados por
 proporção, não por amostra.
 
-## 4. Ícones no Windows
+## 4. Ícones no Windows — confirmar na máquina
 
-**Relatado no teste da 2.0.4: os ícones saem errados no Windows.** Falta
-detalhar o sintoma (qual ícone, onde) antes de mexer — o que anotar aqui
-é onde procurar:
+**Relatado no teste da 2.0.4: os ícones saem errados no Windows.**
 
-- o ícone do executável e do instalador é um `.ico` multi-resolução
-  gerado por [build-windows.sh](scripts/build-windows.sh) a partir do
-  mesmo `icones/acessos.svg` do Linux, com `rsvg-convert` + `magick`, e
-  embutido como recurso pelo `windres`. Se o problema for este, é
-  provável que seja a conversão (fundo, transparência ou tamanho que o
-  Explorer escolhe);
+Uma causa concreta foi achada e corrigida em 2026-09-19, no
+[build-windows.sh](scripts/build-windows.sh): o `.ico` multi-resolução
+era montado com `magick "$tmp"/*.png`, e o glob ordena por NOME. O
+arquivo saía na ordem **128, 16, 24, 256, 32, 48, 64** — ou seja, com a
+imagem de 128px como PRIMEIRA entrada, que é a que o Windows trata como
+padrão em vários lugares (Explorer, Alt+Tab, instalador). A lista agora é
+montada à mão, em ordem crescente, e o `.ico` foi conferido com
+`magick identify`.
+
+Falta **confirmar na máquina Windows** se era só isso. Se ainda estiver
+errado depois de um instalador novo, o sintoma precisa ser detalhado
+(qual ícone, onde) — e vale lembrar que há duas fontes diferentes:
+
+- o ícone do executável e do instalador é o `.ico` acima, embutido como
+  recurso pelo `windres`. Se o problema persistir aqui, o próximo
+  suspeito é a conversão em si (fundo ou transparência do
+  `rsvg-convert`);
 - os ícones DENTRO da interface (protocolos, barra de topo, cards) são
   vetores do pacote `gio.tools/icons`, desenhados pelo próprio Gio, e não
   dependem de nada do sistema — se estes estiverem errados no Windows e
@@ -78,41 +86,6 @@ O instalador não é assinado, então o SmartScreen avisa em toda máquina
 nova. Para distribuição interna é aceitável (o aviso passa com "Mais
 informações"); para distribuir fora, não. Precisa de um certificado de
 code signing — custo e decisão sua, não técnica.
-
-## 7b. Travamento no Windows ao mover a janela entre monitores
-
-**Relatado e diagnosticado em 2026-09-17, sem correção.** A janela congela
-e para de aceitar cliques ao ser arrastada de um monitor para o outro.
-
-O que já se sabe, de diagnóstico feito na máquina afetada (Windows 10,
-GeForce 210 com driver de 2015, feature level 10_1, dois monitores 1920x1080
-no mesmo DPI):
-
-- o endurecimento do resize do D3D11 (item 8 do
-  [PATCH.md](third_party/gio/PATCH.md)) **já está** na versão testada, a
-  2.3.0. Ele converte ERRO do `ResizeBuffers`/`GetBuffer` em "dispositivo
-  perdido", que o Gio recupera recriando o contexto — mas não cobre
-  chamada que BLOQUEIA dentro do driver, que é o que o sintoma sugere: no
-  Gio, quem desenha é a mesma thread que bombeia as mensagens do Windows;
-- não reproduziu em nenhuma tentativa automatizada **sem sessão remota
-  ativa** (arraste simulado atravessando os monitores, ~50 verificações de
-  responsividade por tentativa, todas respondendo). Reforça que o gatilho
-  depende de quadros chegando de verdade no momento da troca de saída de
-  vídeo, e/ou de monitores com DPI diferentes;
-- o Visualizador de Eventos não tinha nenhum "Hang detected" para o
-  processo.
-
-Próximo passo, quando alguém puder mexer na máquina afetada: uma build com
-marcação de tempo em volta do `Refresh`/`Present` gravando no `log.txt` que
-o app já mantém. Se o log terminar em "entrei" sem o "saí", está provado o
-bloqueio no driver; se parar antes, o assunto é outro. Um dump do processo
-travado (`procdump -ma`) responde o mesmo com mais precisão, com a vantagem
-de que aqui existem os símbolos.
-
-Atenção a uma armadilha: um diagnóstico de caixa-preta feito por strings do
-binário concluiu que o app é Rust com egui/wgpu/winit. Não é — é Go com
-Gio, e no Windows o Gio desenha por Direct3D 11. As recomendações daquele
-relatório apontam para APIs que não existem aqui.
 
 ## 7d. Clipboard: o `write()` bloqueante congela a janela
 
@@ -179,7 +152,7 @@ Por onde entra:
 
 ## 9. Estabilidade RDP/VNC — sobras da auditoria de 2026-09-19
 
-Auditoria pedida depois de queixa de queda/glitch em sessão RDP. Quatro
+Auditoria pedida depois de queixa de queda/glitch em sessão RDP. Cinco
 causas confirmadas já foram corrigidas: ordem invertida de
 captura/consumo de dano deixando remendo permanente na tela (comum a
 RDP e VNC — ver `enviarQuadro()` em
@@ -188,9 +161,24 @@ ao arrastar a borda da janela sem debounce (só RDP — canal Display
 Control não existe no VNC), callbacks da libfreerdp/libvncclient
 (`OnCursor`/`OnClipboardText`/`OnDisplayPronto`) escrevendo direto no
 socket e podendo travar a sessão inteira esperando o mesmo mutex que um
-`EvtQuadro` grande usa, e `rs_processar` (rdpshim.c) engolindo uma falha
+`EvtQuadro` grande usa, `rs_processar` (rdpshim.c) engolindo uma falha
 de `freerdp_check_event_handles` e caindo num laço quente (100% de CPU,
-tela congelada, sem reconectar).
+tela congelada, sem reconectar), e — achado em 2026-09-19, efeito
+colateral da correção anterior — `OnDisplayPronto` competindo por vaga
+com `OnCursor`/`OnClipboardText` na mesma fila de descarte-se-cheia:
+como é um evento ÚNICO por sessão (não "estado atual" como os outros
+dois), perder essa vaga numa rajada de conexão deixava a aba presa na
+resolução padrão do servidor até a janela ser redimensionada na mão.
+Ganhou canal próprio (`workerRDP.dispPronto` em
+[telaworker_rdp.go](cmd/acessos/telaworker_rdp.go)).
+
+De quebra, `rs_processar`/`rs_esperar` agora guardam o motivo específico
+do FreeRDP (`freerdp_get_last_error_string`) antes de marcar a sessão
+como caída, e `Run()` devolve esse motivo em vez do genérico "conexão
+perdida" — foi o que permitiu identificar, no mesmo dia, que uma queda
+recorrente contra um host específico era `ERRINFO_RPC_INITIATED_
+DISCONNECT` (ferramenta administrativa NO SERVIDOR derrubando a sessão
+a cada ~35s) — nada a corrigir aqui, é comportamento do servidor.
 
 O que ficou de fora, por ser mais arriscado de mexer sem um teste ao
 vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
@@ -210,57 +198,3 @@ vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
   ao recortar em Go) — em 4K é ~100MB de churn por quadro, contribuindo
   pro vigia de memória (`internal/telaproc/vigia.go`, teto de 768MiB)
   matar a sessão sob carga, o que aparece como queda "sem motivo".
-
-## Limitações conhecidas, que NÃO estão no plano de corrigir
-
-Ficam registradas para ninguém "descobrir" de novo. Boa parte veio de
-itens que já foram resolvidos e saíram daqui — o que sobrou deles é isto:
-
-- **Terminal SSH**: sem busca no scrollback (o scrollback em si existe,
-  20000 linhas — é busca DENTRO dele que não tem, tipo o Ctrl+Shift+F de
-  um gnome-terminal). O relato de mouse para `htop`/`less`/TUIs existe
-  desde 2026-09-16; o que continua de fora é o modo "qualquer movimento"
-  (1003) sem nenhum botão apertado, que o Gio não entrega nesta pilha (só
-  chega evento de arrasto com botão). A seleção com o mouse é da TELA
-  VISÍVEL: não acompanha o conteúdo se o programa remoto redesenhar por
-  baixo. (Tela alternativa — o modo que `vim`/`less`/`nano` usam — já é
-  tratada pela biblioteca de terminal por baixo.)
-- **DECSCUSR**: a aplicação remota não consegue escolher a forma do
-  cursor do terminal (é assim que o vim vira barra no modo de inserção).
-  O vt10x vendorizado não interpreta esse código; o cursor daqui é sempre
-  barra. Se um dia importar, é mais um patch local no mesmo espírito do
-  scrollback/bracketed-paste.
-- **Teclado não-US**: o layout assumido é US. Símbolos que dependem de
-  outro layout (ABNT2, acentos mortos) e o AltGr não têm tabela em
-  [teclado_outros.go](cmd/acessos/teclado_outros.go). No Windows,
-  Ctrl/Alt/Shift sempre viram a variante ESQUERDA — o `key.Event` do Gio
-  não distingue sem ir atrás do scancode cru.
-- **Atalhos do app com sessão remota fora de foco**: F12, Ctrl+W e Ctrl+G
-  só respondem com uma sessão remota em foco; fora dela o app não disputa
-  o foco de teclado do Gio com o resto da interface (ver o comentário em
-  `tratarTecladoFrame`).
-- **Teto de sessões simultâneas**: `telaproc.MaxSessoes`, hoje 12. RDP e
-  VNC rodam cada um em processo próprio, e o número saiu de medição real
-  do custo de um filho (`TestAoVivoCustoDeUmFilho`, em
-  [processo.go](internal/telaproc/processo.go)) — **não é chute e não deve
-  ser mexido por estimativa**: refaça a medição antes de mudar.
-- **Cursor remoto é aproximação, não cópia.** Nem RDP nem VNC dizem QUE
-  cursor é — mandam um bitmap. O que o app faz é medir a silhueta e o
-  ponto quente e escolher o cursor nomeado mais próximo do Gio (ver
-  [cursorforma.go](cmd/acessos/cursorforma.go), com os casos cobertos em
-  `cursorforma_test.go`). "Não permitido" (anel com risco) cai em
-  ocupado e "ajuda" (seta + ?) cai em seta+ocupado, de propósito: os dois
-  são raros em sessão remota e errar neles custa menos que um falso
-  positivo nos comuns.
-- **Trabalho vindo de outra janela espera um quadro.** O que a caixa de
-  busca escolhe é executado pelo laço da janela principal
-  ([filajanela.go](cmd/acessos/filajanela.go)). Com a janela grande
-  minimizada, o compositor pode segurar os quadros, e a aba só abre
-  quando ela voltar. A caixa em si NÃO depende disso — ela tem janela e
-  laço próprios, e é por isso que o atalho responde de qualquer jeito.
-- **Sem reportar upstream ao FreeRDP** a variante residual do
-  `dvcman_channel_close` (vizinhança da
-  [CVE-2026-56297](https://github.com/FreeRDP/FreeRDP/security/advisories/GHSA-3mv2-5q57-2v8h))
-  que derrubava o processo num disconnect abrupto. Aqui ela deixou de ser
-  fatal — cada sessão RDP roda em processo próprio —, mas segue sendo bug
-  deles.
