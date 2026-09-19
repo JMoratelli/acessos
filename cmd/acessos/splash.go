@@ -30,6 +30,13 @@ import (
 // girando pra sempre sem dar ao operador nenhum jeito de agir.
 type splash struct {
 	w *app.Window
+	// disparo é o mesmo invalidador de invalidar.go: chamar w.Invalidate()
+	// cru direto da goroutine do ticker (ver animar) caía na mesma guarda
+	// mayInvalidate do Gio documentada ali — o pedido podia morrer calado
+	// bem no instante em que outro quadro qualquer estivesse de passagem,
+	// e sem mais nada para gerar quadro (a aba parada, "conectando") o
+	// halo ficava com a primeira aparência e nunca mais se movia.
+	disparo invalidador
 
 	mu        sync.Mutex
 	visivel   bool // false só enquanto a sessão está viva (ver concluir)
@@ -64,7 +71,7 @@ func (s *splash) iniciar(passos []string) {
 	s.erro = ""
 	s.proximaEm = time.Time{}
 	s.mu.Unlock()
-	s.w.Invalidate()
+	s.disparo.disparar(s.w)
 	s.animar()
 }
 
@@ -81,7 +88,7 @@ func (s *splash) avancar(i int) {
 		s.desde = time.Now()
 	}
 	s.mu.Unlock()
-	s.w.Invalidate()
+	s.disparo.disparar(s.w)
 }
 
 // concluir esconde o cartão: a sessão está viva. Barato de chamar de
@@ -96,7 +103,7 @@ func (s *splash) concluir() {
 	s.atual = len(s.passos)
 	s.mu.Unlock()
 	if !jaEscondido {
-		s.w.Invalidate()
+		s.disparo.disparar(s.w)
 	}
 }
 
@@ -116,7 +123,7 @@ func (s *splash) setErro(msg string) {
 	s.visivel = true
 	s.erro = msg
 	s.mu.Unlock()
-	s.w.Invalidate()
+	s.disparo.disparar(s.w)
 	s.animar()
 }
 
@@ -132,7 +139,7 @@ func (s *splash) aguardar(proximaEm time.Time) {
 	s.visivel = true
 	s.proximaEm = proximaEm
 	s.mu.Unlock()
-	s.w.Invalidate()
+	s.disparo.disparar(s.w)
 	s.animar()
 }
 
@@ -159,11 +166,11 @@ func (s *splash) foto() splashFoto {
 }
 
 // animar mantém o quadro vivo enquanto o cartão precisar de algo que só
-// o tempo muda: o "[*]" piscando do passo atual, o botão que aparece
-// depois de travadoApos, e a contagem regressiva de reconexão. Sem isto
-// o cartão parecia parado entre um evento de rede e o próximo, que podem
-// ficar vários segundos em silêncio. No máximo uma goroutine de cada vez
-// (mesma ideia do invalidador em invalidar.go).
+// o tempo muda: o halo pulsando, o botão que aparece depois de
+// travadoApos, e a contagem regressiva de reconexão. Sem isto o cartão
+// ficava parado entre um evento de rede e o próximo, que podem levar
+// vários segundos — na prática, o halo desenhava só a primeira aparência
+// e congelava ali. No máximo uma goroutine de cada vez.
 func (s *splash) animar() {
 	if !s.tickando.CompareAndSwap(false, true) {
 		return
@@ -176,10 +183,17 @@ func (s *splash) animar() {
 			if !s.foto().visivel {
 				return
 			}
-			s.w.Invalidate()
+			s.disparo.disparar(s.w)
 		}
 	}()
 }
+
+// origemAnimacao é o zero da fase de qualquer animação do splash — usar
+// time.Since(origemAnimacao) em vez de time.Now() cru mantém o número
+// pequeno (segundos desde que o app abriu, não desde 1970), sem motivo
+// nenhum pra precisão em nanossegundo de um valor gigante entrar na
+// conta de um seno.
+var origemAnimacao = time.Now()
 
 // travadoApos é quanto tempo um passo fica "em andamento" antes do
 // cartão oferecer o botão de agir — mesmo sem erro nenhum ainda. Rede de
@@ -206,7 +220,7 @@ func desenharSplash(gtx layout.Context, th *material.Theme, s *splash,
 	}
 
 	travado := f.erro != "" || time.Since(f.desde) > travadoApos
-	agora := float64(time.Now().UnixNano()) / float64(time.Second)
+	agora := time.Since(origemAnimacao).Seconds()
 
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		larg := gtx.Dp(240)
@@ -294,18 +308,24 @@ func statusDoSplash(f splashFoto) (string, color.NRGBA) {
 // respira de leve — o único traço "vivo" do cartão que não depende de
 // olhar para a trilha de passos.
 func emblemaComHalo(gtx layout.Context, ic *widget.Icon, cor color.NRGBA, agora float64) layout.Dimensions {
-	const badgeDp, haloDp = 52, 88
-	tam := gtx.Dp(haloDp)
+	const badgeDp, haloDp = 52, 92
+	haloMax := gtx.Dp(haloDp)
 	lado := gtx.Dp(badgeDp)
 
 	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			pulso := 0.08 + 0.07*(0.5+0.5*math.Sin(agora*2*math.Pi/2.2))
+			// Tamanho E alfa mudam junto, feito respiração: só alfa (a
+			// primeira tentativa) era sutil demais pra se notar que
+			// estava mesmo animando, em vez de parado na primeira
+			// aparência.
+			onda := 0.5 + 0.5*math.Sin(agora*2*math.Pi/2.4)
+			diam := lado + int(float64(haloMax-lado)*onda)
+			off := (haloMax - diam) / 2
 			halo := cor
-			halo.A = uint8(255 * pulso)
-			r := image.Rect(0, 0, tam, tam)
+			halo.A = uint8(70 * (1 - 0.6*onda))
+			r := image.Rect(off, off, off+diam, off+diam)
 			paint.FillShape(gtx.Ops, halo, clip.Ellipse(r).Op(gtx.Ops))
-			return layout.Dimensions{Size: image.Pt(tam, tam)}
+			return layout.Dimensions{Size: image.Pt(haloMax, haloMax)}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			fundo := cor
