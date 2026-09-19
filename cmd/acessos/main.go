@@ -742,7 +742,21 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 
 									for {
 										ev, ok := gtx.Source.Event(
-											pointer.Filter{Target: contentTag, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Scroll},
+											pointer.Filter{
+												Target: contentTag,
+												Kinds:  pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Scroll,
+												// Sem ScrollX/ScrollY o Gio devolve
+												// e.Scroll SEMPRE (0,0) — a faixa aqui
+												// não é um filtro de "quanto aceitar",
+												// é o que HABILITA o valor de verdade
+												// chegar (ver clampScroll no Gio). Sem
+												// isto, rolarHistorico (SSH) e a roda
+												// de RDP/VNC (rdptab.go/vnctab.go)
+												// nunca recebiam delta nenhum, mesmo
+												// checando ev.Scroll certinho.
+												ScrollX: pointer.ScrollRange{Min: -1000, Max: 1000},
+												ScrollY: pointer.ScrollRange{Min: -1000, Max: 1000},
+											},
 										)
 										if !ok {
 											break
