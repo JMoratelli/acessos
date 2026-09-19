@@ -27,6 +27,12 @@ type workerVNC struct {
 	// classCursor roda só na thread de callbacks da libvncclient, então
 	// não precisa de trava.
 	classCursor classificadorCursor
+
+	// enviosFora é a fila de EvtCursor/EvtClipboard — ver
+	// enviarForaDoProcessamento em telaworker_rdp.go, motivo de existir
+	// (mesmo risco aqui: OnCursor/OnCutText rodam na thread de eventos
+	// da libvncclient, que é a mesma que processa a sessão inteira).
+	enviosFora chan func()
 }
 
 func rodarWorkerVNC(c *telaproc.Conn) {
@@ -40,11 +46,30 @@ func rodarWorkerVNC(c *telaproc.Conn) {
 			buf, w, h := sess.Framebuffer()
 			return buf, w, h, w * 4
 		}),
+		enviosFora: make(chan func(), 8),
 	}
 	wk.ligarCallbacks()
 	go wk.bomba.rodar()
+	go wk.despacharEnviosFora()
 	wk.lacoComandos()
 	wk.bomba.encerrar()
+}
+
+// enviarForaDoProcessamento: mesma função e mesmo motivo de
+// telaworker_rdp.go — nunca chamar Conn.Enviar direto de dentro de um
+// callback da libvncclient, que roda na mesma thread que processa a
+// sessão inteira e disputaria o mutex de escrita com um EvtQuadro grande.
+func (wk *workerVNC) enviarForaDoProcessamento(f func()) {
+	select {
+	case wk.enviosFora <- f:
+	default:
+	}
+}
+
+func (wk *workerVNC) despacharEnviosFora() {
+	for f := range wk.enviosFora {
+		f()
+	}
 }
 
 func (wk *workerVNC) ligarCallbacks() {
@@ -61,10 +86,11 @@ func (wk *workerVNC) ligarCallbacks() {
 	// QUE cursor é (quina superior esquerda = seta, meio = redimensionar)
 	// e era descartado aqui. Ver cursorforma.go.
 	s.OnCursor = func(xhot, yhot, w, h int, mask []byte) {
-		_ = wk.c.EnviarCursor(uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask)))
+		forma := uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask))
+		wk.enviarForaDoProcessamento(func() { _ = wk.c.EnviarCursor(forma) })
 	}
 	s.OnCutText = func(texto string) {
-		_ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto))
+		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto)) })
 	}
 }
 

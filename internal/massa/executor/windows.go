@@ -96,7 +96,7 @@ func (w *WindowsExec) Conectar(host string, cred model.Credencial, timeout time.
 	c, chans, reqs, err := ssh.NewClientConn(conn, endereco, cfg)
 	if err != nil {
 		conn.Close()
-		if ehAuth(err) {
+		if EhAuth(err) {
 			return fmt.Errorf("%w: usuario, dominio ou senha incorretos", ErrAutenticar)
 		}
 		return fmt.Errorf("%w: %v", ErrConexao, err)

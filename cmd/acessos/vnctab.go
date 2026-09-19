@@ -189,12 +189,11 @@ func (t *vncTab) manageSession(user, pass string) {
 		stop:            t.stop,
 		religar:         t.religar,
 		w:               t.w,
-		proc:            &t.proc,
 		caiu:            &t.caiu,
 		auto:            &t.auto,
 		rodar:           func() fimSessao { return t.rodarSessao(user, pass) },
 		antesDeConectar: func() { t.splash.iniciar(passosVNC) },
-		aoTerminar:      func() { t.tela.Store(nil) },
+		aoTerminar:      func() { t.proc.Store(nil); t.tela.Store(nil) },
 		aoAguardar:      t.splash.aguardar,
 	})
 }
@@ -400,6 +399,40 @@ func (t *vncTab) HandlePointer(ev pointer.Event, _ image.Point) {
 		buttons |= 1 << 1
 	}
 	_ = proc.PonteiroMascara(int(x), int(y), buttons)
+
+	// Roda: nunca era encaminhada — HandlePointer só tratava Move e
+	// botão. O RFB não tem mensagem própria pra roda; a convenção (não
+	// oficial, mas praticamente universal — todo cliente e servidor VNC
+	// de verdade segue) é tratar como um clique rápido nos botões
+	// 4-7: 4=cima, 5=baixo, 6=esquerda, 7=direita, na MESMA numeração
+	// bit-N-1-pro-botão-N dos três de cima. "Clique" é literal: manda a
+	// máscara COM o bit da roda, depois SEM — apertar e soltar de
+	// verdade, senão o servidor vê o botão preso.
+	if roda := mascaraDaRoda(ev.Scroll); roda != 0 {
+		_ = proc.PonteiroMascara(int(x), int(y), buttons|roda)
+		_ = proc.PonteiroMascara(int(x), int(y), buttons)
+	}
+}
+
+// mascaraDaRoda traduz o scroll do Gio pro bit de roda do RFB. Um evento
+// por "clique" da roda, mesma convenção do scroll local do terminal SSH
+// (ver rolarHistorico em sshtab.go: Y<0 é "roda pra cima") — nesta
+// pilha cada pointer.Event de scroll já chega como um clique discreto,
+// não como um delta contínuo a fatiar. Prioriza vertical sobre
+// horizontal quando os dois vierem juntos (não deveria acontecer com
+// roda de mouse de verdade).
+func mascaraDaRoda(scroll f32.Point) int {
+	switch {
+	case scroll.Y < 0:
+		return 1 << 3 // botão 4: cima
+	case scroll.Y > 0:
+		return 1 << 4 // botão 5: baixo
+	case scroll.X < 0:
+		return 1 << 5 // botão 6: esquerda
+	case scroll.X > 0:
+		return 1 << 6 // botão 7: direita
+	}
+	return 0
 }
 
 func (t *vncTab) HandleKey(keysym, _ uint32, pressed bool) {

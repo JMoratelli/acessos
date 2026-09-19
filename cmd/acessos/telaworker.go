@@ -175,16 +175,33 @@ func (b *bombaTela) rodar() {
 }
 
 func (b *bombaTela) enviarQuadro() bool {
+	// tomar ANTES de capturar, nessa ordem — de propósito. dano.tomar()
+	// esvazia o que estiver marcado sujo AGORA; capturar() copia o
+	// framebuffer JÁ COM esse esvaziamento feito, então qualquer pintura
+	// que chegue entre as duas chamadas (dano novo, marcado por uma
+	// goroutine de callback à parte) fica ainda pendente em dano — não
+	// desaparece — e será pega no próximo quadro.
+	//
+	// Na ordem invertida (capturar antes de tomar, como era) uma pintura
+	// bem nesse meio-tempo entrava no retângulo tomado, era marcada
+	// consumida, mas os pixels dela não estavam no snapshot já tirado:
+	// aquele pedaço da tela ficava com conteúdo velho PARA SEMPRE, até
+	// alguma dano futura por acaso cobrir a mesma área de novo. Era isso
+	// que aparecia como remendo/glitch visual sem nenhuma pista no log.
+	x, y, w, h, ok := b.dano.tomar()
+	if !ok {
+		return false
+	}
 	// capturar copia a tela inteira do lado C sob trava (ver internal/rdp
 	// e internal/vnc). Recortar antes da cópia exigiria mexer nos shims em
 	// C; o que economizamos aqui, que é o que pesa, é o laço POR PIXEL e o
 	// tráfego no socket — ambos só sobre o retângulo sujo.
 	buf, fw, fh, stride := b.capturar()
 	if len(buf) == 0 || fw <= 0 || fh <= 0 {
-		return false
-	}
-	x, y, w, h, ok := b.dano.tomar()
-	if !ok {
+		// Sessão ainda sem framebuffer (ver rodar()). O retângulo já foi
+		// TOMADO acima — devolve pra dano em vez de descartar, senão essa
+		// área nunca mais seria reenviada assim que o framebuffer chegasse.
+		b.dano.juntar(x, y, w, h)
 		return false
 	}
 	// Recorte contra o tamanho atual: o dano foi acumulado com a geometria

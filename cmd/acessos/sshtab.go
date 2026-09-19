@@ -67,9 +67,8 @@ type sshTab struct {
 	entrada    io.WriteCloser // stdin da sessão remota
 	sess       *ssh.Session
 	cli        *ssh.Client
-	estado     string // mensagem mostrada enquanto não há sessão viva
-	fechado    bool
-	jaConectou bool // true a partir da 2ª sessão desta aba — ver limparTela
+	estado     string // aviso de ação (copiar, erro de snippets) — NÃO é status de conexão, ver laco()
+	jaConectou bool   // true a partir da 2ª sessão desta aba — ver limparTela
 
 	cols, rows int
 	mods       modificadores
@@ -125,7 +124,10 @@ type sshTab struct {
 	corpo float32
 
 	religar     chan struct{}
+	stop        chan struct{}
+	closeOnce   sync.Once
 	auto        atomic.Bool
+	caiu        atomic.Bool // ver EstadoSessao — setado por gerenciarSessaoRemota
 	nomeConexao string
 	btnRec      widget.Clickable
 	btnAuto     widget.Clickable
@@ -210,7 +212,7 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 		senha:   spec["pass"],
 		cols:    80,
 		rows:    24,
-		estado:  "conectando…",
+		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
 	t.splash = novoSplash(w)
@@ -255,45 +257,25 @@ func (t *sshTab) Selo() (*widget.Icon, color.NRGBA, color.NRGBA) {
 	return icons.ActionCode, tema.Verde, tema.VerdeFraco
 }
 
-// laco conecta e reconecta com espera crescente, igual às abas VNC/RDP:
-// queda de rede não deveria exigir fechar e reabrir a aba.
+// laco entrega o laço de reconexão a gerenciarSessaoRemota (telatab.go),
+// o mesmo usado por rdpTab e vncTab — a única peça que não é genérica
+// ali é COMO uma tentativa de sessão se conecta, e isso mora inteiro em
+// sessao(). Antes o SSH tinha seu próprio laço, com sua própria escala
+// de espera (1s dobrando até 8s) e sem nenhuma distinção entre "a rede
+// caiu" e "a senha está errada" — via fimFalhou, unificar os três
+// também fechou essa segunda parte: senha errada não entra mais no
+// backoff automático (ver o comentário em fimFalhou).
 func (t *sshTab) laco() {
-	espera := time.Second
-	for {
-		if t.encerrada() {
-			return
-		}
-		err := t.sessao()
-		if t.encerrada() {
-			return
-		}
-		msg := "sessão encerrada"
-		if err != nil {
-			msg = err.Error()
-			reg("[%s] ssh falhou: %v", t.titulo, err)
-		}
-		t.splash.setErro(msg)
-		if !t.auto.Load() {
-			// reconexão automática desligada: espera o botão.
-			t.setEstado(msg + " — parada (clique em Reconectar)")
-			select {
-			case <-t.religar:
-				espera = time.Second
-				continue
-			}
-		}
-		t.setEstado(fmt.Sprintf("%s — reconectando em %s", msg, espera))
-		t.splash.aguardar(time.Now().Add(espera))
-		select {
-		case <-time.After(espera):
-		case <-t.religar:
-			espera = time.Second
-			continue
-		}
-		if espera < 8*time.Second {
-			espera *= 2
-		}
-	}
+	gerenciarSessaoRemota(sessaoRemotaCfg{
+		title:      t.titulo,
+		stop:       t.stop,
+		religar:    t.religar,
+		w:          t.w,
+		caiu:       &t.caiu,
+		auto:       &t.auto,
+		rodar:      t.sessao,
+		aoAguardar: t.splash.aguardar,
+	})
 }
 
 // passosSSH: dois pontos observáveis sem mexer no formato da conexão —
@@ -304,9 +286,13 @@ func (t *sshTab) laco() {
 // nisso não vale o risco só para ganhar um passo a mais no cartão.
 var passosSSH = []string{"Conectando", "Abrindo sessão"}
 
-// sessao abre uma sessão e só volta quando ela morre.
-func (t *sshTab) sessao() error {
-	t.setEstado("conectando…")
+// sessao abre uma sessão e só volta quando ela morre. Devolve fimFalhou
+// só quando o servidor recusou a credencial (ver executor.EhAuth) — esse
+// caso NUNCA entra no backoff automático de gerenciarSessaoRemota (ver o
+// comentário em fimFalhou, telatab.go): tentar de novo sozinho com a
+// senha errada não é persistência, é força bruta contra o próprio
+// parque, e em domínio Windows chega a bloquear a conta.
+func (t *sshTab) sessao() fimSessao {
 	t.splash.iniciar(passosSSH)
 	cfg := &ssh.ClientConfig{
 		User: t.user,
@@ -340,7 +326,7 @@ func (t *sshTab) sessao() error {
 			// de fato dispara a reconexão) nunca veria nada — a aba ficava
 			// presa em "sessão encerrada — parada" à espera de um segundo
 			// clique manual do operador.
-			t.setEstado(ec.Error() + " — aguardando sua decisão")
+			t.splash.setErro(ec.Error() + " — aguardando sua decisão")
 			aceito := make(chan struct{}, 1)
 			pedirConfiancaHostKey(t.w, ec, func() {
 				select {
@@ -351,20 +337,26 @@ func (t *sshTab) sessao() error {
 			select {
 			case <-aceito:
 				return t.sessao()
-			case <-t.paradaPorChave():
-				return nil
+			case <-t.stop:
+				return fimParar
 			}
 		}
-		return fmt.Errorf("%w", err)
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		if executor.EhAuth(err) {
+			return fimFalhou
+		}
+		return fimCaiu
 	}
-	defer cli.Close()
 	t.splash.avancar(1)
 
 	sess, err := cli.NewSession()
 	if err != nil {
-		return err
+		cli.Close()
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		return fimCaiu
 	}
-	defer sess.Close()
 
 	t.mu.Lock()
 	cols, rows := t.cols, t.rows
@@ -372,29 +364,60 @@ func (t *sshTab) sessao() error {
 
 	modos := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
 	if err := sess.RequestPty("xterm-256color", rows, cols, modos); err != nil {
-		return err
+		cli.Close()
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		return fimCaiu
 	}
 	entrada, err := sess.StdinPipe()
 	if err != nil {
-		return err
+		cli.Close()
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		return fimCaiu
 	}
 	saida, err := sess.StdoutPipe()
 	if err != nil {
-		return err
+		cli.Close()
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		return fimCaiu
 	}
 	sess.Stderr = escritorTerminal{t}
 
-	t.mu.Lock()
-	if t.fechado {
-		t.mu.Unlock()
-		return nil
+	if t.encerrada() {
+		cli.Close()
+		return fimParar
 	}
+
+	// Vigia: mesma ideia do rodarSessaoRemota em telatab.go (RDP/VNC) —
+	// traduz "fechar a aba" e "reconectar agora" num Close() que acorda
+	// o Wait() lá embaixo na hora, e guarda QUAL dos dois foi antes de
+	// fechar, pra o motivo não virar "use of closed network connection"
+	// na tela quando foi só um Reconectar clicado.
+	var pedido atomic.Int32
+	pedido.Store(int32(fimCaiu))
+	saiu := make(chan struct{})
+	defer close(saiu)
+	go func() {
+		select {
+		case <-t.stop:
+			pedido.Store(int32(fimParar))
+		case <-t.religar:
+			pedido.Store(int32(fimReligar))
+		case <-saiu:
+			return
+		}
+		cli.Close()
+	}()
+
+	t.mu.Lock()
 	t.cli, t.sess, t.entrada = cli, sess, entrada
-	t.estado = ""
 	reconexao := t.jaConectou
 	t.jaConectou = true
-	reg("[%s] ssh pronto em %s", t.titulo, time.Since(inicio).Truncate(time.Millisecond))
 	t.mu.Unlock()
+	t.caiu.Store(false)
+	reg("[%s] ssh pronto em %s", t.titulo, time.Since(inicio).Truncate(time.Millisecond))
 	t.splash.concluir()
 	t.invalidar()
 
@@ -413,7 +436,13 @@ func (t *sshTab) sessao() error {
 	}
 
 	if err := sess.Shell(); err != nil {
-		return err
+		t.mu.Lock()
+		t.cli, t.sess, t.entrada = nil, nil, nil
+		t.mu.Unlock()
+		cli.Close()
+		reg("[%s] ssh falhou: %v", t.titulo, err)
+		t.splash.setErro(err.Error())
+		return fimSessao(pedido.Load())
 	}
 
 	// Parse bloqueia lendo o stdout e alimenta o emulador; cada pedaço
@@ -433,12 +462,25 @@ func (t *sshTab) sessao() error {
 	t.cli, t.sess, t.entrada = nil, nil, nil
 	t.mu.Unlock()
 	t.invalidar()
+
+	if fim := fimSessao(pedido.Load()); fim != fimCaiu {
+		// Fechar a aba ou clicar em Reconectar venceu: é isso que
+		// aconteceu, não importa o que Wait() devolveu — algo como "use
+		// of closed network connection", que só confundiria quem
+		// olhasse a tela bem nesse instante.
+		return fim
+	}
+	msg := "sessão encerrada"
 	if err != nil {
-		if _, ok := err.(*ssh.ExitError); ok {
-			return nil // saiu com exit != 0: é o shell terminando, não erro de rede
+		if _, ok := err.(*ssh.ExitError); !ok {
+			// saiu com exit != 0 É o shell terminando, não erro de rede —
+			// fica com a mensagem padrão acima, sem logar como falha.
+			msg = err.Error()
+			reg("[%s] ssh falhou: %v", t.titulo, err)
 		}
 	}
-	return err
+	t.splash.setErro(msg)
+	return fimCaiu
 }
 
 // leitorAvisado pede um quadro novo a cada pedaço de saída que chega.
@@ -472,9 +514,12 @@ func (t *sshTab) setEstado(s string) {
 }
 
 func (t *sshTab) encerrada() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.fechado
+	select {
+	case <-t.stop:
+		return true
+	default:
+		return false
+	}
 }
 
 func (t *sshTab) enviar(b []byte) {
@@ -489,18 +534,13 @@ func (t *sshTab) enviar(b []byte) {
 	}
 }
 
+// Close só sinaliza: quem fecha cli/sess de verdade é o vigia dentro de
+// sessao() (mesmo padrão do RDP/VNC — ver rodarSessaoRemota em
+// telatab.go), reagindo a <-t.stop. Fechar direto aqui, como antes,
+// funcionava, mas divergia de como as outras duas abas fecham — e
+// "uniformizar" foi o pedido.
 func (t *sshTab) Close() {
-	t.mu.Lock()
-	t.fechado = true
-	sess, cli := t.sess, t.cli
-	t.sess, t.cli, t.entrada = nil, nil, nil
-	t.mu.Unlock()
-	if sess != nil {
-		sess.Close()
-	}
-	if cli != nil {
-		cli.Close()
-	}
+	t.closeOnce.Do(func() { close(t.stop) })
 }
 
 // HandleKey recebe a tecla física já traduzida pelo Wayland (ver
@@ -877,6 +917,12 @@ func (t *sshTab) layoutTerminal(gtx layout.Context) layout.Dimensions {
 		fmt.Sprintf("%s@%s:%d", t.user, t.host, t.porta), icSsh, corSsh,
 		&t.btnSplash, t.Reconectar)
 
+	// t.estado NÃO carrega mais mensagem de conexão (isso é só o splash
+	// desenhado acima agora: passo, erro, contagem de reconexão — ver
+	// laco()/sessao()). O que sobra aqui é aviso de ação (copiar tela,
+	// copiar seleção, erro de snippets — ver os setEstado() fora da
+	// conexão) e o aviso de histórico, que se somam quando os dois
+	// acontecem juntos.
 	t.mu.Lock()
 	texto := t.estado
 	rolagem := t.rolagem
@@ -1126,7 +1172,6 @@ func corXterm(i int) color.NRGBA {
 func (t *sshTab) EstadoSessao() estadoSessao {
 	t.mu.Lock()
 	viva := t.sess != nil
-	estado := t.estado
 	cols, rows := t.cols, t.rows
 	t.mu.Unlock()
 
@@ -1138,7 +1183,7 @@ func (t *sshTab) EstadoSessao() estadoSessao {
 	switch {
 	case viva:
 		e.Chip, e.Tipo = "ATIVO", "ok"
-	case estado != "" && strings.Contains(estado, "reconectando"):
+	case t.caiu.Load():
 		e.Chip, e.Tipo = "CAIU", "erro"
 	}
 	return e
@@ -1187,19 +1232,12 @@ func (t *sshTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 	)
 }
 
-// Reconectar derruba a sessão atual; o laço em laco() reabre em seguida.
-// Fechar a sessão é o que faz o Wait() voltar — é o mesmo caminho de uma
-// queda de rede, só que provocado.
+// Reconectar só sinaliza — mesmo padrão do RDP/VNC (rdpTab.Reconectar,
+// vncTab.Reconectar). Quem de fato fecha cli/sess é o vigia dentro de
+// sessao(), reagindo a <-t.religar: fechar direto aqui TAMBÉM fechava
+// (funcionava), mas duplicava o que o vigia já faz e divergia de como as
+// outras duas abas reconectam manualmente.
 func (t *sshTab) Reconectar() {
-	t.mu.Lock()
-	sess, cli := t.sess, t.cli
-	t.mu.Unlock()
-	if sess != nil {
-		sess.Close()
-	}
-	if cli != nil {
-		cli.Close()
-	}
 	select {
 	case t.religar <- struct{}{}:
 	default:
@@ -1312,20 +1350,4 @@ func (t *sshTab) layoutSnips(gtx layout.Context) layout.Dimensions {
 			})
 		},
 	)
-}
-
-// paradaPorChave devolve um canal que fecha quando a aba é encerrada —
-// é a saída do bloqueio enquanto se espera a decisão sobre a host key.
-func (t *sshTab) paradaPorChave() <-chan struct{} {
-	c := make(chan struct{})
-	go func() {
-		for {
-			if t.encerrada() {
-				close(c)
-				return
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	}()
-	return c
 }

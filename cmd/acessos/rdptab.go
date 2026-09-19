@@ -74,9 +74,17 @@ type rdpTab struct {
 	viewMu            sync.Mutex
 	view              rdpView
 	clip              clipboardSync
-	mu                sync.Mutex // protege lastSizeRequested entre a rede e o desenho
+	mu                sync.Mutex // protege lastSizeRequested/resize* entre a rede e o desenho
 	lastSizeRequested image.Point
-	lastButtons       pointer.Buttons
+	// resizeAlvo/resizeArmado formam o debounce do resize dinâmico: ver
+	// pedirResizeComDebounce. Sem isto, arrastar a borda da janela
+	// mandava um CmdResize A CADA QUADRO da interface (dezenas por
+	// segundo) — cada um derruba e remonta as surfaces gfx no servidor
+	// (RDPGFX_RESET_GRAPHICS), o que já foi visto travando a tela e até
+	// derrubando a sessão no meio do arrasto.
+	resizeAlvo   image.Point
+	resizeArmado *time.Timer
+	lastButtons  pointer.Buttons
 
 	// tela é o último quadro PRONTO para desenhar. Quem monta troca o
 	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
@@ -175,7 +183,6 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 		stop:    t.stop,
 		religar: t.religar,
 		w:       t.w,
-		proc:    &t.proc,
 		caiu:    &t.caiu,
 		auto:    &t.auto,
 		rodar:   func() fimSessao { return t.rodarSessao(user, pass, domain) },
@@ -183,7 +190,7 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 			t.esquecerTamanho()
 			t.splash.iniciar(passosRDP)
 		},
-		aoTerminar: func() { t.tela.Store(nil) },
+		aoTerminar: func() { t.proc.Store(nil); t.tela.Store(nil) },
 		aoAguardar: t.splash.aguardar,
 	})
 }
@@ -194,6 +201,51 @@ func (t *rdpTab) esquecerTamanho() {
 	t.mu.Lock()
 	t.lastSizeRequested = image.Point{}
 	t.mu.Unlock()
+}
+
+// resizeDebounce é quanto tempo o tamanho tem que ficar PARADO antes do
+// CmdResize sair de verdade. 200ms é curto o bastante pra sentir
+// instantâneo depois de soltar a borda, e longo o bastante pra um
+// arrasto de vários segundos (60 quadros/s) virar UM pedido só, não uma
+// dezena.
+const resizeDebounce = 200 * time.Millisecond
+
+// pedirResizeComDebounce troca o pedido imediato por um agendado: cada
+// quadro com um tamanho novo só ATUALIZA o alvo e rearma o prazo, nunca
+// manda nada direto. Só quando o prazo esgota sem mais nenhuma mudança é
+// que dispararResize roda de verdade.
+//
+// Sem isto, arrastar a borda da janela mandava um CmdResize A CADA
+// QUADRO da interface — e cada um faz o servidor derrubar e remontar
+// TODAS as surfaces gfx (RDPGFX_RESET_GRAPHICS), o que já foi visto
+// deixando a tela preta/lixo durante o arrasto e, num caso pior, caindo
+// a sessão no meio do caminho.
+func (t *rdpTab) pedirResizeComDebounce(size image.Point) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if size == t.lastSizeRequested {
+		return
+	}
+	t.resizeAlvo = size
+	if t.resizeArmado == nil {
+		t.resizeArmado = time.AfterFunc(resizeDebounce, t.dispararResize)
+		return
+	}
+	t.resizeArmado.Reset(resizeDebounce)
+}
+
+// dispararResize roda numa goroutine própria do time.AfterFunc, nunca no
+// laço de quadro. Lê t.proc.Load() (não um valor capturado) porque a
+// sessão pode ter religado durante os 200ms de espera.
+func (t *rdpTab) dispararResize() {
+	t.mu.Lock()
+	alvo := t.resizeAlvo
+	t.lastSizeRequested = alvo
+	t.resizeArmado = nil
+	t.mu.Unlock()
+	if p := t.proc.Load(); p != nil {
+		_ = p.Resize(alvo.X, alvo.Y)
+	}
 }
 
 // rodarSessao delega a rodarSessaoRemota (ver telatab.go), compartilhado
@@ -352,15 +404,11 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	t.viewMu.Unlock()
 
 	// Resolução dinâmica: acompanha o tamanho da área da aba (canal
-	// Display Control) — só reenvia quando muda, mesma razão do rdpview.
-	t.mu.Lock()
-	pedirResize := proc != nil && size != t.lastSizeRequested && t.modo.Load() == modoDinamico
-	if pedirResize {
-		t.lastSizeRequested = size
-	}
-	t.mu.Unlock()
-	if pedirResize {
-		_ = proc.Resize(size.X, size.Y)
+	// Display Control) — só reenvia quando muda, mesma razão do rdpview,
+	// e com debounce (ver o campo resizeArmado): arrastar a borda não
+	// pode virar um CmdResize por quadro.
+	if proc != nil && t.modo.Load() == modoDinamico {
+		t.pedirResizeComDebounce(size)
 	}
 
 	// Clipa à própria área — mesma razão do vnctab.go: sem isto, o
@@ -433,6 +481,32 @@ func (t *rdpTab) HandlePointer(ev pointer.Event, _ image.Point) {
 		_ = proc.PonteiroBotao(x, y, 3, ev.Buttons&pointer.ButtonSecondary != 0)
 	}
 	t.lastButtons = ev.Buttons
+
+	// Roda: nunca era encaminhada — HandlePointer só tratava Move e
+	// botão. Ver passosDaRoda pra a convenção de sinal.
+	if p := passosDaRoda(ev.Scroll.Y); p != 0 {
+		_ = proc.PonteiroRoda(0, p)
+	}
+	if p := passosDaRoda(ev.Scroll.X); p != 0 {
+		_ = proc.PonteiroRoda(1, p)
+	}
+}
+
+// passosDaRoda traduz um delta de scroll do Gio pros "passos" que
+// rs_ponteiro_roda espera. Um evento por "clique" da roda, mesma
+// convenção do scroll local do terminal SSH (ver rolarHistorico em
+// sshtab.go): nesta pilha cada pointer.Event de scroll já chega como um
+// clique discreto, não como um delta contínuo a fatiar. Sinal: delta<0
+// é "roda pra cima" (mesma leitura de rolarHistorico), e o RDP usa
+// passos POSITIVOS pra cima (WHEEL_DELTA do Windows).
+func passosDaRoda(delta float32) int {
+	switch {
+	case delta < 0:
+		return 1
+	case delta > 0:
+		return -1
+	}
+	return 0
 }
 
 func (t *rdpTab) HandleKey(_, keycodeX11 uint32, pressed bool) {

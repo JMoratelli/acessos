@@ -158,16 +158,21 @@ func rodarSessaoRemota(
 }
 
 // sessaoRemotaCfg agrupa o que gerenciarSessaoRemota precisa de uma aba
-// de tela remota para tocar o laço de reconexão com backoff. Os dois
-// hooks são opcionais (nil vira no-op) — é onde cada protocolo limpa o
-// que só ele tem: o RDP apaga a tela congelada e esquece a resolução já
-// pedida ao servidor: nenhum dos dois existe no VNC.
+// de tela remota (SSH, RDP, VNC — SFTP não entra aqui: não tem
+// reconexão automática, é sempre um clique) para tocar o laço de
+// reconexão com backoff. Os hooks são opcionais (nil vira no-op) — é
+// onde cada protocolo limpa o que só ele tem: RDP apaga a tela congelada
+// e esquece a resolução já pedida ao servidor; SSH e VNC não têm nenhum
+// dos dois. A função não sabe nada sobre COMO uma sessão se conecta nem
+// o que ela guarda (*telaproc.Processo pro RDP/VNC, *ssh.Client+*ssh.
+// Session pro SSH) — só o hook aoTerminar limpa isso, o que é o que
+// permite os três protocolos compartilharem o mesmo laço apesar de terem
+// formas de conexão completamente diferentes.
 type sessaoRemotaCfg struct {
 	title   string
 	stop    <-chan struct{}
 	religar <-chan struct{}
 	w       *app.Window
-	proc    *atomic.Pointer[telaproc.Processo]
 	caiu    *atomic.Bool
 	auto    *atomic.Bool
 
@@ -179,7 +184,9 @@ type sessaoRemotaCfg struct {
 	// a conexão de novo.
 	antesDeConectar func()
 	// aoTerminar roda logo depois que uma tentativa termina, antes de
-	// decidir o que fazer a partir do fimSessao que ela devolveu.
+	// decidir o que fazer a partir do fimSessao que ela devolveu — é
+	// aqui que cada protocolo esquece o que guardava da sessão que
+	// acabou (proc, cliente ssh, o que for).
 	aoTerminar func()
 	// aoAguardar roda só no caminho de backoff automático (nunca na
 	// espera indefinida por um clique manual), com quando a próxima
@@ -188,12 +195,13 @@ type sessaoRemotaCfg struct {
 	aoAguardar func(proximaEm time.Time)
 }
 
-// gerenciarSessaoRemota é o laço de reconexão comum a rdpTab e vncTab:
-// religa com backoff crescente até a aba fechar, e pula o backoff quando
-// quem pediu foi um clique em Reconectar. Falha de credencial/política
-// (fimFalhou) NUNCA entra no backoff — ver o comentário em fimFalhou:
-// insistir de poucos em poucos segundos com a senha errada não é
-// persistência, é força bruta contra o próprio parque.
+// gerenciarSessaoRemota é o laço de reconexão comum a sshTab, rdpTab e
+// vncTab: religa com backoff crescente até a aba fechar, e pula o
+// backoff quando quem pediu foi um clique em Reconectar. Falha de
+// credencial (fimFalhou) NUNCA entra no backoff — ver o comentário em
+// fimFalhou: insistir de poucos em poucos segundos com a senha errada
+// não é persistência, é força bruta contra o próprio parque, e em
+// domínio Windows chega a bloquear a conta.
 func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 	rodarHook := func() fimSessao {
 		if cfg.antesDeConectar != nil {
@@ -205,7 +213,6 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 	attempt := 0
 	for {
 		fim := rodarHook()
-		cfg.proc.Store(nil)
 		if cfg.aoTerminar != nil {
 			cfg.aoTerminar()
 		}

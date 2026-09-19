@@ -75,7 +75,7 @@ func (l *LinuxSSH) Conectar(host string, cred model.Credencial, timeout time.Dur
 	c, chans, reqs, err := ssh.NewClientConn(conn, endereco, cfg)
 	if err != nil {
 		conn.Close()
-		if ehAuth(err) {
+		if EhAuth(err) {
 			return fmt.Errorf("%w: usuario ou senha do PDV incorretos", ErrAutenticar)
 		}
 		return fmt.Errorf("%w: %v", ErrConexao, err)
@@ -488,7 +488,13 @@ func senhaInterativa(senha string) ssh.AuthMethod {
 	})
 }
 
-func ehAuth(err error) bool {
+// EhAuth diz se err é uma recusa de credencial do SSH (senha errada,
+// método não suportado), em vez de falha de rede — usado tanto aqui
+// quanto em cmd/acessos/sshtab.go para nunca reconectar sozinho depois
+// de senha errada (ver fimFalhou em cmd/acessos/telatab.go: insistir de
+// poucos em poucos segundos não é persistência, é força bruta contra o
+// próprio parque, e em domínio Windows bloqueia a conta).
+func EhAuth(err error) bool {
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "unable to authenticate") ||
 		strings.Contains(s, "permission denied") ||

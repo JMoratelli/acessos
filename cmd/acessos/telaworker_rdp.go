@@ -24,6 +24,10 @@ type workerRDP struct {
 	classCursor classificadorCursor
 
 	certResp chan int // resposta do diálogo de certificado
+
+	// enviosFora é a fila de EvtCursor/EvtClipboard/EvtDisplayPronto —
+	// ver enviarForaDoProcessamento logo abaixo, motivo de existir.
+	enviosFora chan func()
 }
 
 func rodarWorkerRDP(c *telaproc.Conn) {
@@ -34,12 +38,42 @@ func rodarWorkerRDP(c *telaproc.Conn) {
 		bomba: novaBomba(c, func() ([]byte, int, int, int) {
 			return sess.Framebuffer()
 		}),
-		certResp: make(chan int, 1),
+		certResp:   make(chan int, 1),
+		enviosFora: make(chan func(), 8),
 	}
 	wk.ligarCallbacks()
 	go wk.bomba.rodar()
+	go wk.despacharEnviosFora()
 	wk.lacoComandos()
 	wk.bomba.encerrar()
+}
+
+// enviarForaDoProcessamento manda algo por uma goroutine PRÓPRIA, nunca
+// bloqueando quem chamou. Existe porque OnCursor/OnClipboardText/
+// OnDisplayPronto (ver ligarCallbacks) rodam dentro de rs_processar — a
+// MESMA chamada C que processa a sessão RDP inteira (ver Session.Run,
+// internal/rdp/rdp.go) —, e Conn.Enviar disputa o mesmo mutex de
+// escrita que a bomba de quadros usa para mandar um EvtQuadro de vários
+// MB. Uma dessas três chamando Enviar DIRETO e travando esperando esse
+// mutex travava a sessão INTEIRA até a escrita do quadro (ou o timeout
+// dela) resolver — medido em auditoria: no pior caso os 5s do timeout
+// de escrita (protocolo.go) estouravam e derrubavam a conexão por causa
+// de um simples cursor piscando, sem nada na tela explicando por quê.
+//
+// Fila pequena com descarte no cheio, de propósito: cursor e clipboard
+// são "qual é o estado AGORA", não uma entrega que precise ser garantida
+// — perder um no meio de uma rajada não importa, o próximo já corrige.
+func (wk *workerRDP) enviarForaDoProcessamento(f func()) {
+	select {
+	case wk.enviosFora <- f:
+	default:
+	}
+}
+
+func (wk *workerRDP) despacharEnviosFora() {
+	for f := range wk.enviosFora {
+		f()
+	}
 }
 
 func (wk *workerRDP) ligarCallbacks() {
@@ -55,14 +89,20 @@ func (wk *workerRDP) ligarCallbacks() {
 	// O ponto quente (xhot/yhot) entra na conta: é o sinal mais forte de
 	// QUE cursor é (quina superior esquerda = seta, meio = redimensionar)
 	// e era descartado aqui. Ver cursorforma.go.
+	//
+	// As três chamadas abaixo classificam/copiam o que precisam NA HORA
+	// (classificar() já roda síncrono; texto é string, já é cópia) e só
+	// ENFILEIRAM o envio de verdade — nunca chamam Conn.Enviar direto
+	// daqui. Ver o comentário grande em enviarForaDoProcessamento.
 	s.OnCursor = func(xhot, yhot, w, h int, mask []byte) {
-		_ = wk.c.EnviarCursor(uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask)))
+		forma := uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask))
+		wk.enviarForaDoProcessamento(func() { _ = wk.c.EnviarCursor(forma) })
 	}
 	s.OnClipboardText = func(texto string) {
-		_ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto))
+		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto)) })
 	}
 	s.OnDisplayPronto = func() {
-		_ = wk.c.Enviar(telaproc.EvtDisplayPronto, nil)
+		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtDisplayPronto, nil) })
 	}
 	// OnCertificado roda NA THREAD DE REDE da libfreerdp e BLOQUEIA o
 	// handshake até responder — é isso que dá sentido à pergunta. Aqui a

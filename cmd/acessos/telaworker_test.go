@@ -91,3 +91,55 @@ func TestRecortarBGRXparaNRGBARespeitaStride(t *testing.T) {
 		t.Fatalf("saiu %v, esperava %v", out, quer)
 	}
 }
+
+// ------------------------------------------------------------ bomba de quadros
+
+// TestEnviarQuadroTomaDanoAntesDeCapturar prova a ORDEM que corrige o
+// bug de remendo/glitch visual encontrado em auditoria: dano.tomar() tem
+// que já ter consumido o retângulo antes de capturar() tirar o
+// snapshot — senão uma pintura chegando bem nesse meio-tempo entra no
+// retângulo tomado (fica marcada "enviada") sem que seus pixels tenham
+// sido capturados, e aquele pedaço da tela fica com conteúdo velho até
+// alguma dano futura por acaso cobrir a mesma área de novo.
+func TestEnviarQuadroTomaDanoAntesDeCapturar(t *testing.T) {
+	danoJaConsumidoQuandoCapturou := false
+	b := &bombaTela{}
+	b.capturar = func() ([]byte, int, int, int) {
+		// Se dano.tomar() já rodou (a ordem certa), o que sobrou aqui
+		// dentro é "nada sujo" — um tomar() feito agora devolve
+		// ok=false. Na ordem errada (capturar antes de tomar), o
+		// retângulo original ainda estaria pendente aqui dentro.
+		_, _, _, _, ok := b.dano.tomar()
+		danoJaConsumidoQuandoCapturou = !ok
+		return nil, 0, 0, 0 // sem framebuffer: enviarQuadro() não chega a usar b.c
+	}
+	b.dano.juntar(0, 0, 4, 4)
+	b.enviarQuadro()
+
+	if !danoJaConsumidoQuandoCapturou {
+		t.Fatal("capturar() rodou antes de dano.tomar() consumir o retângulo — voltou a ordem que causava o glitch (ver o comentário em enviarQuadro)")
+	}
+}
+
+// TestEnviarQuadroRedanificaSeCapturaFalhaDepoisDeTomar cobre a borda
+// que a troca de ordem acima abriu: se dano.tomar() já consumiu o
+// retângulo mas capturar() não tem framebuffer nenhum ainda (sessão
+// recém-aberta), o retângulo não pode ser descartado — senão aquela
+// área nunca mais seria reenviada assim que o framebuffer chegasse.
+func TestEnviarQuadroRedanificaSeCapturaFalhaDepoisDeTomar(t *testing.T) {
+	b := &bombaTela{
+		capturar: func() ([]byte, int, int, int) { return nil, 0, 0, 0 },
+	}
+	b.dano.juntar(5, 5, 10, 10)
+
+	if b.enviarQuadro() {
+		t.Fatal("enviarQuadro() disse que mandou sem framebuffer nenhum")
+	}
+	x, y, w, h, ok := b.dano.tomar()
+	if !ok {
+		t.Fatal("o retângulo se perdeu quando a captura falhou depois do tomar()")
+	}
+	if x != 5 || y != 5 || w != 10 || h != 10 {
+		t.Fatalf("retângulo devolvido (%d,%d %dx%d), esperava (5,5 10x10)", x, y, w, h)
+	}
+}

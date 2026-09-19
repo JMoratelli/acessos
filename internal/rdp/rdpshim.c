@@ -987,7 +987,18 @@ int rs_esperar(Sessao *s, int ms) {
     return 1;
 }
 
-/* Processa eventos pendentes. Devolve 1 se ok, 0 se a conexao caiu. */
+/* Processa eventos pendentes. Devolve 1 se ok, 0 se a conexao caiu.
+ *
+ * freerdp_check_event_handles() == FALSE e' SEMPRE fatal, igual o
+ * proprio exemplo de cliente da libfreerdp trata (freerdp/client/common):
+ * o last_error so decide se ha uma mensagem de erro MAIS especifica ja
+ * setada, nunca se deve continuar. A versao anterior daqui usava
+ * last_error==SUCCESS pra decidir "esta tudo bem, segue o jogo" —
+ * exatamente o caso que a propria libfreerdp so usa pra imprimir um log
+ * generico antes de desistir. Continuar nesse caso deixava rs_esperar
+ * (o handle segue sinalizado, nada foi consumido) devolver na hora de
+ * novo: um espiral quente, 100% de uma CPU, tela congelada, sem
+ * EvtDesconectado nenhum pro app saber que precisa religar. */
 int rs_processar(Sessao *s) {
     if (!s || !s->inst || !s->conectado) return 0;
     if (freerdp_shall_disconnect_context(s->inst->context)) {
@@ -995,10 +1006,10 @@ int rs_processar(Sessao *s) {
         return 0;
     }
     if (!freerdp_check_event_handles(s->inst->context)) {
-        if (freerdp_get_last_error(s->inst->context) != FREERDP_ERROR_SUCCESS) {
-            s->conectado = 0;
-            return 0;
-        }
+        if (freerdp_get_last_error(s->inst->context) == FREERDP_ERROR_SUCCESS && getenv("RS_LOG"))
+            fprintf(stderr, "[rdp] check_event_handles falhou sem last_error especifico\n");
+        s->conectado = 0;
+        return 0;
     }
     return 1;
 }

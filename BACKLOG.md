@@ -177,6 +177,40 @@ Por onde entra:
   com o que a sessão remota também usa, mesmo cuidado que F12/Ctrl+W/
   Ctrl+G já tiveram que ter (ver itens 1 e 3 deste arquivo).
 
+## 9. Estabilidade RDP/VNC — sobras da auditoria de 2026-09-19
+
+Auditoria pedida depois de queixa de queda/glitch em sessão RDP. Quatro
+causas confirmadas já foram corrigidas: ordem invertida de
+captura/consumo de dano deixando remendo permanente na tela (comum a
+RDP e VNC — ver `enviarQuadro()` em
+[telaworker.go](cmd/acessos/telaworker.go)), tempestade de `CmdResize`
+ao arrastar a borda da janela sem debounce (só RDP — canal Display
+Control não existe no VNC), callbacks da libfreerdp/libvncclient
+(`OnCursor`/`OnClipboardText`/`OnDisplayPronto`) escrevendo direto no
+socket e podendo travar a sessão inteira esperando o mesmo mutex que um
+`EvtQuadro` grande usa, e `rs_processar` (rdpshim.c) engolindo uma falha
+de `freerdp_check_event_handles` e caindo num laço quente (100% de CPU,
+tela congelada, sem reconectar).
+
+O que ficou de fora, por ser mais arriscado de mexer sem um teste ao
+vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
+
+- **Cópia do framebuffer sem lock contra a pintura.** `fb_lock` em
+  rdpshim.c só protege `gdi_resize` e a própria captura — a pintura de
+  verdade acontece dentro de `rs_processar` sem essa trava, e as duas
+  goroutines de leitura (`rdp.go`) só usam `RLock`. Pode causar quadro
+  rasgado (metade novo, metade velho) com os canais gfx do RDP, que
+  fazem blits grandes.
+- **Retângulo de dano cortado a zero é descartado.** Em
+  [telaworker.go](cmd/acessos/telaworker.go), depois de um shrink, um
+  retângulo que não cabe mais na tela é jogado fora mesmo já tendo sido
+  consumido de `dano`. Hoje é coberto por `dano.tudo()` no `OnResize`,
+  mas a ordem entre os dois não é garantida.
+- **Duas cópias de tela inteira por quadro** (uma em C ao capturar, outra
+  ao recortar em Go) — em 4K é ~100MB de churn por quadro, contribuindo
+  pro vigia de memória (`internal/telaproc/vigia.go`, teto de 768MiB)
+  matar a sessão sob carga, o que aparece como queda "sem motivo".
+
 ## Limitações conhecidas, que NÃO estão no plano de corrigir
 
 Ficam registradas para ninguém "descobrir" de novo. Boa parte veio de
