@@ -68,6 +68,8 @@
       <description>
         <p>Corrige a janela RDP não acompanhar o tamanho da aba ao conectar: a sessão podia ficar presa na resolução padrão do servidor (800x600 ou 1024x768) até a janela ser redimensionada manualmente — dependia de quão cheia estava uma fila interna bem no instante da conexão.</p>
         <p>Quedas de sessão RDP em tempo real passam a registrar o motivo específico informado pelo próprio FreeRDP, em vez de uma mensagem genérica — ajuda a diferenciar um servidor com um problema específico de uma queda de rede comum.</p>
+        <p>O atalho global (Ctrl+Shift+F12) agora pode ser desligado nos Ajustes, e vem ligado por padrão. Desligar solta a tecla de verdade: ela deixa de aparecer presa em nome do Acessos nas preferências do sistema e volta a ficar livre para outro programa.</p>
+        <p>Corrige o ícone do aplicativo no Windows: o arquivo era montado com as resoluções fora de ordem, e o Windows acabava escolhendo a imagem errada no Explorer, no Alt+Tab e no instalador.</p>
       </description>
     </release>
     <release version="2.6.0" date="2026-09-19">
