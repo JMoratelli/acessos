@@ -67,6 +67,9 @@
     <release version="2.6.0" date="2026-09-19">
       <description>
         <p>Conectar agora mostra um cartão com os passos da conexao, nas quatro abas — SSH, RDP, VNC e SFTP. Se a rede demorar demais ou uma tentativa falhar, aparece um botao para conectar de novo na hora, em vez de depender de achar o Reconectar escondido na barra de sessao.</p>
+        <p>A roda do mouse passa a funcionar dentro das sessoes RDP e VNC — antes girar a roda nao tinha nenhum efeito na maquina remota.</p>
+        <p>Corrige glitches e quedas na sessao RDP: pedacos da tela que ficavam desatualizados ate outra coisa mudar por cima, travamento visual ao redimensionar a janela arrastando a borda, e uma sessao que podia travar por completo (tela congelada, sem religar sozinha) sem nenhum aviso.</p>
+        <p>SSH, RDP e VNC passam a reconectar sozinhos do mesmo jeito: se a rede cair, tentam de novo automaticamente com espera crescente; se a senha estiver errada, param e esperam um clique em Reconectar em vez de insistir sozinhos — o SSH ainda nao tinha essa protecao contra bloqueio de conta em dominio Windows.</p>
         <p>O atalho global Ctrl+Shift+F12 passa a existir tambem no Windows: aperta em qualquer lugar do sistema e abre a busca de maquinas, do mesmo jeito que ja funcionava no Linux.</p>
         <p>Corrige o fundo do RDP e do VNC aparecendo preto no tema claro antes da tela remota chegar — preto agora so aparece com uma tela remota de verdade; sem ela, o fundo acompanha o tema escolhido.</p>
         <p>Execucao em massa: um PDV Windows que cai no meio de um comando e detectado na hora, em vez de prender o worker ate 30 minutos esperando um timeout.</p>
