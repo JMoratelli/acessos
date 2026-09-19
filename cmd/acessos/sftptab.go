@@ -952,7 +952,12 @@ func (t *sftpTab) painel(gtx layout.Context, p *painelArquivos, titulo string) l
 					}),
 					layout.Rigid(layout.Spacer{Width: 4}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return botaoSutil(gtx, th, &p.btnAtual, "⟳")
+						// "↻" e não "⟳": a IBM Plex embutida tem o
+						// primeiro e não tem o segundo, e no Windows o
+						// que falta na fonte do app não cai em fonte
+						// nenhuma do sistema — vira quadradinho vazio.
+						// Ver glifos_test.go.
+						return botaoSutil(gtx, th, &p.btnAtual, "↻")
 					}),
 					layout.Rigid(layout.Spacer{Width: 6}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {

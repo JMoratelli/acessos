@@ -91,7 +91,11 @@ func menuTeclas(pos image.Point, bloqueado bool, tecla func(uint32, bool)) {
 	abrirMenu(pos, itens)
 }
 
-// botaoTeclas é o "⌁" da barra de sessão.
+// botaoTeclas é o botão de teclas especiais da barra de sessão. Só a
+// palavra, como os vizinhos ("Reconectar", "Snippets"): o "⌁" que vinha
+// antes não existe na IBM Plex embutida e, no Windows, o que falta na
+// fonte do app não cai em fonte nenhuma do sistema — saía quadradinho
+// vazio. Ver glifos_test.go.
 func botaoTeclas(gtx layout.Context, th *material.Theme, btn *widget.Clickable) layout.Dimensions {
-	return botaoSessao(gtx, th, btn, "⌁ teclas")
+	return botaoSessao(gtx, th, btn, "Teclas")
 }

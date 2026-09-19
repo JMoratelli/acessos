@@ -401,10 +401,7 @@ func (s *sidebar) ramo(gtx layout.Context, th *material.Theme, g *conexoes.Grupo
 }
 
 func (s *sidebar) linhaGrupo(gtx layout.Context, th *material.Theme, g *conexoes.Grupo, nivel int, aberto, hover bool) layout.Dimensions {
-	seta := icons.NavigationChevronRight
-	if aberto {
-		seta = icons.NavigationExpandMore
-	}
+	seta := setaExpansor(aberto)
 	cor := tema.TopoSec
 	if hover {
 		cor = tema.TopoTxt

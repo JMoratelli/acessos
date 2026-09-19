@@ -611,10 +611,7 @@ func (d *dashTab) grupo(gtx layout.Context, g *conexoes.Grupo, nivel int, termo 
 }
 
 func (d *dashTab) linhaGrupo(gtx layout.Context, g *conexoes.Grupo, nivel int, aberto, hover bool) layout.Dimensions {
-	seta := icons.NavigationChevronRight
-	if aberto {
-		seta = icons.NavigationExpandMore
-	}
+	seta := setaExpansor(aberto)
 	cor := corCategoria(g.Caminho[0])
 	tamNome := spGrupoTitulo
 	corNome := tema.Texto

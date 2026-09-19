@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync/atomic"
 
+	"gio.tools/icons"
 	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -618,6 +619,24 @@ func alternarTema() {
 		tema = temaClaro
 	}
 	lembrarGeral("tema", nomeDoTema())
+}
+
+// setaExpansor é o chevron de tudo que abre e fecha: grupo do Painel,
+// grupo da lateral, bloco do editor de conexão. Mesmo desenho nos três,
+// porque é o mesmo gesto.
+//
+// É ÍCONE, e não o texto "▸"/"▾" que o editor usava: as fontes embutidas
+// (IBM Plex, ver fontes.go) não têm esses dois glifos. No Linux o shaper
+// cai numa fonte do sistema e ninguém percebe; no Windows não há em quem
+// cair e o que aparece é o quadradinho vazio — foi assim que os "ícones
+// que não renderizam" do editor foram parar no relato de teste. Ícone do
+// gio.tools/icons é vetor desenhado pelo próprio Gio: não depende de
+// fonte nenhuma, nem do sistema. Ver glifos_test.go.
+func setaExpansor(aberto bool) *widget.Icon {
+	if aberto {
+		return icons.NavigationExpandMore
+	}
+	return icons.NavigationChevronRight
 }
 
 // ------------------------------------------------------ régua de alinhamento

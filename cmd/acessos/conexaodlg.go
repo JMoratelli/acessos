@@ -572,11 +572,20 @@ func (d *dlgConexao) bloco(gtx layout.Context, th *material.Theme, i int, titulo
 								if d.aberto == i {
 									cor = tema.Texto
 								}
-								seta := "▸"
-								if d.aberto == i {
-									seta = "▾"
-								}
-								return negrito(txt(th, fonteMono, spSecundario, seta+"  "+titulo, cor)).Layout(gtx)
+								// A seta é o MESMO chevron dos grupos do
+								// Painel e da lateral (setaExpansor, em
+								// tema.go). Era "▸"/"▾" em texto, e a
+								// IBM Plex embutida não tem esses dois
+								// glifos: no Windows saía quadradinho
+								// vazio, que é o "ícone que não
+								// renderiza" do relato.
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return icone(gtx, setaExpansor(d.aberto == i), cor, 16)
+									}),
+									layout.Rigid(layout.Spacer{Width: 6}.Layout),
+									layout.Flexed(1, negrito(txt(th, fonteMono, spSecundario, titulo, cor)).Layout),
+								)
 							})
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
