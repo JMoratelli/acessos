@@ -53,11 +53,15 @@ type sftpTab struct {
 	user   string
 	senha  string
 
-	mu      sync.Mutex
-	cli     *sftp.Client
-	ssh     *ssh.Client
-	estado  string
-	fechado bool
+	mu         sync.Mutex
+	cli        *sftp.Client
+	ssh        *ssh.Client
+	estado     string
+	fechado    bool
+	conectando atomic.Bool // evita duas conectar() concorrentes (clique duplo, botão do splash)
+
+	splash    *splash
+	btnSplash widget.Clickable
 
 	local  painelArquivos
 	remoto painelArquivos
@@ -140,6 +144,7 @@ func newSFTPTab(w *app.Window, spec map[string]string) (Tab, error) {
 		user: spec["user"], senha: spec["pass"],
 		estado: "conectando…",
 	}
+	t.splash = novoSplash(w)
 	t.local.sel = map[string]bool{}
 	t.remoto.sel = map[string]bool{}
 	t.remoto.remoto = true
@@ -187,8 +192,19 @@ func (t *sftpTab) Close() {
 	}
 }
 
+// passosSFTP: o SFTP não tem laço de reconexão automática (só o botão
+// Reconectar) e faz só duas chamadas bloqueantes sequenciais — Dial e
+// NewClient — então dois passos bastam.
+var passosSFTP = []string{"Conectando", "Abrindo SFTP"}
+
 func (t *sftpTab) conectar() {
+	if !t.conectando.CompareAndSwap(false, true) {
+		return // já há uma tentativa em andamento (clique duplo, botão do splash)
+	}
+	defer t.conectando.Store(false)
+
 	t.setEstado("conectando…")
+	t.splash.iniciar(passosSFTP)
 	cfg := &ssh.ClientConfig{
 		User: t.user,
 		Auth: []ssh.AuthMethod{ssh.Password(t.senha)},
@@ -202,16 +218,20 @@ func (t *sftpTab) conectar() {
 	if err != nil {
 		if ec := erroDeChave(err); ec != nil {
 			t.setEstado(ec.Error())
+			t.splash.setErro(ec.Error())
 			pedirConfiancaHostKey(t.w, ec, func() { go t.conectar() })
 			return
 		}
 		t.setEstado(err.Error())
+		t.splash.setErro(err.Error())
 		return
 	}
+	t.splash.avancar(1)
 	cli, err := sftp.NewClient(sc)
 	if err != nil {
 		sc.Close()
 		t.setEstado(err.Error())
+		t.splash.setErro(err.Error())
 		return
 	}
 	t.mu.Lock()
@@ -223,6 +243,7 @@ func (t *sftpTab) conectar() {
 	}
 	t.cli, t.ssh, t.estado = cli, sc, ""
 	t.mu.Unlock()
+	t.splash.concluir()
 
 	inicio := "."
 	if lar, err := cli.Getwd(); err == nil {
@@ -962,6 +983,18 @@ func (t *sftpTab) painel(gtx layout.Context, p *painelArquivos, titulo string) l
 					func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min = gtx.Constraints.Max
 						return layout.UniformInset(4).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							// O splash só cobre o painel REMOTO: o local não
+							// depende de rede nenhuma e continua usável
+							// (navegar, escolher o que vai subir) enquanto se
+							// espera a conexão — diferente de RDP/VNC/SSH,
+							// onde não há "metade útil" da aba para deixar
+							// livre.
+							if p.remoto && t.cliente() == nil {
+								icSftp, corSftp, _ := t.Selo()
+								return desenharSplash(gtx, t.th, t.splash,
+									fmt.Sprintf("%s@%s:%d", t.user, t.host, t.porta), icSftp, corSftp,
+									&t.btnSplash, func() { go t.conectar() })
+							}
 							if p.erro != "" {
 								return layout.Center.Layout(gtx, rotulo(th, fonteMono, spCardMeta, p.erro, tema.ErroFg))
 							}

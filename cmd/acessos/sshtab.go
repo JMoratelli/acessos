@@ -131,6 +131,9 @@ type sshTab struct {
 	btnAuto     widget.Clickable
 	btnSnip     widget.Clickable
 
+	splash    *splash
+	btnSplash widget.Clickable
+
 	// ultimaTecla marca a última vez que uma tecla foi enviada — ver
 	// cursorAceso().
 	ultimaTecla time.Time
@@ -210,6 +213,7 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 		estado:  "conectando…",
 		religar: make(chan struct{}, 1),
 	}
+	t.splash = novoSplash(w)
 	t.auto.Store(true)
 	t.nomeConexao = spec["rotulo"]
 	if spec["auto"] == "0" {
@@ -268,6 +272,7 @@ func (t *sshTab) laco() {
 			msg = err.Error()
 			reg("[%s] ssh falhou: %v", t.titulo, err)
 		}
+		t.splash.setErro(msg)
 		if !t.auto.Load() {
 			// reconexão automática desligada: espera o botão.
 			t.setEstado(msg + " — parada (clique em Reconectar)")
@@ -278,6 +283,7 @@ func (t *sshTab) laco() {
 			}
 		}
 		t.setEstado(fmt.Sprintf("%s — reconectando em %s", msg, espera))
+		t.splash.aguardar(time.Now().Add(espera))
 		select {
 		case <-time.After(espera):
 		case <-t.religar:
@@ -290,9 +296,18 @@ func (t *sshTab) laco() {
 	}
 }
 
+// passosSSH: dois pontos observáveis sem mexer no formato da conexão —
+// o aperto de mão (Dial, que já inclui a autenticação: a lib do Go faz
+// as duas coisas numa chamada só) e a montagem da sessão interativa
+// (NewSession + PTY + pipes). Não há como separar autenticação de
+// handshake TCP sem trocar ssh.Dial por Dial+NewClientConn, e mexer
+// nisso não vale o risco só para ganhar um passo a mais no cartão.
+var passosSSH = []string{"Conectando", "Abrindo sessão"}
+
 // sessao abre uma sessão e só volta quando ela morre.
 func (t *sshTab) sessao() error {
 	t.setEstado("conectando…")
+	t.splash.iniciar(passosSSH)
 	cfg := &ssh.ClientConfig{
 		User: t.user,
 		Auth: []ssh.AuthMethod{ssh.Password(t.senha)},
@@ -343,6 +358,7 @@ func (t *sshTab) sessao() error {
 		return fmt.Errorf("%w", err)
 	}
 	defer cli.Close()
+	t.splash.avancar(1)
 
 	sess, err := cli.NewSession()
 	if err != nil {
@@ -379,6 +395,7 @@ func (t *sshTab) sessao() error {
 	t.jaConectou = true
 	reg("[%s] ssh pronto em %s", t.titulo, time.Since(inicio).Truncate(time.Millisecond))
 	t.mu.Unlock()
+	t.splash.concluir()
 	t.invalidar()
 
 	// Numa RECONEXÃO (rede caiu, ou a máquina remota reiniciou), a tela
@@ -855,6 +872,10 @@ func (t *sshTab) layoutTerminal(gtx layout.Context) layout.Dimensions {
 	defer op.Offset(image.Pt(margem, margem)).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: image.Pt(size.X-margem, size.Y-margem)}.Push(gtx.Ops).Pop()
 	t.desenharGrade(gtx, cols, rows, avanco, alturaCel)
+	icSsh, corSsh, _ := t.Selo()
+	desenharSplash(gtx, t.th, t.splash,
+		fmt.Sprintf("%s@%s:%d", t.user, t.host, t.porta), icSsh, corSsh,
+		&t.btnSplash, t.Reconectar)
 
 	t.mu.Lock()
 	texto := t.estado

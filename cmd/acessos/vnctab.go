@@ -116,7 +116,14 @@ type vncTab struct {
 	btnAuto     widget.Clickable
 	btnClip     widget.Clickable
 	btnModo     [2]widget.Clickable
+
+	splash    *splash
+	btnSplash widget.Clickable
 }
+
+// passosVNC: mesma ideia de passosRDP (ver rdptab.go), sem o passo de
+// resolução dinâmica — o VNC não tem.
+var passosVNC = []string{"Iniciando processo", "Conectando", "Recebendo tela"}
 
 // modos da tela remota. "encaixar" reduz só quando não cabe (nunca
 // amplia — ampliar borra o texto do PDV); "1:1" mostra pixel a pixel,
@@ -139,6 +146,7 @@ func newVNCTab(w *app.Window, spec map[string]string) *vncTab {
 		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
+	t.splash = novoSplash(w)
 	t.auto.Store(true)
 	t.clipOn.Store(true)
 	t.nomeConexao = spec["rotulo"]
@@ -177,15 +185,17 @@ func (t *vncTab) Close() {
 // uma imagem parada que continua parecendo viva é pior que preto.
 func (t *vncTab) manageSession(user, pass string) {
 	gerenciarSessaoRemota(sessaoRemotaCfg{
-		title:      t.title,
-		stop:       t.stop,
-		religar:    t.religar,
-		w:          t.w,
-		proc:       &t.proc,
-		caiu:       &t.caiu,
-		auto:       &t.auto,
-		rodar:      func() fimSessao { return t.rodarSessao(user, pass) },
-		aoTerminar: func() { t.tela.Store(nil) },
+		title:           t.title,
+		stop:            t.stop,
+		religar:         t.religar,
+		w:               t.w,
+		proc:            &t.proc,
+		caiu:            &t.caiu,
+		auto:            &t.auto,
+		rodar:           func() fimSessao { return t.rodarSessao(user, pass) },
+		antesDeConectar: func() { t.splash.iniciar(passosVNC) },
+		aoTerminar:      func() { t.tela.Store(nil) },
+		aoAguardar:      t.splash.aguardar,
 	})
 }
 
@@ -195,9 +205,15 @@ func (t *vncTab) manageSession(user, pass string) {
 func (t *vncTab) rodarSessao(user, pass string) fimSessao {
 	return rodarSessaoRemota("vnc", t.title, t.host, t.port, t.stop, t.religar,
 		func(proc *telaproc.Processo) error {
-			return proc.Conectar(telaproc.Ligacao{
+			err := proc.Conectar(telaproc.Ligacao{
 				Host: t.host, Porta: t.port, Usuario: user, Senha: pass,
 			})
+			if err != nil {
+				t.splash.setErro(err.Error())
+				return err
+			}
+			t.splash.avancar(1)
+			return nil
 		},
 		t.lacoEventos,
 	)
@@ -224,6 +240,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
 			t.proc.Store(proc)
 			t.caiu.Store(false)
+			t.splash.avancar(2)
 			t.w.Invalidate()
 			_ = proc.Credito()
 
@@ -232,6 +249,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			_ = json.Unmarshal(corpo, &f)
 			reg("[%s] falha: %s (auth=%v precisa_usuario=%v recusado=%v)",
 				t.title, f.Mensagem, f.AuthFalhou, f.PrecisaUsuario, f.Recusado)
+			t.splash.setErro(f.Mensagem)
 			return true
 
 		case telaproc.EvtQuadro:
@@ -244,6 +262,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.fw.Store(q.TotalW)
 			t.fh.Store(q.TotalH)
 			publicarTela(&t.tela, acum)
+			t.splash.concluir()
 			t.w.Invalidate()
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
@@ -253,6 +272,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 
 		case telaproc.EvtDesconectado:
 			reg("[%s] sessão caiu: %s", t.title, string(corpo))
+			t.splash.setErro(string(corpo))
 			return false
 
 		case telaproc.EvtClipboard:
@@ -312,7 +332,15 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 	defer area.Pop()
 	pointer.Cursor(t.cursorAtual.Load()).Add(gtx.Ops)
 
-	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
+	// Preto só faz sentido como "sem sinal" atrás de uma tela remota de
+	// verdade — letterboxing de vídeo, sempre preto em qualquer tema. Sem
+	// tela (splash em cima), o fundo acompanha o tema: preto fixo no
+	// tema claro parecia bug, não vídeo.
+	fundo := color.NRGBA{A: 255}
+	if tela == nil {
+		fundo = tema.Fundo
+	}
+	paint.ColorOp{Color: fundo}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 
 	if tela != nil {
@@ -332,6 +360,11 @@ func (t *vncTab) Layout(gtx layout.Context) layout.Dimensions {
 		t.opCache.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		tr.Pop()
+	} else {
+		ic, corSelo, _ := t.Selo()
+		desenharSplash(gtx, temaApp, t.splash,
+			fmt.Sprintf("%s:%d", t.host, t.port), ic, corSelo,
+			&t.btnSplash, t.Reconectar)
 	}
 
 	return layout.Dimensions{Size: size}

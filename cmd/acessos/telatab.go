@@ -181,6 +181,11 @@ type sessaoRemotaCfg struct {
 	// aoTerminar roda logo depois que uma tentativa termina, antes de
 	// decidir o que fazer a partir do fimSessao que ela devolveu.
 	aoTerminar func()
+	// aoAguardar roda só no caminho de backoff automático (nunca na
+	// espera indefinida por um clique manual), com quando a próxima
+	// tentativa vai acontecer — é o que alimenta a contagem regressiva
+	// do splash (ver splash.go).
+	aoAguardar func(proximaEm time.Time)
 }
 
 // gerenciarSessaoRemota é o laço de reconexão comum a rdpTab e vncTab:
@@ -241,6 +246,9 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 		wait := backoffSchedule[min(attempt, len(backoffSchedule)-1)]
 		attempt++
 		reg("[%s] reconectando em %s (tentativa #%d)", cfg.title, wait, attempt)
+		if cfg.aoAguardar != nil {
+			cfg.aoAguardar(time.Now().Add(wait))
+		}
 		select {
 		case <-time.After(wait):
 		case <-cfg.religar:

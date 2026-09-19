@@ -103,7 +103,17 @@ type rdpTab struct {
 	btnAuto     widget.Clickable
 	btnClip     widget.Clickable
 	btnModo     [3]widget.Clickable
+
+	splash    *splash
+	btnSplash widget.Clickable
 }
+
+// passosRDP são os únicos três pontos observáveis do lado de cá: o
+// processo-filho existe, ele confirmou a conexão, e o primeiro
+// retângulo de tela chegou. Não há meio-termo real entre eles (ver
+// lacoEventos) — inventar mais passos que isso seria fingir precisão
+// que o protocolo não dá.
+var passosRDP = []string{"Iniciando processo", "Conectando", "Recebendo tela"}
 
 // No RDP existe um terceiro modo: "Dinâmico" pede ao servidor a resolução
 // do tamanho da aba (canal Display Control), em vez de escalar do lado de
@@ -124,6 +134,7 @@ func newRDPTab(w *app.Window, spec map[string]string) *rdpTab {
 		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
+	t.splash = novoSplash(w)
 	t.auto.Store(true)
 	t.clipOn.Store(true)
 	t.modo.Store(modoDinamico)
@@ -160,16 +171,20 @@ func (t *rdpTab) Close() {
 // que preto.
 func (t *rdpTab) manageSession(user, pass, domain string) {
 	gerenciarSessaoRemota(sessaoRemotaCfg{
-		title:           t.title,
-		stop:            t.stop,
-		religar:         t.religar,
-		w:               t.w,
-		proc:            &t.proc,
-		caiu:            &t.caiu,
-		auto:            &t.auto,
-		rodar:           func() fimSessao { return t.rodarSessao(user, pass, domain) },
-		antesDeConectar: t.esquecerTamanho,
-		aoTerminar:      func() { t.tela.Store(nil) },
+		title:   t.title,
+		stop:    t.stop,
+		religar: t.religar,
+		w:       t.w,
+		proc:    &t.proc,
+		caiu:    &t.caiu,
+		auto:    &t.auto,
+		rodar:   func() fimSessao { return t.rodarSessao(user, pass, domain) },
+		antesDeConectar: func() {
+			t.esquecerTamanho()
+			t.splash.iniciar(passosRDP)
+		},
+		aoTerminar: func() { t.tela.Store(nil) },
+		aoAguardar: t.splash.aguardar,
 	})
 }
 
@@ -187,10 +202,16 @@ func (t *rdpTab) esquecerTamanho() {
 func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 	return rodarSessaoRemota("rdp", t.title, t.host, t.port, t.stop, t.religar,
 		func(proc *telaproc.Processo) error {
-			return proc.Conectar(telaproc.Ligacao{
+			err := proc.Conectar(telaproc.Ligacao{
 				Host: t.host, Porta: t.port,
 				Usuario: user, Senha: pass, Dominio: domain,
 			})
+			if err != nil {
+				t.splash.setErro(err.Error())
+				return err
+			}
+			t.splash.avancar(1)
+			return nil
 		},
 		t.lacoEventos,
 	)
@@ -217,6 +238,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			reg("[%s] conectado em %s", t.title, time.Since(inicio).Truncate(time.Millisecond))
 			t.proc.Store(proc)
 			t.caiu.Store(false)
+			t.splash.avancar(2)
 			t.w.Invalidate()
 			_ = proc.Credito()
 
@@ -224,6 +246,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			var f telaproc.Falha
 			_ = json.Unmarshal(corpo, &f)
 			reg("[%s] falha: %s (auth=%v)", t.title, f.Mensagem, f.AuthFalhou)
+			t.splash.setErro(f.Mensagem)
 			return true
 
 		case telaproc.EvtQuadro:
@@ -236,6 +259,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.fw.Store(q.TotalW)
 			t.fh.Store(q.TotalH)
 			publicarTela(&t.tela, acum)
+			t.splash.concluir()
 			t.w.Invalidate()
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
@@ -245,6 +269,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 
 		case telaproc.EvtDesconectado:
 			reg("[%s] sessão caiu: %s", t.title, string(corpo))
+			t.splash.setErro(string(corpo))
 			return false
 
 		case telaproc.EvtClipboard:
@@ -344,7 +369,15 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	defer area.Pop()
 	pointer.Cursor(t.cursorAtual.Load()).Add(gtx.Ops)
 
-	paint.ColorOp{Color: color.NRGBA{A: 255}}.Add(gtx.Ops)
+	// Preto só faz sentido como "sem sinal" atrás de uma tela remota de
+	// verdade — é letterboxing de vídeo, sempre preto em qualquer app,
+	// tema nenhum. Sem tela (splash em cima), quem cobre a área é o
+	// fundo do tema: preto fixo no tema claro parecia bug, não vídeo.
+	fundo := color.NRGBA{A: 255}
+	if tela == nil {
+		fundo = tema.Fundo
+	}
+	paint.ColorOp{Color: fundo}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 
 	if tela != nil {
@@ -363,6 +396,11 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 		t.opCache.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		tr.Pop()
+	} else {
+		ic, corSelo, _ := t.Selo()
+		desenharSplash(gtx, temaApp, t.splash,
+			fmt.Sprintf("%s:%d", t.host, t.port), ic, corSelo,
+			&t.btnSplash, t.Reconectar)
 	}
 
 	return layout.Dimensions{Size: size}
