@@ -40,10 +40,33 @@ package main
 // que se vê é um cartão de vidro flutuando, com sombra, igual aos cards
 // do Painel. Quem limita o desenho é a margem em volta — é ela que deixa
 // a sombra aparecer e os cantos arredondados recortarem o fundo.
+//
+// NO WINDOWS NÃO: lá a janela é o cartão, sólido e de canto reto (ver
+// medidasDaBusca). Duas pegadinhas, as duas medidas nesta máquina:
+//
+//   - `app.Translucent` só existe no Wayland (ver third_party/gio/
+//     PATCH.md). No Windows o quadro é limpo com PRETO TRANSPARENTE e a
+//     swapchain D3D11 não compõe alfa com o que está atrás, então pixel
+//     não pintado não fica transparente — sai PRETO (medido aqui);
+//   - pior, o Gio pede `DwmExtendFrameIntoClientArea(-1,-1,-1,-1)` em
+//     toda janela sem decoração, para ela ganhar a sombra do sistema.
+//     Isso põe a MOLDURA do Windows ATRÁS do conteúdo — inclusive os
+//     botões de maximizar e fechar, no canto de cima à direita. Onde o
+//     app pinta opaco ela some; onde não pinta (a margem transparente),
+//     ela aparece. Era daí que vinham os "botões do sistema" na caixa
+//     de busca, e é por isso que a janela principal, que pinta cada
+//     pixel, nunca mostrou nada disso.
+//
+// A caixa também nasce CENTRALIZADA (system.ActionCenter, ver o laço):
+// sem isso o Windows a punha no canto da cascata, em cima e à esquerda.
+// No Wayland a ação é ignorada — quem escolhe onde a janela nasce é o
+// compositor, e ele já a põe no meio.
 
 import (
 	"fmt"
+	"image/color"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -74,14 +97,49 @@ const (
 	buscaMargem = unit.Dp(14)
 	buscaRaio   = unit.Dp(12)
 	buscaLarg   = unit.Dp(640)
-	// Altura SEM lista. A janela cresce conforme os resultados: nasce só
-	// com o campo, como decidido, e não reserva espaço para uma lista
-	// que talvez não venha.
-	buscaAlt = unit.Dp(104)
+	// Altura do CARTÃO sem lista: os respiros de cima e de baixo (14+12),
+	// o campo (~40) e a linha de ajuda do rodapé com o Spacer dela (8+14).
+	// A janela cresce conforme os resultados: nasce só com o campo, como
+	// decidido, e não reserva espaço para uma lista que talvez não venha.
+	//
+	// Era 76 (janela de 104 com as margens), e nessa altura o RODAPÉ
+	// ficava de fora — a linha some no corte, e com ela o aviso de
+	// "mais N — refine o termo", que é justamente o que evita conectar
+	// na máquina errada quando o termo casou com mais de uma.
+	buscaCartaoAlt = unit.Dp(90)
 	// Respiro entre o campo e a primeira linha da lista (o mesmo Spacer
 	// que `lista` insere) — entra na conta da altura da janela.
 	buscaRespiroLista = unit.Dp(10)
 )
+
+// buscaSolida: no Windows não há alfa por pixel nesta janela, e o que
+// não for pintado mostra a moldura do sistema — ver o cabeçalho.
+const buscaSolida = runtime.GOOS == "windows"
+
+// As medidas de fato usadas. buscaAlt é a altura da JANELA fechada (o
+// cartão mais as duas margens), e é ela que vai no app.Size.
+var buscaMargemJanela, buscaRaioJanela, buscaAlt = medidasDaBusca()
+
+func medidasDaBusca() (margem, raio, alt unit.Dp) {
+	margem, raio = buscaMargem, buscaRaio
+	if buscaSolida {
+		// Janela = cartão: sem margem para a moldura do sistema
+		// aparecer, e sem raio porque os quatro cantos de fora do
+		// arredondado seriam exatamente isso — buracos não pintados.
+		margem, raio = 0, 0
+	}
+	return margem, raio, buscaCartaoAlt + 2*margem
+}
+
+// fundoDaBusca é o vidro do cartão — sólido onde a translucidez não
+// existe, senão o desktop não atravessa: o que aparece por baixo do alfa
+// é a moldura do Windows.
+func fundoDaBusca() color.NRGBA {
+	if buscaSolida {
+		return tema.Cartao
+	}
+	return tema.BuscaVidro
+}
 
 // buscaPrazoFoco: quanto se espera pelo foco antes de desistir. Medido em
 // janela solta, o KWin dá o foco em ~60ms; três segundos é folga de
@@ -114,6 +172,10 @@ type janelaBusca struct {
 	// um clique por (linha, protocolo): o ícone no fim da linha abre
 	// AQUELE protocolo, sem passar pelo preferido do Enter.
 	cliquesProto [][]widget.Clickable
+
+	// centrou marca que a janela já foi para o meio da tela. Uma vez só,
+	// no primeiro quadro — ver o laço.
+	centrou bool
 
 	// jaFocou evita fechar no primeiro quadro: a janela nasce sem foco e
 	// só ganha uns 60ms depois (medido; ver cmd/janelatest). Fechar ao
@@ -297,10 +359,16 @@ func (j *janelaBusca) escolher(i int, p conexoes.Protocolo, w *app.Window) {
 		ch, err := w.PedirTokenAtivacao()
 		j.aoEscolher(cx, p, avulso, "")
 		if err != nil {
-			// Sem token a aba abre do mesmo jeito; o que se perde é a
-			// janela grande vir para a frente. Degradar assim é bem
-			// melhor que não abrir.
+			// Sem token a aba abre do mesmo jeito, e a janela grande
+			// ainda vem para a frente: quem recebe cai no ActionRaise
+			// (ver trazerParaFrente), que é como Windows e X11 fazem
+			// isso — o token é coisa do Wayland. Voltar daqui sem
+			// avisar era o que deixava o app ABRINDO A ABA ATRÁS DE
+			// TUDO no Windows, onde este erro é o caminho normal.
 			fmt.Fprintf(os.Stderr, "busca: sem token de ativação (%v)\n", err)
+			if j.aoAtivar != nil {
+				j.aoAtivar("")
+			}
 			w.Perform(system.ActionClose)
 			return
 		}
@@ -408,6 +476,16 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao s
 				gtx := app.NewContext(&ops, e)
 				j.quadro(gtx, w)
 				e.Frame(gtx.Ops)
+				// Centraliza DEPOIS do primeiro quadro: a ação mede a
+				// janela que existe (GetWindowRect), e antes disso ela
+				// ainda não tem o tamanho pedido. Uma vez só — a caixa
+				// cresce PARA BAIXO quando a lista aparece, como todo
+				// campo de busca com sugestões; recentralizar a cada
+				// linha faria o campo pular debaixo do dedo.
+				if !j.centrou {
+					j.centrou = true
+					j.naJanela(w, func() { w.Perform(system.ActionCenter) })
+				}
 				// O token de ativação só pode ser gasto com o driver de
 				// pé, e sai pela fila para não ser mais um w.Run de
 				// dentro de um quadro (ver acaojanela.go).
@@ -511,12 +589,16 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		}
 	}
 
-	return layout.UniformInset(buscaMargem).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.UniformInset(buscaMargemJanela).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
-				sombra(gtx, size, buscaRaio)
+				// Sem margem não há onde a sombra cair: ela sairia por
+				// baixo do próprio cartão, pintando a borda de escuro.
+				if buscaMargemJanela > 0 {
+					sombra(gtx, size, buscaRaioJanela)
+				}
 				// Vidro, não sólido: é o mesmo tratamento dos cards, e
 				// aqui ele tem função — a caixa aparece POR CIMA do que
 				// a pessoa estava olhando, e deixar o fundo atravessar
@@ -527,7 +609,7 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 				// não aguentam o mesmo valor: sobre um desktop qualquer,
 				// o cartão escuro pode ser bem mais fino que o claro sem
 				// o texto perder legibilidade.
-				superficie(gtx, size, tema.BuscaVidro, tema.Borda2, buscaRaio)
+				superficie(gtx, size, fundoDaBusca(), tema.Borda2, buscaRaioJanela)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {

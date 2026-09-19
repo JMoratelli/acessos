@@ -101,10 +101,11 @@ func aplicarPedidoDeAbrir(w *app.Window, bar *tabBar, painel *dashTab, m mensage
 // ÚNICA forma de uma janela se pôr à frente, e ele foi pedido pela caixa
 // de busca enquanto ela ainda tinha o foco.
 //
-// As duas saídas passam por foraDoQuadro porque isto roda dentro do
-// drenarFilaJanela(), ou seja, com um quadro em voo — e AtivarCom/Perform
-// vão parar no Window.Run, que no Windows reentra no windowProc. Mesmo
-// congelamento do botão de minimizar; ver acaojanela.go.
+// As duas saídas passam por foraDoQuadro porque AtivarCom/Perform vão
+// parar no Window.Run, que no Windows reentra no windowProc — mesmo
+// congelamento do botão de minimizar; ver acaojanela.go. Continua
+// valendo mesmo agora que o drenarFilaJanela() roda no topo do laço:
+// quem chama isto também pode ser um quadro (o Painel, por exemplo).
 func trazerParaFrente(w *app.Window, token string) {
 	if token != "" {
 		foraDoQuadro(func() {
