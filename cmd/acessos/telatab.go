@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"acessos-go/internal/telaproc"
+
+	"gioui.org/app"
 )
 
 // creditarConformeVisibilidade libera o próximo quadro: na hora se a aba
@@ -90,6 +92,163 @@ func aplicarQuadro(acum *image.NRGBA, q telaproc.Quadro, pix []byte) *image.NRGB
 		copy(dst[:w*4], pix[linha*w*4:])
 	}
 	return acum
+}
+
+// rodarSessaoRemota sobe o processo-filho do protocolo indicado, conecta
+// e entrega os eventos a lacoEventos até a sessão acabar — cuidando de
+// sempre encerrar o processo e nunca vazar a goroutine vigia, que é a
+// que traduz "fechar a aba"/"reconectar agora" num Fechar() que acorda a
+// leitura do socket na hora em vez de deixá-la bloqueada.
+//
+// rdpTab e vncTab chamavam isto com o mesmo corpo, byte a byte, mudando
+// só o protocolo e como conectar() monta a telaproc.Ligacao — lacoEventos
+// fica de fora de propósito: RDP e VNC reagem a eventos diferentes
+// (canal Display Control e diálogo de certificado só existem no RDP), e
+// forçar isso numa função genérica só complicaria sem tirar duplicação
+// de verdade.
+func rodarSessaoRemota(
+	protocolo, title, host string, port int,
+	stop, religar <-chan struct{},
+	conectar func(*telaproc.Processo) error,
+	lacoEventos func(proc *telaproc.Processo, inicio time.Time) (falhou bool),
+) fimSessao {
+	proc, err := telaproc.Iniciar(protocolo)
+	if err != nil {
+		reg("[%s] %v", title, err)
+		return fimCaiu
+	}
+	defer proc.Encerrar()
+
+	var pedido atomic.Int32
+	pedido.Store(int32(fimCaiu))
+	saiu := make(chan struct{})
+	defer close(saiu)
+	go func() {
+		select {
+		case <-stop:
+			pedido.Store(int32(fimParar))
+		case <-religar:
+			pedido.Store(int32(fimReligar))
+		case <-saiu:
+			return
+		}
+		_ = proc.Fechar()
+	}()
+
+	reg("[%s] conectando a %s:%d…", title, host, port)
+	inicio := time.Now()
+	if err := conectar(proc); err != nil {
+		reg("[%s] não consegui pedir a conexão: %v", title, err)
+		return fimSessao(pedido.Load())
+	}
+
+	if falhou := lacoEventos(proc, inicio); falhou {
+		// A falha de conexão vence o que o vigia tiver anotado, EXCETO
+		// fechar a aba: se o operador já mandou fechar, fechar é o que
+		// vale.
+		if fimSessao(pedido.Load()) == fimParar {
+			return fimParar
+		}
+		return fimFalhou
+	}
+	if fimSessao(pedido.Load()) == fimCaiu {
+		reg("[%s] processo %d da sessão terminou", title, proc.PID())
+	}
+	return fimSessao(pedido.Load())
+}
+
+// sessaoRemotaCfg agrupa o que gerenciarSessaoRemota precisa de uma aba
+// de tela remota para tocar o laço de reconexão com backoff. Os dois
+// hooks são opcionais (nil vira no-op) — é onde cada protocolo limpa o
+// que só ele tem: o RDP apaga a tela congelada e esquece a resolução já
+// pedida ao servidor: nenhum dos dois existe no VNC.
+type sessaoRemotaCfg struct {
+	title   string
+	stop    <-chan struct{}
+	religar <-chan struct{}
+	w       *app.Window
+	proc    *atomic.Pointer[telaproc.Processo]
+	caiu    *atomic.Bool
+	auto    *atomic.Bool
+
+	// rodar sobe uma tentativa de sessão e bloqueia até ela terminar.
+	rodar func() fimSessao
+
+	// antesDeConectar roda logo antes de CADA tentativa, a primeira
+	// inclusive — estado que precisa estar limpo antes de rodar() pedir
+	// a conexão de novo.
+	antesDeConectar func()
+	// aoTerminar roda logo depois que uma tentativa termina, antes de
+	// decidir o que fazer a partir do fimSessao que ela devolveu.
+	aoTerminar func()
+}
+
+// gerenciarSessaoRemota é o laço de reconexão comum a rdpTab e vncTab:
+// religa com backoff crescente até a aba fechar, e pula o backoff quando
+// quem pediu foi um clique em Reconectar. Falha de credencial/política
+// (fimFalhou) NUNCA entra no backoff — ver o comentário em fimFalhou:
+// insistir de poucos em poucos segundos com a senha errada não é
+// persistência, é força bruta contra o próprio parque.
+func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
+	rodarHook := func() fimSessao {
+		if cfg.antesDeConectar != nil {
+			cfg.antesDeConectar()
+		}
+		return cfg.rodar()
+	}
+
+	attempt := 0
+	for {
+		fim := rodarHook()
+		cfg.proc.Store(nil)
+		if cfg.aoTerminar != nil {
+			cfg.aoTerminar()
+		}
+		cfg.w.Invalidate()
+
+		switch fim {
+		case fimParar:
+			return
+		case fimReligar:
+			attempt = 0
+			continue
+		case fimFalhou:
+			cfg.caiu.Store(true)
+			cfg.w.Invalidate()
+			select {
+			case <-cfg.religar:
+				attempt = 0
+				continue
+			case <-cfg.stop:
+				return
+			}
+		}
+
+		cfg.caiu.Store(true)
+		cfg.w.Invalidate()
+		if !cfg.auto.Load() {
+			// Reconexão automática desligada: fica parada até alguém
+			// clicar em Reconectar.
+			select {
+			case <-cfg.religar:
+				attempt = 0
+				continue
+			case <-cfg.stop:
+				return
+			}
+		}
+
+		wait := backoffSchedule[min(attempt, len(backoffSchedule)-1)]
+		attempt++
+		reg("[%s] reconectando em %s (tentativa #%d)", cfg.title, wait, attempt)
+		select {
+		case <-time.After(wait):
+		case <-cfg.religar:
+			attempt = 0
+		case <-cfg.stop:
+			return
+		}
+	}
 }
 
 // publicarTela congela a tela acumulada numa imagem nova e a entrega ao

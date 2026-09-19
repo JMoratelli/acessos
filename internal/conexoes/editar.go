@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"acessos-go/internal/iniutil"
 )
 
 // A edição do .ini é feita LINHA A LINHA, não regravando a partir da
@@ -18,57 +20,6 @@ import (
 // Toda escrita é atômica: grava num arquivo temporário ao lado e renomeia
 // por cima. Um INI truncado no meio de uma gravação levaria junto as 274
 // conexões.
-
-func gravarAtomico(caminho string, linhas []string) error {
-	tmp := caminho + ".tmp"
-	conteudo := strings.Join(linhas, "\n")
-	if !strings.HasSuffix(conteudo, "\n") {
-		conteudo += "\n"
-	}
-	if err := os.WriteFile(tmp, []byte(conteudo), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, caminho)
-}
-
-func lerLinhas(caminho string) ([]string, error) {
-	b, err := os.ReadFile(caminho)
-	if err != nil {
-		return nil, err
-	}
-	return strings.Split(strings.TrimRight(string(b), "\n"), "\n"), nil
-}
-
-// nomeSecao devolve o nome se a linha for um cabeçalho [assim].
-func nomeSecao(linha string) (string, bool) {
-	t := strings.TrimSpace(linha)
-	if len(t) >= 2 && t[0] == '[' && t[len(t)-1] == ']' {
-		return t[1 : len(t)-1], true
-	}
-	return "", false
-}
-
-// faixaSecao acha o intervalo [ini,fim) das linhas de uma seção, incluindo
-// o cabeçalho.
-func faixaSecao(linhas []string, nome string) (int, int, bool) {
-	ini := -1
-	for i, l := range linhas {
-		n, ok := nomeSecao(l)
-		if !ok {
-			continue
-		}
-		if ini >= 0 {
-			return ini, i, true
-		}
-		if n == nome {
-			ini = i
-		}
-	}
-	if ini >= 0 {
-		return ini, len(linhas), true
-	}
-	return 0, 0, false
-}
 
 // chaveDaLinha separa "chave = valor" preservando o que veio antes do "=".
 func chaveDaLinha(linha string) (chave, valor string, ok bool) {
@@ -89,15 +40,15 @@ func chaveDaLinha(linha string) (chave, valor string, ok bool) {
 // encher o histórico com elas afogaria as edições de conexão, que são o
 // que realmente importa poder desfazer.
 func SalvarGeral(caminho string, campos map[string]string) error {
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
-	if _, _, ok := faixaSecao(linhas, "geral"); !ok {
+	if _, _, ok := iniutil.Faixa(linhas, "geral"); !ok {
 		// [geral] vai no TOPO: é o cabeçalho do arquivo, e uma seção nova
 		// no fim ficaria depois das conexões, onde ninguém procura.
 		linhas = append([]string{"[geral]", ""}, linhas...)
-		if err := gravarAtomico(caminho, linhas); err != nil {
+		if err := iniutil.GravarAtomico(caminho, linhas); err != nil {
 			return err
 		}
 	}
@@ -107,15 +58,15 @@ func SalvarGeral(caminho string, campos map[string]string) error {
 // Remover apaga a seção inteira de uma conexão.
 func Remover(caminho, nome string) error {
 	guardarCopia(caminho, fmt.Sprintf("removeu %q", nome))
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
-	ini, fim, ok := faixaSecao(linhas, nome)
+	ini, fim, ok := iniutil.Faixa(linhas, nome)
 	if !ok {
 		return fmt.Errorf("conexão %q não está em %s", nome, caminho)
 	}
-	return gravarAtomico(caminho, append(append([]string{}, linhas[:ini]...), linhas[fim:]...))
+	return iniutil.GravarAtomico(caminho, append(append([]string{}, linhas[:ini]...), linhas[fim:]...))
 }
 
 // Duplicar copia a seção inteira com outro nome, logo abaixo da original.
@@ -123,14 +74,14 @@ func Remover(caminho, nome string) error {
 // segredos cifrados como estão — não precisa do cofre aberto para duplicar.
 func Duplicar(caminho, nome, novoNome string) error {
 	guardarCopia(caminho, fmt.Sprintf("duplicou %q", nome))
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
-	if _, _, existe := faixaSecao(linhas, novoNome); existe {
+	if _, _, existe := iniutil.Faixa(linhas, novoNome); existe {
 		return fmt.Errorf("já existe uma conexão chamada %q", novoNome)
 	}
-	ini, fim, ok := faixaSecao(linhas, nome)
+	ini, fim, ok := iniutil.Faixa(linhas, nome)
 	if !ok {
 		return fmt.Errorf("conexão %q não está em %s", nome, caminho)
 	}
@@ -142,7 +93,7 @@ func Duplicar(caminho, nome, novoNome string) error {
 	out := append([]string{}, linhas[:fim]...)
 	out = append(out, copia...)
 	out = append(out, linhas[fim:]...)
-	return gravarAtomico(caminho, out)
+	return iniutil.GravarAtomico(caminho, out)
 }
 
 // Salvar aplica campos a uma seção: chave existente é substituída no lugar
@@ -156,16 +107,16 @@ func Salvar(caminho, nome, novoNome string, campos map[string]string) error {
 // salvarSecao é o miolo do Salvar, sem o histórico — separado para o
 // SalvarGeral reusar a mesma edição linha a linha.
 func salvarSecao(caminho, nome, novoNome string, campos map[string]string) error {
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
-	ini, fim, ok := faixaSecao(linhas, nome)
+	ini, fim, ok := iniutil.Faixa(linhas, nome)
 	if !ok {
 		return fmt.Errorf("conexão %q não está em %s", nome, caminho)
 	}
 	if novoNome != "" && novoNome != nome {
-		if _, _, existe := faixaSecao(linhas, novoNome); existe {
+		if _, _, existe := iniutil.Faixa(linhas, novoNome); existe {
 			return fmt.Errorf("já existe uma conexão chamada %q", novoNome)
 		}
 		linhas[ini] = "[" + novoNome + "]"
@@ -215,7 +166,7 @@ func salvarSecao(caminho, nome, novoNome string, campos map[string]string) error
 	out := append([]string{}, linhas[:ini+1]...)
 	out = append(out, corpo...)
 	out = append(out, linhas[fim:]...)
-	return gravarAtomico(caminho, out)
+	return iniutil.GravarAtomico(caminho, out)
 }
 
 // ordemChaves mantém as chaves novas na mesma ordem que o app original
@@ -239,13 +190,13 @@ func TrocarSenhaMestra(caminho string, decifrar func(string) (string, error),
 
 	guardarCopia(caminho, "trocou a senha mestra (recifrou tudo)")
 
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
 	emCofre := false
 	for i, l := range linhas {
-		if n, ok := nomeSecao(l); ok {
+		if n, ok := iniutil.NomeSecao(l); ok {
 			emCofre = n == "cofre"
 			continue
 		}
@@ -272,7 +223,7 @@ func TrocarSenhaMestra(caminho string, decifrar func(string) (string, error),
 		}
 		linhas[i] = c + " = " + selado
 	}
-	return gravarAtomico(caminho, linhas)
+	return iniutil.GravarAtomico(caminho, linhas)
 }
 
 // Criar acrescenta uma seção nova no fim do arquivo. O nome é a chave da
@@ -281,11 +232,11 @@ func TrocarSenhaMestra(caminho string, decifrar func(string) (string, error),
 // uma e descartar a outra sem avisar.
 func Criar(caminho, nome string, campos map[string]string) error {
 	guardarCopia(caminho, fmt.Sprintf("criou %q", nome))
-	linhas, err := lerLinhas(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
 		return err
 	}
-	if _, _, existe := faixaSecao(linhas, nome); existe {
+	if _, _, existe := iniutil.Faixa(linhas, nome); existe {
 		return fmt.Errorf("já existe uma conexão chamada %q", nome)
 	}
 	for len(linhas) > 0 && strings.TrimSpace(linhas[len(linhas)-1]) == "" {
@@ -297,7 +248,7 @@ func Criar(caminho, nome string, campos map[string]string) error {
 			linhas = append(linhas, k+" = "+v)
 		}
 	}
-	return gravarAtomico(caminho, linhas)
+	return iniutil.GravarAtomico(caminho, linhas)
 }
 
 // ------------------------------------------------------------ histórico

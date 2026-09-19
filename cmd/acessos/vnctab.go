@@ -169,111 +169,38 @@ func (t *vncTab) Close() {
 	t.closeOnce.Do(func() { close(t.stop) })
 }
 
+// manageSession delega o laço de reconexão a gerenciarSessaoRemota (ver
+// telatab.go), compartilhado com rdpTab. Sem antesDeConectar: o VNC não
+// tem resolução dinâmica, então não há nada para esquecer entre
+// tentativas. aoTerminar apaga a tela congelada ao perder a sessão — o
+// mesmo motivo do RDP (ver o comentário lá): com o chip "CAIU" ao lado,
+// uma imagem parada que continua parecendo viva é pior que preto.
 func (t *vncTab) manageSession(user, pass string) {
-	attempt := 0
-	for {
-		fim := t.rodarSessao(user, pass)
-		t.proc.Store(nil)
-		t.w.Invalidate()
-
-		switch fim {
-		case fimParar:
-			return
-		case fimReligar:
-			attempt = 0
-			continue
-		case fimFalhou:
-			// A conexão foi RECUSADA (credencial, política do servidor).
-			// Não entra no backoff: ver o comentário em fimSessao.
-			t.caiu.Store(true)
-			t.w.Invalidate()
-			select {
-			case <-t.religar:
-				attempt = 0
-				continue
-			case <-t.stop:
-				return
-			}
-		}
-
-		t.caiu.Store(true)
-		t.w.Invalidate()
-		if !t.auto.Load() {
-			// Reconexão automática desligada: fica parada até alguém
-			// clicar em Reconectar.
-			select {
-			case <-t.religar:
-				attempt = 0
-				continue
-			case <-t.stop:
-				return
-			}
-		}
-
-		wait := backoffSchedule[min(attempt, len(backoffSchedule)-1)]
-		attempt++
-		reg("[%s] reconectando em %s (tentativa #%d)", t.title, wait, attempt)
-		select {
-		case <-time.After(wait):
-		case <-t.religar:
-			attempt = 0
-		case <-t.stop:
-			return
-		}
-	}
+	gerenciarSessaoRemota(sessaoRemotaCfg{
+		title:      t.title,
+		stop:       t.stop,
+		religar:    t.religar,
+		w:          t.w,
+		proc:       &t.proc,
+		caiu:       &t.caiu,
+		auto:       &t.auto,
+		rodar:      func() fimSessao { return t.rodarSessao(user, pass) },
+		aoTerminar: func() { t.tela.Store(nil) },
+	})
 }
 
-// rodarSessao vive de um processo-filho: sobe, conversa até acabar, e
-// garante que ele morreu antes de devolver.
+// rodarSessao delega a rodarSessaoRemota (ver telatab.go), compartilhado
+// com rdpTab — só como conectar() monta a telaproc.Ligacao muda entre os
+// dois protocolos (o VNC não tem domínio).
 func (t *vncTab) rodarSessao(user, pass string) fimSessao {
-	proc, err := telaproc.Iniciar("vnc")
-	if err != nil {
-		reg("[%s] %v", t.title, err)
-		return fimCaiu
-	}
-	defer proc.Encerrar()
-
-	// Este vigia é o que traduz "fechar a aba" e "reconectar agora" em
-	// algo que acorde a leitura do socket: fechar o canal faz o Ler()
-	// abaixo devolver erro na hora.
-	var pedido atomic.Int32
-	pedido.Store(int32(fimCaiu))
-	saiu := make(chan struct{})
-	defer close(saiu)
-	go func() {
-		select {
-		case <-t.stop:
-			pedido.Store(int32(fimParar))
-		case <-t.religar:
-			pedido.Store(int32(fimReligar))
-		case <-saiu:
-			return
-		}
-		_ = proc.Fechar()
-	}()
-
-	reg("[%s] conectando a %s:%d…", t.title, t.host, t.port)
-	inicio := time.Now()
-	if err := proc.Conectar(telaproc.Ligacao{
-		Host: t.host, Porta: t.port, Usuario: user, Senha: pass,
-	}); err != nil {
-		reg("[%s] não consegui pedir a conexão: %v", t.title, err)
-		return fimSessao(pedido.Load())
-	}
-
-	if falhou := t.lacoEventos(proc, inicio); falhou {
-		// A falha de conexão vence o que o vigia tiver anotado, EXCETO
-		// fechar a aba: se o operador já mandou fechar, fechar é o que
-		// vale.
-		if fimSessao(pedido.Load()) == fimParar {
-			return fimParar
-		}
-		return fimFalhou
-	}
-	if fimSessao(pedido.Load()) == fimCaiu {
-		reg("[%s] processo %d da sessão terminou", t.title, proc.PID())
-	}
-	return fimSessao(pedido.Load())
+	return rodarSessaoRemota("vnc", t.title, t.host, t.port, t.stop, t.religar,
+		func(proc *telaproc.Processo) error {
+			return proc.Conectar(telaproc.Ligacao{
+				Host: t.host, Porta: t.port, Usuario: user, Senha: pass,
+			})
+		},
+		t.lacoEventos,
+	)
 }
 
 // lacoEventos é o único leitor do canal do filho. Sai quando o filho fecha

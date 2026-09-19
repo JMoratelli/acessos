@@ -4,6 +4,26 @@
   comentários, mensagens de commit ou descrições de PR deste projeto.
 - Não adicionar linhas de `Co-Authored-By: Claude ...` (ou equivalentes) nos
   commits.
+- `vendor/` é local e não entra no git (está no `.gitignore`). Sempre que
+  `third_party/gio` (ou qualquer outro `replace` local do `go.mod`) for
+  editado, rodar `go mod vendor` antes de compilar — senão o build local
+  usa a cópia velha em `vendor/gioui.org` e falha com erro de método
+  inexistente (ex.: `PedirTokenAtivacao undefined`), tanto no Linux quanto
+  no Windows. Já aconteceu mais de uma vez por esquecimento deste passo
+  depois de um `git pull` que trouxe patches novos no fork do Gio.
+- **Arquivos irmãos (mesma lógica em plataformas/protocolos diferentes)
+  saem de sincronia com facilidade — checar o irmão sempre que um deles
+  for corrigido.** Já encontrado em auditoria (2026-09-19):
+  `WindowsExec.bombear` (executor/windows.go) não sinalizava sessão
+  encerrada como `LinuxSSH.bombear` (executor/ssh_pdv.go) já fazia,
+  deixando o worker preso até o timeout de 30 min em vez de falhar na
+  hora; `invalidar()` foi corrigido em sshtab.go contra uma guarda real
+  do Gio mas o fix não foi propagado para sftptab.go, que tem o mesmo
+  padrão de goroutine de fundo chamando `Invalidate()`. Lição: ao mexer
+  em `_linux.go`/`_windows.go`, `ssh_pdv.go`/`windows.go`,
+  `rdptab.go`/`vnctab.go` etc., procurar o equivalente antes de dar a
+  tarefa por concluída — e preferir extrair a lógica comum para um lugar
+  só quando ela for realmente idêntica, em vez de deixar duas cópias.
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:
   FreeRDP e libvncserver (versões fixas no manifesto Flatpak,

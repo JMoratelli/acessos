@@ -2,6 +2,7 @@ package executor
 
 import (
 	"errors"
+	"net"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -51,6 +52,16 @@ func Novo(p model.Plataforma) (Executor, error) {
 	default:
 		return NovoLinuxSSH(), nil
 	}
+}
+
+// enderecoComPortaPadrao completa host sem porta com a porta padrao do
+// SSH — Sondar, LinuxSSH.Conectar e WindowsExec.Conectar repetiam a
+// mesma checagem.
+func enderecoComPortaPadrao(host string) string {
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		return net.JoinHostPort(host, "22")
+	}
+	return host
 }
 
 // AlgoritmosLegado amplia a negociacao para alcancar PDV antigo. A

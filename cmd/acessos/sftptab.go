@@ -44,8 +44,9 @@ import (
 //     arquivos e pastas serão apagados e só então oferece o botão, com
 //     contagem — não tem desfazer do outro lado.
 type sftpTab struct {
-	th     *material.Theme
-	w      *app.Window
+	th *material.Theme
+	w  *app.Window
+	invalidador
 	titulo string
 	host   string
 	porta  int
@@ -475,8 +476,14 @@ func copiarParaRemoto(cli *sftp.Client, origem, destino string, andou func(int64
 		return err
 	}
 	defer d.Close()
-	_, err = io.Copy(d, &leitorContado{r: f, andou: andou})
-	return err
+	if _, err := io.Copy(d, &leitorContado{r: f, andou: andou}); err != nil {
+		return err
+	}
+	// Fechar aqui, e conferir o erro, e não só no defer: é no flush final
+	// que um destino sem espaço (disco/share cheio bem no último bloco)
+	// costuma falhar — depois que io.Copy já retornou nil. Sem isto o app
+	// dizia "transferido" com o arquivo truncado do outro lado.
+	return d.Close()
 }
 
 func copiarParaLocal(cli *sftp.Client, origem, destino string, andou func(int64)) error {
@@ -490,8 +497,11 @@ func copiarParaLocal(cli *sftp.Client, origem, destino string, andou func(int64)
 		return err
 	}
 	defer d.Close()
-	_, err = io.Copy(d, &leitorContado{r: f, andou: andou})
-	return err
+	if _, err := io.Copy(d, &leitorContado{r: f, andou: andou}); err != nil {
+		return err
+	}
+	// Ver o comentário em copiarParaRemoto: mesma corrida, destino local.
+	return d.Close()
 }
 
 // leitorContado avisa quanto já passou. Transferir 200MB sem dizer em que
@@ -662,10 +672,12 @@ func (t *sftpTab) ApontarPara(nome, host string, porta int, usuario, senha strin
 // quadro — que é a condição para o laço de cliques poder confiar nos
 // índices que está percorrendo.
 // invalidar existe para a aba poder ser exercitada sem janela (testes).
+// A insistência contra a guarda mayInvalidate do Gio — e o limite de uma
+// rajada de retries por vez, mesmo com a goroutine de transferência
+// chamando isto a cada pedaço copiado — está em invalidador (ver
+// invalidar.go, compartilhado com sshTab).
 func (t *sftpTab) invalidar() {
-	if t.w != nil {
-		t.w.Invalidate()
-	}
+	t.disparar(t.w)
 }
 
 func (t *sftpTab) aplicarListagens() {

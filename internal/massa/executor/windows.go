@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -42,8 +41,7 @@ type WindowsExec struct {
 	sessao  *ssh.Session
 	stdin   io.WriteCloser
 
-	dados chan []byte
-	buf   []byte
+	*leitor
 
 	// ShellCmd permite trocar o processo remoto. Serve para teste: a
 	// variavel PDVT_WINSHELL aponta para um stub que imita o
@@ -87,10 +85,7 @@ func (w *WindowsExec) Conectar(host string, cred model.Credencial, timeout time.
 		Timeout:         timeout,
 	}
 
-	endereco := host
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		endereco = net.JoinHostPort(host, "22")
-	}
+	endereco := enderecoComPortaPadrao(host)
 
 	conn, err := net.DialTimeout("tcp", endereco, timeout)
 	if err != nil {
@@ -134,9 +129,13 @@ func (w *WindowsExec) Conectar(host string, cred model.Credencial, timeout time.
 		return fmt.Errorf("%w: %v", ErrConexao, err)
 	}
 
-	w.dados = make(chan []byte, 64)
+	w.leitor = novoLeitor()
 	// Sem PTY os dois canais vem separados; juntamos aqui para que a
-	// leitura por marcador enxergue um fluxo unico, como no Linux.
+	// leitura por marcador enxergue um fluxo unico, como no Linux. Os
+	// dois bombear() escrevem no mesmo leitor — por isso ele nunca fecha
+	// o canal ao sinalizar o fim, so o primeiro que morrer (ver
+	// leitor.go): stdout e stderr caindo quase juntos e o normal quando
+	// a sessao encerra, e fechar por um deles derrubaria o outro.
 	go w.bombear(stdout)
 	go w.bombear(stderr)
 
@@ -150,21 +149,6 @@ func (w *WindowsExec) Conectar(host string, cred model.Credencial, timeout time.
 		return err
 	}
 	return nil
-}
-
-func (w *WindowsExec) bombear(r io.Reader) {
-	b := make([]byte, 32*1024)
-	for {
-		n, err := r.Read(b)
-		if n > 0 {
-			cp := make([]byte, n)
-			copy(cp, b[:n])
-			w.dados <- cp
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 func (w *WindowsExec) enviar(linha string) error {
@@ -206,60 +190,6 @@ func (w *WindowsExec) sincronizar(timeout time.Duration) error {
 	}
 	_, _, err := w.lerAte(regexp.MustCompile(marcadorSync), timeout, 0)
 	return err
-}
-
-// lerAte funciona igual a versao Linux: acumula ate o regex casar e
-// guarda o resto para a proxima leitura.
-func (w *WindowsExec) lerAte(re *regexp.Regexp, absoluto, idle time.Duration) (string, string, error) {
-	var acc []byte
-	acc = append(acc, w.buf...)
-	w.buf = nil
-
-	if loc := re.FindIndex(acc); loc != nil {
-		w.buf = append([]byte{}, acc[loc[1]:]...)
-		return string(acc[:loc[0]]), string(acc[loc[0]:loc[1]]), nil
-	}
-
-	var chAbs <-chan time.Time
-	if absoluto > 0 {
-		t := time.NewTimer(absoluto)
-		defer t.Stop()
-		chAbs = t.C
-	}
-	var tIdle *time.Timer
-	var chIdle <-chan time.Time
-	if idle > 0 {
-		tIdle = time.NewTimer(idle)
-		defer tIdle.Stop()
-		chIdle = tIdle.C
-	}
-
-	for {
-		select {
-		case b, ok := <-w.dados:
-			if !ok {
-				return string(acc), "", fmt.Errorf("%w: sessao encerrada pelo host", ErrConexao)
-			}
-			acc = append(acc, b...)
-			if tIdle != nil {
-				if !tIdle.Stop() {
-					select {
-					case <-tIdle.C:
-					default:
-					}
-				}
-				tIdle.Reset(idle)
-			}
-			if loc := re.FindIndex(acc); loc != nil {
-				w.buf = append([]byte{}, acc[loc[1]:]...)
-				return string(acc[:loc[0]]), string(acc[loc[0]:loc[1]]), nil
-			}
-		case <-chAbs:
-			return string(acc), "", ErrTimeout
-		case <-chIdle:
-			return string(acc), "", ErrIdle
-		}
-	}
 }
 
 // Elevar nao existe no Windows. Devolver erro e proposital: se a
@@ -394,19 +324,7 @@ func (w *WindowsExec) Rodar(cmd string, timeoutExec, timeoutIdle time.Duration) 
 	if err != nil {
 		return saida, -1, err
 	}
-	return saida, extrairCodigoWin(casado), nil
-}
-
-func extrairCodigoWin(s string) int {
-	m := reFim.FindStringSubmatch(s)
-	if m == nil {
-		return -1
-	}
-	v, err := strconv.Atoi(m[1])
-	if err != nil {
-		return -1
-	}
-	return v
+	return saida, extrairCodigo(casado), nil
 }
 
 func (w *WindowsExec) Fechar() {

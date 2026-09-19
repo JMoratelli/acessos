@@ -32,6 +32,7 @@ extern void goClipOferta(int fd_leitura);
 import "C"
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"unsafe"
@@ -47,6 +48,12 @@ import (
 var (
 	onKey           func(keysym, keycodeX11 uint32, pressed bool)
 	onClipboardText func(text string)
+
+	// handleAtivo existe só para acusar a violação da suposição acima:
+	// sem isto, um segundo Start antes do Stop do primeiro sobrescrevia
+	// onKey/onClipboardText em silêncio, e os eventos passavam a ir para
+	// o callback errado sem nada avisar.
+	handleAtivo *Handle
 )
 
 // Handle é uma sessão de captura ativa. Chame Stop ao perder foco ou
@@ -73,13 +80,19 @@ func Start(display, surface unsafe.Pointer,
 	onKeyFn func(keysym, keycodeX11 uint32, pressed bool),
 	onClipboardFn func(text string),
 ) *Handle {
+	if handleAtivo != nil {
+		fmt.Fprintln(os.Stderr, "grab: Start chamado com uma captura ainda ativa — "+
+			"os callbacks dela serão substituídos; alguém não chamou Stop no Handle anterior")
+	}
 	onKey = onKeyFn
 	onClipboardText = onClipboardFn
 	g := C.grab_iniciar(display, surface, C.cb_tecla(C.goTecla), C.cb_clip_oferta(C.goClipOferta))
 	if g == nil {
 		return nil
 	}
-	return &Handle{g: g}
+	h := &Handle{g: g}
+	handleAtivo = h
+	return h
 }
 
 // Modificadores devolve quais modificadores estão ativos AGORA, como
@@ -156,6 +169,9 @@ func (h *Handle) Stop() {
 	}
 	C.grab_parar(h.g)
 	h.g = nil
+	if handleAtivo == h {
+		handleAtivo = nil
+	}
 }
 
 //export goTecla

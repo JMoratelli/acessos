@@ -45,9 +45,7 @@ type LinuxSSH struct {
 	sessao  *ssh.Session
 	stdin   io.WriteCloser
 
-	dados chan []byte // bytes vindos do shell remoto
-	fim   chan error  // fecha quando o leitor morre
-	buf   []byte      // resto nao consumido da ultima leitura
+	*leitor
 
 	elevado bool
 }
@@ -67,10 +65,7 @@ func (l *LinuxSSH) Conectar(host string, cred model.Credencial, timeout time.Dur
 		Timeout:         timeout,
 	}
 
-	endereco := host
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		endereco = net.JoinHostPort(host, "22")
-	}
+	endereco := enderecoComPortaPadrao(host)
 	conn, err := net.DialTimeout("tcp", endereco, timeout)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrConexao, err)
@@ -122,8 +117,7 @@ func (l *LinuxSSH) Conectar(host string, cred model.Credencial, timeout time.Dur
 		return fmt.Errorf("%w: %v", ErrConexao, err)
 	}
 
-	l.dados = make(chan []byte, 64)
-	l.fim = make(chan error, 1)
+	l.leitor = novoLeitor()
 	go l.bombear(stdout)
 
 	if err := sess.Shell(); err != nil {
@@ -137,23 +131,6 @@ func (l *LinuxSSH) Conectar(host string, cred model.Credencial, timeout time.Dur
 		return err
 	}
 	return nil
-}
-
-func (l *LinuxSSH) bombear(r io.Reader) {
-	b := make([]byte, 32*1024)
-	for {
-		n, err := r.Read(b)
-		if n > 0 {
-			cp := make([]byte, n)
-			copy(cp, b[:n])
-			l.dados <- cp
-		}
-		if err != nil {
-			l.fim <- err
-			close(l.dados)
-			return
-		}
-	}
 }
 
 func (l *LinuxSSH) enviar(linha string) error {
@@ -270,70 +247,6 @@ func (l *LinuxSSH) sincronizar(timeout time.Duration) error {
 	}
 	_, _, err := l.lerAte(reSync, timeout, 0)
 	return err
-}
-
-// lerAte acumula saida ate o regex casar. Devolve o texto anterior ao
-// casamento, o proprio trecho casado, e guarda o resto para a proxima
-// leitura.
-func (l *LinuxSSH) lerAte(re *regexp.Regexp, absoluto, idle time.Duration) (string, string, error) {
-	var acc []byte
-	acc = append(acc, l.buf...)
-	l.buf = nil
-
-	inicio := time.Now()
-	ultimoByte := time.Time{}
-
-	if loc := re.FindIndex(acc); loc != nil {
-		l.buf = append([]byte{}, acc[loc[1]:]...)
-		return string(acc[:loc[0]]), string(acc[loc[0]:loc[1]]), nil
-	}
-
-	var chAbs <-chan time.Time
-	if absoluto > 0 {
-		t := time.NewTimer(absoluto)
-		defer t.Stop()
-		chAbs = t.C
-	}
-
-	var tIdle *time.Timer
-	var chIdle <-chan time.Time
-	if idle > 0 {
-		tIdle = time.NewTimer(idle)
-		defer tIdle.Stop()
-		chIdle = tIdle.C
-	}
-
-	for {
-		select {
-		case b, ok := <-l.dados:
-			if !ok {
-				return string(acc), "", fmt.Errorf("%w: sessao encerrada pelo host", ErrConexao)
-			}
-			acc = append(acc, b...)
-			ultimoByte = time.Now()
-			if tIdle != nil {
-				if !tIdle.Stop() {
-					select {
-					case <-tIdle.C:
-					default:
-					}
-				}
-				tIdle.Reset(idle)
-			}
-			if loc := re.FindIndex(acc); loc != nil {
-				l.buf = append([]byte{}, acc[loc[1]:]...)
-				return string(acc[:loc[0]]), string(acc[loc[0]:loc[1]]), nil
-			}
-		case <-chAbs:
-			return string(acc), "", fmt.Errorf("%w apos %s: %s",
-				ErrTimeout, time.Since(inicio).Round(time.Second),
-				diagnostico(len(acc), inicio, ultimoByte))
-		case <-chIdle:
-			return string(acc), "", fmt.Errorf("%w apos %s: %s",
-				ErrIdle, time.Since(inicio).Round(time.Second),
-				diagnostico(len(acc), inicio, ultimoByte))
-		}
-	}
 }
 
 // Elevar executa `su - <usuario>` dentro da sessao ja aberta.

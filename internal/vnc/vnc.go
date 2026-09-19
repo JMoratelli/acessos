@@ -20,6 +20,8 @@ import (
 	"errors"
 	"sync"
 	"unsafe"
+
+	"acessos-go/internal/cgoregistry"
 )
 
 // Session é uma conexão VNC ativa.
@@ -30,8 +32,9 @@ import (
 // memória bem no meio de uma cópia do framebuffer feita pela goroutine de
 // desenho, use-after-free clássico.
 type Session struct {
-	mu sync.RWMutex
-	s  *C.Sessao
+	mu     sync.RWMutex
+	s      *C.Sessao
+	handle uintptr
 
 	OnUpdate  func(x, y, w, h int)
 	OnResize  func(w, h int)
@@ -42,24 +45,14 @@ type Session struct {
 	OnCursor func(xhot, yhot, w, h int, mask []byte)
 }
 
-var (
-	registryMu sync.Mutex
-	registry   = map[unsafe.Pointer]*Session{}
-	nextHandle uintptr
-	handles    = map[uintptr]*Session{}
-)
+var registro = cgoregistry.New[Session]()
 
 // New cria uma sessão VNC (ainda não conectada).
 func New() *Session {
 	sess := &Session{}
+	sess.handle = registro.Registrar(sess)
 
-	registryMu.Lock()
-	nextHandle++
-	h := nextHandle
-	handles[h] = sess
-	registryMu.Unlock()
-
-	ctx := unsafe.Pointer(h) //nolint:govet // handle inteiro repassado como ponteiro opaco ao C
+	ctx := unsafe.Pointer(sess.handle) //nolint:govet // handle inteiro repassado como ponteiro opaco ao C
 	sess.s = C.vs_criar(ctx,
 		C.cb_atualizou(C.goAoAtualizar),
 		C.cb_redimensionou(C.goAoRedimensionar),
@@ -211,6 +204,8 @@ func (s *Session) SendCutText(text string) {
 
 // Close libera a sessão. Não chame Run/eventos depois disso.
 func (s *Session) Close() {
+	registro.Remover(s.handle)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.s == nil {
@@ -221,11 +216,7 @@ func (s *Session) Close() {
 }
 
 func sessionFromHandle(ctx unsafe.Pointer) *Session {
-	h := uintptr(ctx)
-	registryMu.Lock()
-	sess := handles[h]
-	registryMu.Unlock()
-	return sess
+	return registro.De(uintptr(ctx))
 }
 
 //export goAoAtualizar

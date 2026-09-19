@@ -52,8 +52,9 @@ const spTerminal = unit.Sp(13)
 // um menu TUI, não recebem o evento). Shell, logs e edição em tela cheia
 // funcionam.
 type sshTab struct {
-	th     *material.Theme
-	w      *app.Window
+	th *material.Theme
+	w  *app.Window
+	invalidador
 	titulo string
 	host   string
 	porta  int
@@ -235,41 +236,12 @@ func (e escritorEntrada) Write(p []byte) (int, error) {
 }
 
 // invalidar existe para a aba poder ser exercitada sem janela (testes):
-// o resto do código chama isto em vez de t.w.Invalidate() direto.
-//
-// TAMBÉM insiste por uma janela curta, e é isso que resolve um atraso de
-// verdade visto na prática (medido com log: 200ms a mais de 1s entre o
-// dado chegar e a tela mostrar, sem NENHUMA rede envolvida — confirmado
-// contra uma máquina real e contra localhost).
-//
-// O Window.Invalidate do Gio tem uma guarda (mayInvalidate) que SILENCIA
-// a chamada se um quadro já estiver "em vôo" por outro motivo qualquer, e
-// nada reagenda depois — quem chamou nesse instante simplesmente perde o
-// pedido. Isso é inofensivo para eventos gerados NO PRÓPRIO laço de
-// quadro (tecla, mouse): o quadro em vôo, se houver, já reflete o estado
-// atualizado, e por isso digitar sempre pareceu instantâneo. Mas a
-// goroutine que lê a saída do SSH roda solta, batendo Invalidate() a
-// qualquer momento — e se acertar bem no instante em que outro quadro
-// (de QUALQUER origem, até de outra aba) está de passagem, o pedido some
-// e a tela só se atualiza quando ALGO MAIS pedir um quadro novo depois
-// (na prática, dava pra "destravar" mandando outra tecla). As
-// repetições aqui garantem que, mesmo perdendo a primeira tentativa, uma
-// das seguintes cai com a guarda já rearmada.
+// o resto do código chama isto em vez de t.w.Invalidate() direto. A
+// insistência contra a guarda mayInvalidate do Gio está em invalidador,
+// em invalidar.go — compartilhada com sftpTab, que tem a mesma corrida
+// (goroutine de fundo batendo Invalidate() a qualquer momento).
 func (t *sshTab) invalidar() {
-	if t.w == nil {
-		return
-	}
-	t.w.Invalidate()
-	go func() {
-		for _, espera := range []time.Duration{
-			8 * time.Millisecond, 24 * time.Millisecond, 64 * time.Millisecond,
-		} {
-			time.Sleep(espera)
-			if t.w != nil {
-				t.w.Invalidate()
-			}
-		}
-	}()
+	t.disparar(t.w)
 }
 
 func (t *sshTab) Title() string { return t.titulo }

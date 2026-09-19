@@ -63,7 +63,18 @@ func caminho() string {
 // *ErroChave para a interface saber QUAL dos dois casos aconteceu:
 // "primeira vez" e "mudou" pedem conversas bem diferentes.
 func Callback() ssh.HostKeyCallback {
-	verificar, err := knownhosts.New(caminho())
+	arq := caminho()
+	if arq == "" {
+		// $HOME indisponível é problema de ambiente, bem diferente de um
+		// known_hosts que ainda não existe (primeira execução, caso
+		// normal). Não falhamos fechado aqui — isso tiraria toda conexão
+		// do ar por um problema de ambiente — mas avisamos, porque quem
+		// depurar "toda máquina aparece como desconhecida" precisa saber
+		// que a causa é essa, e não um known_hosts vazio de verdade.
+		fmt.Fprintln(os.Stderr,
+			"hostkey: sem $HOME, não há como checar known_hosts; tratando todo host como desconhecido")
+	}
+	verificar, err := knownhosts.New(arq)
 	if err != nil {
 		// sem known_hosts ainda: tudo é primeira vez
 		verificar = func(string, net.Addr, ssh.PublicKey) error {

@@ -126,6 +126,9 @@ func (c *Cofre) Cifrar(texto string) (string, error) {
 	if texto == "" {
 		return "", nil
 	}
+	if c == nil || c.chave == nil {
+		return "", errors.New("cofre trancado")
+	}
 	bloco, err := aes.NewCipher(c.chave)
 	if err != nil {
 		return "", err

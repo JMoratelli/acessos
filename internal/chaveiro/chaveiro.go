@@ -31,6 +31,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"acessos-go/internal/iniutil"
 )
 
 const aliasPrefixo = "!"
@@ -144,48 +146,16 @@ func Carregar(caminho string) (*Arquivo, error) {
 // A escrita é linha a linha, como no conexoes.ini: o chaveiro também é
 // editável à mão e não pode perder comentários numa gravação.
 
-func gravarAtomico(caminho string, linhas []string) error {
-	tmp := caminho + ".tmp"
-	conteudo := strings.Join(linhas, "\n")
-	if !strings.HasSuffix(conteudo, "\n") {
-		conteudo += "\n"
-	}
-	// 0600: o arquivo guarda segredo, mesmo cifrado.
-	if err := os.WriteFile(tmp, []byte(conteudo), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, caminho)
-}
-
+// linhasDe lê o chaveiro, tratando "arquivo não existe" como chaveiro
+// vazio: ele é opcional (compatibilidade com o formato antigo, cofre
+// dentro do próprio conexoes.ini — ver o cabeçalho do pacote), então
+// ainda não ter sido criado é estado normal, não erro.
 func linhasDe(caminho string) ([]string, error) {
-	b, err := os.ReadFile(caminho)
+	linhas, err := iniutil.LerLinhas(caminho)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return strings.Split(strings.TrimRight(string(b), "\n"), "\n"), nil
-}
-
-func faixa(linhas []string, secao string) (int, int, bool) {
-	ini := -1
-	for i, l := range linhas {
-		t := strings.TrimSpace(l)
-		if !strings.HasPrefix(t, "[") || !strings.HasSuffix(t, "]") {
-			continue
-		}
-		if ini >= 0 {
-			return ini, i, true
-		}
-		if t[1:len(t)-1] == secao {
-			ini = i
-		}
-	}
-	if ini >= 0 {
-		return ini, len(linhas), true
-	}
-	return 0, 0, false
+	return linhas, err
 }
 
 // Salvar cria ou atualiza uma credencial. A senha entra como vier (quem
@@ -206,12 +176,12 @@ func Salvar(caminho, nome, usuario, senha string) error {
 	if senha != "" {
 		novas = append(novas, "senha = "+senha)
 	}
-	ini, fim, achou := faixa(linhas, nome)
+	ini, fim, achou := iniutil.Faixa(linhas, nome)
 	if !achou {
 		if len(linhas) > 0 {
 			linhas = append(linhas, "")
 		}
-		return gravarAtomico(caminho, append(linhas, novas...))
+		return iniutil.GravarAtomico(caminho, append(linhas, novas...))
 	}
 	if senha == "" {
 		// mantém a senha que já estava lá
@@ -225,7 +195,7 @@ func Salvar(caminho, nome, usuario, senha string) error {
 	out := append([]string{}, linhas[:ini]...)
 	out = append(out, novas...)
 	out = append(out, "")
-	return gravarAtomico(caminho, append(out, linhas[fim:]...))
+	return iniutil.GravarAtomico(caminho, append(out, linhas[fim:]...))
 }
 
 // Remover apaga a credencial. Conexões que apontavam para ela ficam com o
@@ -236,11 +206,11 @@ func Remover(caminho, nome string) error {
 	if err != nil {
 		return err
 	}
-	ini, fim, achou := faixa(linhas, nome)
+	ini, fim, achou := iniutil.Faixa(linhas, nome)
 	if !achou {
 		return fmt.Errorf("credencial %q não existe", nome)
 	}
-	return gravarAtomico(caminho, append(append([]string{}, linhas[:ini]...), linhas[fim:]...))
+	return iniutil.GravarAtomico(caminho, append(append([]string{}, linhas[:ini]...), linhas[fim:]...))
 }
 
 // GravarCofre escreve a seção [cofre] (criando o arquivo se preciso). É o
@@ -256,14 +226,14 @@ func GravarCofre(caminho string, params map[string]string) error {
 			novas = append(novas, k+" = "+v)
 		}
 	}
-	ini, fim, achou := faixa(linhas, "cofre")
+	ini, fim, achou := iniutil.Faixa(linhas, "cofre")
 	if !achou {
 		// o cofre vai no TOPO: é o que o arquivo tem de mais importante,
 		// e quem abrir no editor tem que ver primeiro.
 		out := append(novas, "")
-		return gravarAtomico(caminho, append(out, linhas...))
+		return iniutil.GravarAtomico(caminho, append(out, linhas...))
 	}
 	out := append([]string{}, linhas[:ini]...)
 	out = append(out, novas...)
-	return gravarAtomico(caminho, append(out, linhas[fim:]...))
+	return iniutil.GravarAtomico(caminho, append(out, linhas[fim:]...))
 }

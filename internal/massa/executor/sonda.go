@@ -54,10 +54,7 @@ func Sondar(host string, timeout time.Duration) Sonda {
 		timeout = 10 * time.Second
 	}
 
-	endereco := host
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		endereco = net.JoinHostPort(host, "22")
-	}
+	endereco := enderecoComPortaPadrao(host)
 
 	t0 := time.Now()
 	conn, err := net.DialTimeout("tcp", endereco, timeout)

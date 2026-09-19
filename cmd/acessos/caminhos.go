@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"acessos-go/internal/iniutil"
 )
 
 // Onde o app procura os arquivos quando ninguém passa -ini.
@@ -110,7 +112,11 @@ func garantirINI(caminho string) error {
 	if err := os.MkdirAll(filepath.Dir(caminho), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(caminho, []byte(iniExemplo), 0o600)
+	// Atômico como qualquer outra escrita de .ini do projeto (ver
+	// internal/iniutil): morrer no meio desta primeira gravação não pode
+	// deixar um conexoes.ini truncado no lugar de simplesmente não
+	// existir ainda.
+	return iniutil.GravarAtomico(caminho, strings.Split(iniExemplo, "\n"))
 }
 
 const iniExemplo = `# conexoes.ini — inventário do Acessos.
