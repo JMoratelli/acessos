@@ -24,6 +24,33 @@
   `rdptab.go`/`vnctab.go` etc., procurar o equivalente antes de dar a
   tarefa por concluída — e preferir extrair a lógica comum para um lugar
   só quando ela for realmente idêntica, em vez de deixar duas cópias.
+- **Pegadinhas do Windows (achadas na rodada de 2026-09-19).** As quatro
+  têm a mesma forma: o Linux perdoa e o Windows não, então passam batido
+  em quem só testa num dos dois.
+
+  - **Glifo que falta na fonte embutida vira quadradinho vazio.** No
+    Linux o shaper cai numa fonte do sistema; no Windows não há em quem
+    cair. Símbolo em texto (`▸`, `⟳`, `⌁`) só entra se a IBM Plex tiver —
+    senão, ícone vetorial do `gio.tools/icons` ou um caractere
+    equivalente que exista. `cmd/acessos/glifos_test.go` quebra o build
+    quando entra um novo.
+  - **Pixel não pintado numa janela sem decoração mostra a MOLDURA do
+    Windows**, botões de fechar/maximizar inclusive: o Gio pede
+    `DwmExtendFrameIntoClientArea(-1,-1,-1,-1)` para ter a sombra do
+    sistema, e isso põe o frame do DWM atrás do conteúdo. Não há alfa por
+    pixel (o `app.Translucent` é só Wayland). Ver o cabeçalho de
+    `cmd/acessos/buscapop.go`.
+  - **Janela minimizada não tem quadro.** Qualquer fila drenada de dentro
+    do `FrameEvent` fica parada enquanto ela estiver minimizada — foi o
+    que fazia escolher máquina no atalho global não abrir nada. Drenar no
+    topo do laço, que o `Invalidate` acorda mesmo sem quadro (ver
+    `cmd/acessos/filajanela.go`).
+  - **`gofmt -l` aqui acusa o repositório inteiro** porque o working tree
+    é CRLF (`core.autocrlf=true`) e o gofmt normaliza para LF. NÃO rodar
+    `gofmt -w` no repositório: reescreve todos os arquivos. Para conferir
+    um arquivo, comparar ignorando o `\r`
+    (`diff <(cat f) <(gofmt f)` com `tr -d '\r'` nos dois lados).
+
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:
   FreeRDP e libvncserver (versões fixas no manifesto Flatpak,

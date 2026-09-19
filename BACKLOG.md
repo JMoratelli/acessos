@@ -35,6 +35,36 @@ pontas continuam abertas:
   sozinho depois de uns segundos. **Vale notar que isto também engole o
   Ctrl+Shift+F12**: com uma sessão remota em foco, a tecla vai para a
   máquina remota, não para o portal.
+- **No Windows a caixa é OPACA e de canto reto.** No Linux ela é o que
+  foi desenhado: cartão de vidro, cantos arredondados, sombra, o desktop
+  atravessando por trás. No Windows não — e não é limitação da máquina
+  virtual nem do Windows 10. São duas coisas somadas: `app.Translucent`
+  só tem implementação no Wayland (ver third_party/gio/PATCH.md, nono
+  patch), e a swapchain do Gio é criada com o
+  `IDXGIFactory::CreateSwapChain` antigo, modelo bitblt, amarrada direto
+  no HWND (`DXGI_SWAP_EFFECT_DISCARD`, em
+  third_party/gio/internal/d3d11/d3d11_windows.go) — o DWM compõe esse
+  tipo de swapchain como OPACO e ignora o alfa do backbuffer. Por isso
+  a janela hoje pinta cada pixel (ver buscapop.go): pixel não pintado
+  ali aparecia preto, ou mostrava a moldura do sistema.
+
+  Dois caminhos, em ordem de custo:
+
+  - **cantos arredondados só**: `SetWindowRgn` com
+    `CreateRoundRectRgn` no HWND da caixa, refeito a cada mudança de
+    tamanho. Recorta a janela de verdade, não mexe em nada do
+    desenho e não depende de versão do Windows. Não traz a
+    transparência nem a sombra;
+  - **transparência de verdade**: swapchain de composição —
+    `IDXGIFactory2::CreateSwapChainForComposition` com
+    `DXGI_ALPHA_MODE_PREMULTIPLIED` e modelo flip, pendurada numa
+    visual do DirectComposition (`DCompositionCreateDevice`,
+    `IDCompositionTarget` do HWND). É o que Chromium e WPF fazem. Dá
+    transparência, cantos e sombra de uma vez, mas é patch grande no
+    fork do Gio e mexe no caminho de resize que acabou de ser
+    endurecido (oitavo patch) — e o contexto D3D11 é o MESMO da janela
+    principal, então um erro aqui aparece no app inteiro. Fazer só com
+    tempo de testar nas duas telas e nos dois temas.
 
 ## 3e. Cursor remoto: conferir contra cursores de verdade
 
@@ -47,11 +77,23 @@ rdpshim já imprime tamanho e hotspot de cada uma; falta despejar os bytes)
 e virar caso de teste. Sem isso, os limiares continuam calibrados por
 proporção, não por amostra.
 
-## 4. Ícones no Windows — confirmar na máquina
+## 4. Ícone do EXECUTÁVEL no Windows — confirmar com instalador novo
 
-**Relatado no teste da 2.0.4: os ícones saem errados no Windows.**
+**Relatado no teste da 2.0.4: os ícones saem errados no Windows.** O
+relato juntava duas coisas diferentes; uma está fechada, a outra não.
 
-Uma causa concreta foi achada e corrigida em 2026-09-19, no
+**Fechada (2026-09-19): os "ícones" da interface que não renderizavam.**
+Não eram ícones — eram CARACTERES de texto que a IBM Plex embutida não
+tem: `▸`/`▾` nos blocos do editor de conexão, `⟳` no recarregar do SFTP,
+`⌁` no botão de teclas da barra de sessão. No Linux o shaper cai numa
+fonte do sistema e ninguém vê; no Windows não há em quem cair e sai o
+quadradinho vazio. As setas viraram ícone vetorial (`setaExpansor`, em
+[tema.go](cmd/acessos/tema.go)), o `⟳` virou `↻` (que a Plex tem) e o
+`⌁` saiu. [glifos_test.go](cmd/acessos/glifos_test.go) agora quebra o
+build se entrar símbolo novo que as fontes embutidas não tenham.
+
+**Aberta: o ícone do executável e do instalador.** Uma causa concreta foi
+achada e corrigida em 2026-09-19, no
 [build-windows.sh](scripts/build-windows.sh): o `.ico` multi-resolução
 era montado com `magick "$tmp"/*.png`, e o glob ordena por NOME. O
 arquivo saía na ordem **128, 16, 24, 256, 32, 48, 64** — ou seja, com a
@@ -60,18 +102,10 @@ padrão em vários lugares (Explorer, Alt+Tab, instalador). A lista agora é
 montada à mão, em ordem crescente, e o `.ico` foi conferido com
 `magick identify`.
 
-Falta **confirmar na máquina Windows** se era só isso. Se ainda estiver
-errado depois de um instalador novo, o sintoma precisa ser detalhado
-(qual ícone, onde) — e vale lembrar que há duas fontes diferentes:
-
-- o ícone do executável e do instalador é o `.ico` acima, embutido como
-  recurso pelo `windres`. Se o problema persistir aqui, o próximo
-  suspeito é a conversão em si (fundo ou transparência do
-  `rsvg-convert`);
-- os ícones DENTRO da interface (protocolos, barra de topo, cards) são
-  vetores do pacote `gio.tools/icons`, desenhados pelo próprio Gio, e não
-  dependem de nada do sistema — se estes estiverem errados no Windows e
-  certos no Linux, o assunto é outro (escala ou tema), não o `.ico`.
+Falta **confirmar na máquina Windows**, com um instalador novo, se era só
+isso. Se continuar errado, o próximo suspeito é a conversão em si (fundo
+ou transparência do `rsvg-convert`) — e o sintoma precisa ser detalhado
+(qual ícone, onde).
 
 ## 5. Capturas de tela do metainfo
 
@@ -179,6 +213,15 @@ perdida" — foi o que permitiu identificar, no mesmo dia, que uma queda
 recorrente contra um host específico era `ERRINFO_RPC_INITIATED_
 DISCONNECT` (ferramenta administrativa NO SERVIDOR derrubando a sessão
 a cada ~35s) — nada a corrigir aqui, é comportamento do servidor.
+
+**E o teste ao vivo só existe no Linux**, o que é um problema justamente
+aqui: as quedas foram relatadas no Windows. `telaworker_aovivo_test.go` e
+`telaworker_aovivo_vnc_test.go` são `//go:build linux`, e a única coisa
+que os prende ali é um `syscall.Kill(pid, SIGKILL)` — `os.FindProcess(pid).Kill()`
+faz o mesmo nos dois sistemas. O `memoriaDe` que também faltava já tem as
+duas metades desde 2026-09-19 (ver
+[memoriaproc_win_test.go](cmd/acessos/memoriaproc_win_test.go)). Soltar a
+tag é barato e é pré-requisito do que vem abaixo.
 
 O que ficou de fora, por ser mais arriscado de mexer sem um teste ao
 vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
