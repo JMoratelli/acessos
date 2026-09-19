@@ -25,9 +25,23 @@ type workerRDP struct {
 
 	certResp chan int // resposta do diálogo de certificado
 
-	// enviosFora é a fila de EvtCursor/EvtClipboard/EvtDisplayPronto —
-	// ver enviarForaDoProcessamento logo abaixo, motivo de existir.
+	// enviosFora é a fila de EvtCursor/EvtClipboard — ver
+	// enviarForaDoProcessamento logo abaixo, motivo de existir.
 	enviosFora chan func()
+
+	// dispPronto sinaliza o disparo de OnDisplayPronto por um canal
+	// PRÓPRIO, separado de enviosFora, com uma vaga só. OnCursor/
+	// OnClipboardText descrevem "qual é o estado AGORA" — perder um
+	// no meio de uma rajada não importa, o próximo já corrige. Já
+	// OnDisplayPronto é um evento ÚNICO por sessão (dispara uma vez,
+	// quando o canal Display Control termina o handshake): se
+	// competisse pela mesma fila de 8 vagas e caísse numa rajada de
+	// cursor/clipboard cheia, ele se perdia PRA SEMPRE — nada mais
+	// reenvia — e a sessão ficava presa na resolução padrão do
+	// servidor até a janela ser redimensionada manualmente. Era
+	// exatamente esse o sintoma: funcionava "às vezes", dependendo de
+	// quão cheia a fila compartilhada estava bem naquele instante.
+	dispPronto chan struct{}
 }
 
 func rodarWorkerRDP(c *telaproc.Conn) {
@@ -40,10 +54,12 @@ func rodarWorkerRDP(c *telaproc.Conn) {
 		}),
 		certResp:   make(chan int, 1),
 		enviosFora: make(chan func(), 8),
+		dispPronto: make(chan struct{}, 1),
 	}
 	wk.ligarCallbacks()
 	go wk.bomba.rodar()
 	go wk.despacharEnviosFora()
+	go wk.despacharDispPronto()
 	wk.lacoComandos()
 	wk.bomba.encerrar()
 }
@@ -76,6 +92,19 @@ func (wk *workerRDP) despacharEnviosFora() {
 	}
 }
 
+// despacharDispPronto entrega o EvtDisplayPronto sozinho, fora da fila
+// compartilhada — ver o comentário em dispPronto. Em loop (e não só uma
+// vez) por segurança, caso o canal Display Control caia e reconecte
+// dentro da MESMA sessão RDP, disparando hook_disp_caps de novo.
+// wk.c.Enviar pode bloquear (mesmo write-mutex do quadro), mas isto
+// roda numa goroutine própria que não faz mais nada, então bloquear
+// aqui nunca atrasa rs_processar nem o resto da sessão.
+func (wk *workerRDP) despacharDispPronto() {
+	for range wk.dispPronto {
+		_ = wk.c.Enviar(telaproc.EvtDisplayPronto, nil)
+	}
+}
+
 func (wk *workerRDP) ligarCallbacks() {
 	s := wk.sess
 	s.OnUpdate = func(x, y, w, h int) {
@@ -102,7 +131,10 @@ func (wk *workerRDP) ligarCallbacks() {
 		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto)) })
 	}
 	s.OnDisplayPronto = func() {
-		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtDisplayPronto, nil) })
+		select {
+		case wk.dispPronto <- struct{}{}:
+		default:
+		}
 	}
 	// OnCertificado roda NA THREAD DE REDE da libfreerdp e BLOQUEIA o
 	// handshake até responder — é isso que dá sentido à pergunta. Aqui a

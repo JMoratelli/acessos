@@ -35,6 +35,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"unsafe"
 
@@ -156,33 +157,55 @@ func (s *Session) Run(stop <-chan struct{}) error {
 		default:
 		}
 
-		morto, n, ok := s.poll()
+		morto, n, ok, detalhe := s.poll()
 		if morto {
 			return errors.New("conexão encerrada")
 		}
 		if n < 0 {
-			return errors.New("erro aguardando dados do servidor")
+			return erroComDetalhe("erro aguardando dados do servidor", detalhe)
 		}
 		if n == 0 {
 			continue
 		}
 		if !ok {
-			return errors.New("conexão perdida")
+			return erroComDetalhe("conexão perdida", detalhe)
 		}
 	}
 }
 
-func (s *Session) poll() (morto bool, n int, ok bool) {
+// erroComDetalhe anexa o motivo especifico do FreeRDP (capturado em
+// erro_msg por rs_processar/rs_esperar, ver guardar_erro_desconexao em
+// rdpshim.c) à mensagem genérica — sem isto todo log de queda em
+// runtime dizia só "conexão perdida", pra qualquer causa, sem dar pra
+// diferenciar um problema específico de servidor de uma queda de rede.
+func erroComDetalhe(generico, detalhe string) error {
+	if detalhe == "" {
+		return errors.New(generico)
+	}
+	return fmt.Errorf("%s: %s", generico, detalhe)
+}
+
+// poll lê o detalhe de erro (se houver) AINDA sob s.mu.RLock: fazer isso
+// fora do lock arriscaria ler s.s depois de um Close() concorrente já
+// ter chamado rs_destruir nele.
+func (s *Session) poll() (morto bool, n int, ok bool, detalhe string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if C.rs_morto(s.s) != 0 {
-		return true, 0, false
+		return true, 0, false, ""
 	}
 	n = int(C.rs_esperar(s.s, 200)) // ms
 	if n <= 0 {
-		return false, n, false
+		if n < 0 {
+			detalhe = C.GoString(C.rs_erro_msg(s.s))
+		}
+		return false, n, false, detalhe
 	}
-	return false, n, C.rs_processar(s.s) != 0
+	ok = C.rs_processar(s.s) != 0
+	if !ok {
+		detalhe = C.GoString(C.rs_erro_msg(s.s))
+	}
+	return false, n, ok, detalhe
 }
 
 // Framebuffer devolve uma CÓPIA do buffer em C (formato BGRX/32bpp, igual

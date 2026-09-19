@@ -974,16 +974,40 @@ int rs_conectar(Sessao *s, const char *host, int porta) {
     return 1;
 }
 
+/* Guarda em erro_msg o motivo especifico (segundo o proprio FreeRDP) de
+ * uma queda em runtime, prefixado de onde foi detectado. rs_erro_msg ja
+ * era lido por Connect() logo apos rs_conectar falhar — reaproveitar o
+ * mesmo campo aqui e' seguro porque cada Sessao e' criada (calloc) do
+ * zero por reconexao (ver rdp.New/rs_criar), entao nao ha valor de uma
+ * tentativa anterior sobrando pra confundir a atual. Sem isto, toda
+ * queda em runtime virava o mesmo "conexao perdida" generico em
+ * rdp.go:Run — impossivel diferenciar um servidor com problema
+ * especifico (ex.: um canal virtual que ele nao suporta) de uma queda
+ * de rede comum. */
+static void guardar_erro_desconexao(Sessao *s, const char *onde) {
+    if (!s || !s->inst || !s->inst->context) return;
+    UINT32 codigo = freerdp_get_last_error(s->inst->context);
+    const char *nome = freerdp_get_last_error_string(codigo);
+    snprintf(s->erro_msg, sizeof(s->erro_msg), "%s: %s (0x%04X)",
+             onde, nome ? nome : "sem detalhe", codigo);
+}
+
 /* Espera ate `ms` por atividade nos handles do FreeRDP. >0 ha o que
  * processar, 0 timeout, <0 erro/desconectou. */
 int rs_esperar(Sessao *s, int ms) {
     if (!s || !s->inst || !s->conectado) return -1;
     HANDLE handles[64];
     DWORD n = freerdp_get_event_handles(s->inst->context, handles, 64);
-    if (n == 0) return -1;
+    if (n == 0) {
+        guardar_erro_desconexao(s, "get_event_handles");
+        return -1;
+    }
     DWORD status = WaitForMultipleObjects(n, handles, FALSE, (DWORD)ms);
     if (status == WAIT_TIMEOUT) return 0;
-    if (status == WAIT_FAILED) return -1;
+    if (status == WAIT_FAILED) {
+        guardar_erro_desconexao(s, "WaitForMultipleObjects");
+        return -1;
+    }
     return 1;
 }
 
@@ -1002,12 +1026,14 @@ int rs_esperar(Sessao *s, int ms) {
 int rs_processar(Sessao *s) {
     if (!s || !s->inst || !s->conectado) return 0;
     if (freerdp_shall_disconnect_context(s->inst->context)) {
+        guardar_erro_desconexao(s, "shall_disconnect_context");
         s->conectado = 0;
         return 0;
     }
     if (!freerdp_check_event_handles(s->inst->context)) {
         if (freerdp_get_last_error(s->inst->context) == FREERDP_ERROR_SUCCESS && getenv("RS_LOG"))
             fprintf(stderr, "[rdp] check_event_handles falhou sem last_error especifico\n");
+        guardar_erro_desconexao(s, "check_event_handles");
         s->conectado = 0;
         return 0;
     }
