@@ -267,30 +267,6 @@ func TestAoVivoCustoDeUmFilho(t *testing.T) {
 		"rdp", telaproc.CustoDe("rdp"), telaproc.LimiteSessaoMiB)
 }
 
-// memoriaDe lê /proc/<pid>/smaps_rollup, que já soma o mapeamento todo do
-// processo e distingue o que é privado do que é compartilhado. Valores em
-// KiB.
-func memoriaDe(pid int) (map[string]int, error) {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/smaps_rollup")
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]int{}
-	for _, linha := range strings.Split(string(b), "\n") {
-		chave, resto, ok := strings.Cut(linha, ":")
-		if !ok {
-			continue
-		}
-		campos := strings.Fields(resto)
-		if len(campos) == 0 {
-			continue
-		}
-		if v, err := strconv.Atoi(campos[0]); err == nil {
-			m[chave] = v
-		}
-	}
-	if len(m) == 0 {
-		return nil, os.ErrNotExist
-	}
-	return m, nil
-}
+// memoriaDe mora em memoriaproc_posix_test.go / memoriaproc_win_test.go:
+// este arquivo é só Linux, e o telaworker_filho_test.go, que também a
+// usa, roda nos dois sistemas.
