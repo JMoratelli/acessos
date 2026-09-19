@@ -1,4 +1,4 @@
-//go:build linux && !race
+//go:build (linux || windows) && !race
 
 package main
 

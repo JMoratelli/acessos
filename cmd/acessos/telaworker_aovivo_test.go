@@ -1,4 +1,4 @@
-//go:build linux && !race
+//go:build (linux || windows) && !race
 
 package main
 
@@ -20,7 +20,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -142,10 +141,10 @@ func TestAoVivoMorteDoFilhoNaoDerrubaOPrincipal(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("sem PID do filho")
 	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-		t.Fatalf("Kill(%d): %v", pid, err)
+	if err := matarAFerro(pid); err != nil {
+		t.Fatalf("matando %d: %v", pid, err)
 	}
-	t.Logf("matei o processo %d a SIGKILL", pid)
+	t.Logf("matei o processo %d a ferro", pid)
 
 	prazo := time.After(15 * time.Second)
 	for percebeu := false; !percebeu; {
@@ -265,6 +264,20 @@ func TestAoVivoCustoDeUmFilho(t *testing.T) {
 	// serve de conferência.
 	t.Logf("estimado para %s: %d MiB por sessão; teto por sessão: %d MiB",
 		"rdp", telaproc.CustoDe("rdp"), telaproc.LimiteSessaoMiB)
+}
+
+// matarAFerro mata o processo do jeito mais violento que a plataforma
+// tem: SIGKILL no Linux, TerminateProcess no Windows. É o que um SIGSEGV
+// dentro da libfreerdp vira, na prática, para quem está de fora.
+//
+// os.Process.Kill faz os dois; era o syscall.Kill daqui, que não existe
+// no Windows, que prendia estes testes ao Linux.
+func matarAFerro(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
 }
 
 // memoriaDe mora em memoriaproc_posix_test.go / memoriaproc_win_test.go:

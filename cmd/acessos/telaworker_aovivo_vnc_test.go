@@ -1,4 +1,4 @@
-//go:build linux && !race
+//go:build (linux || windows) && !race
 
 package main
 
@@ -9,7 +9,7 @@ package main
 //	ACESSOS_VNC_AOVIVO=192.168.0.10:5900 ACESSOS_VNC_SENHA=... \
 //	go test ./cmd/acessos/ -run AoVivoVNC -v
 //
-// Os auxiliares (msgAoVivo, lerAoVivo, memoriaDe) são os mesmos do teste ao
+// Os auxiliares (msgAoVivo, lerAoVivo, memoriaDe, matarAFerro) são os mesmos do teste ao
 // vivo de RDP, em telaworker_aovivo_test.go.
 
 import (
@@ -17,7 +17,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -104,10 +103,10 @@ func TestAoVivoVNCMorteDoFilhoNaoDerrubaOPrincipal(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("sem PID do filho")
 	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-		t.Fatalf("Kill(%d): %v", pid, err)
+	if err := matarAFerro(pid); err != nil {
+		t.Fatalf("matando %d: %v", pid, err)
 	}
-	t.Logf("matei o processo %d a SIGKILL", pid)
+	t.Logf("matei o processo %d a ferro", pid)
 
 	prazo := time.After(15 * time.Second)
 	for percebeu := false; !percebeu; {
