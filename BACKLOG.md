@@ -27,12 +27,6 @@ pontas continuam abertas:
   A chave `[geral] atalho_autostart` (ver autostart_linux.go) já existe e
   é editável à mão; falta o mesmo para ligar/desligar o atalho em si, e
   falta a interface das duas.
-- **`RegisterHotKey` no Windows.** Lá o atalho é mais simples que no
-  Linux: global de verdade e com a tecla por nossa conta, sem portal e
-  sem diálogo — e sem precisar de serviço, porque não há sessão de portal
-  para morrer junto com o processo. O arquivo
-  [atalhoglobal_outros.go](cmd/acessos/atalhoglobal_outros.go) já é o
-  lugar, e hoje só devolve erro.
 - **Soltar a captura de atalhos durante sessão remota.** Enquanto uma
   tela remota está em foco o app inibe os atalhos do compositor (de
   propósito: `Super` e `Alt+Tab` têm que chegar na máquina remota), e

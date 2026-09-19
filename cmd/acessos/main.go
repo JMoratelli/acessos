@@ -547,6 +547,15 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 				}
 			}
 		}()
+	} else {
+		// Sem serviço à parte (Windows e as demais plataformas fora do
+		// Linux — ver atalhoglobal_windows.go e atalhoglobal_outros.go):
+		// o atalho global mora aqui dentro, no próprio app.
+		if _, err := registrarAtalhoGlobal("abrir-busca",
+			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
+			abrirBusca); err != nil {
+			fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
+		}
 	}
 
 	activeTab := func() Tab { return bar.active() }

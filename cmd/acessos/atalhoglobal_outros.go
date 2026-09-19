@@ -1,18 +1,17 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package main
 
 import "errors"
 
-// Atalho global fora do Linux.
+// Atalho global fora do Linux e do Windows (ver atalhoglobal_windows.go
+// para o RegisterHotKey de lá).
 //
-// No Windows o caminho é RegisterHotKey, que é global de verdade e deixa
-// a tecla por nossa conta — ao contrário do Wayland, onde quem amarra é
-// o sistema. Ainda não implementado; até lá o app sobe sem atalho, que é
-// a mesma degradação de um desktop sem o portal: a busca continua
-// existindo dentro da janela.
+// Ainda não implementado nestas outras plataformas; até lá o app sobe
+// sem atalho, que é a mesma degradação de um desktop sem o portal: a
+// busca continua existindo dentro da janela.
 //
-// Este arquivo existe para a build de Windows não quebrar por falta do
+// Este arquivo existe para essas builds não quebrarem por falta do
 // símbolo (ver scripts/build-windows.sh).
 
 type AtalhoGlobal struct {

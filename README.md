@@ -97,7 +97,12 @@ permite atalho global, pelo portal `GlobalShortcuts`. O serviço pede
 `Ctrl+Shift+F12`, e o KDE confirma **uma vez só** na primeira execução. Se
 esse diálogo for recusado, o atalho fica registrado sem tecla nenhuma e pode
 ser amarrado em Preferências do Sistema → Atalhos → Acessos; o app avisa no
-terminal quando isso acontece. No Windows ainda não há atalho global.
+terminal quando isso acontece.
+
+No Windows quem amarra a tecla é o próprio app, com `RegisterHotKey`: sem
+portal, sem diálogo de confirmação e sem precisar do serviço — não há
+sessão para morrer junto com o processo, então o atalho só existe com o
+app aberto.
 
 ## Windows
 

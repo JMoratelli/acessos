@@ -4,8 +4,8 @@ package main
 
 import "fmt"
 
-// Fora do Linux não há serviço: o atalho global do Windows será
-// RegisterHotKey dentro do próprio app (ver atalhoglobal_outros.go), sem
+// Fora do Linux não há serviço: o atalho global do Windows é
+// RegisterHotKey dentro do próprio app (ver atalhoglobal_windows.go), sem
 // portal e sem sessão que morra junto com o processo — ou seja, sem o
 // problema que o serviço existe para resolver.
 //
