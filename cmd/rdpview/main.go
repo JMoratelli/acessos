@@ -1,3 +1,5 @@
+//go:build linux
+
 // rdpview é uma janela mínima que mostra uma sessão RDP ao vivo, usando o
 // binding internal/rdp (cgo sobre libfreerdp3), Gio para desenho, e
 // internal/grab para teclado e captura de atalhos no Wayland — mesma

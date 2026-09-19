@@ -1,3 +1,5 @@
+//go:build linux
+
 // vncview é uma janela mínima que mostra uma sessão VNC ao vivo, usando o
 // binding internal/vnc (cgo sobre libvncclient) e Gio para desenho/entrada.
 package main

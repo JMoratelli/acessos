@@ -1,3 +1,5 @@
+//go:build !windows
+
 // sshview é um cliente SSH interativo de terminal: coloca o terminal local
 // em modo raw, pede um PTY remoto do tamanho certo, e faz a ponte de bytes
 // nos dois sentidos. Go puro (x/crypto/ssh) — sem cgo, sem shim C.
