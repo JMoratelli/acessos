@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.6.1" date="2026-09-19">
+      <description>
+        <p>Corrige a janela RDP não acompanhar o tamanho da aba ao conectar: a sessão podia ficar presa na resolução padrão do servidor (800x600 ou 1024x768) até a janela ser redimensionada manualmente — dependia de quão cheia estava uma fila interna bem no instante da conexão.</p>
+        <p>Quedas de sessão RDP em tempo real passam a registrar o motivo específico informado pelo próprio FreeRDP, em vez de uma mensagem genérica — ajuda a diferenciar um servidor com um problema específico de uma queda de rede comum.</p>
+      </description>
+    </release>
     <release version="2.6.0" date="2026-09-19">
       <description>
         <p>Conectar agora mostra um cartão com os passos da conexao, nas quatro abas — SSH, RDP, VNC e SFTP. Se a rede demorar demais ou uma tentativa falhar, aparece um botao para conectar de novo na hora, em vez de depender de achar o Reconectar escondido na barra de sessao.</p>
