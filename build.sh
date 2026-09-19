@@ -46,7 +46,7 @@ GOWORK=off go mod vendor
 echo ">> compilando o Flatpak ($APPID $VERSAO)"
 mkdir -p build
 flatpak-builder --force-clean --user --install-deps-from=flathub \
-    --repo=build/repo build/dir "$MANIFESTO"
+    --jobs=4 --repo=build/repo build/dir "$MANIFESTO"
 
 echo ">> gerando o bundle"
 flatpak build-bundle build/repo "build/$APPID-$VERSAO.flatpak" "$APPID"
