@@ -27,6 +27,8 @@ type dlgAjustes struct {
 	btnProcurar widget.Clickable
 	verDiag     widget.Clickable
 	diagOn      bool
+	atalho      widget.Clickable
+	atalhoOn    bool
 	lista       widget.List
 	erro        string
 	aviso       string
@@ -46,6 +48,7 @@ func abrirAjustes(w *app.Window, ini string) {
 	d := &dlgAjustes{w: w}
 	d.ini.SingleLine = true
 	d.ini.SetText(ini)
+	d.atalhoOn = atalhoGlobalLigado(ini)
 	abrirDialogo(d)
 }
 
@@ -61,6 +64,9 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	}
 	if d.verDiag.Clicked(gtx) {
 		d.diagOn = !d.diagOn
+	}
+	if d.atalho.Clicked(gtx) {
+		d.trocarAtalho()
 	}
 	if d.btnProcurar.Clicked(gtx) {
 		d.mu.Lock()
@@ -129,6 +135,11 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	}
 	filhos = append(filhos, espaco(12),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return caixaMarcar(gtx, th, &d.atalho, d.atalhoOn,
+				"atalho global (Ctrl+Shift+F12) para a busca de máquinas")
+		}),
+		espaco(8),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return caixaMarcar(gtx, th, &d.verDiag, d.diagOn, "mostrar diagnóstico")
 		}))
 	if d.diagOn {
@@ -167,6 +178,26 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		)
 	}))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
+}
+
+// trocarAtalho liga/desliga o atalho global. Grava a chave ANTES de
+// aplicar: no Linux quem registra é outro processo, e ele relê o arquivo
+// ao ser avisado — avisar primeiro seria avisar sobre um estado que ainda
+// não está no disco.
+//
+// Falha de gravação não mexe na caixa: marcar uma preferência que não
+// sobreviveu ao próximo start é pior que não marcar nada.
+func (d *dlgAjustes) trocarAtalho() {
+	novo := !d.atalhoOn
+	if err := salvarAtalhoGlobalLigado(d.ini.Text(), novo); err != nil {
+		d.erro = err.Error()
+		return
+	}
+	d.atalhoOn = novo
+	d.erro = ""
+	if aplicarAtalhoGlobal != nil {
+		aplicarAtalhoGlobal(novo)
+	}
 }
 
 // aplicar troca o arquivo em uso. Não regrava nada: só passa a ler de
@@ -226,6 +257,13 @@ func (d *dlgAjustes) procurar() {
 // trocarArquivoINI é preenchido no main: recarrega o painel a partir de
 // outro arquivo.
 var trocarArquivoINI func(string) error
+
+// aplicarAtalhoGlobal é preenchido no main: faz o novo estado valer
+// AGORA, sem esperar o próximo start. Quem registra o atalho muda com a
+// plataforma — no Linux é o processo -servico (e o main só avisa pelo
+// socket), no Windows é o próprio app —, e é por isso que isto é um
+// gancho em vez de uma chamada direta daqui.
+var aplicarAtalhoGlobal func(bool)
 
 func ondeEstaOCofre() string {
 	if chaveiroAtual != nil && len(chaveiroAtual.Cofre) > 0 {

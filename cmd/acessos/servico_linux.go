@@ -46,6 +46,15 @@ type servico struct {
 	// apresenta. Antes ele só perguntava de 100 em 100ms, e essa espera
 	// caía inteira em cima de quem acabou de escolher a máquina.
 	chegouApp chan struct{}
+
+	// atalhoMudou é só a BATIDA NA PORTA avisando que a chave
+	// `[geral] atalho_global` mudou (msgAtalho, vindo dos Ajustes). O
+	// valor não viaja aqui de propósito: quem manda é o .ini, e
+	// manterAtalho o relê a cada acordada. Assim um aviso descartado por
+	// fila cheia não deixa o serviço num estado que não bate com o
+	// arquivo — o aviso que sobrou na fila releva o mesmo arquivo e
+	// chega na mesma conclusão.
+	atalhoMudou chan struct{}
 }
 
 // rodarServico é o modo -servico. Não retorna: ou o socket já tem dono (e
@@ -59,7 +68,11 @@ func rodarServico(caminhoINI string) {
 		fmt.Fprintf(os.Stderr, "serviço: %v\n", err)
 		return
 	}
-	s := &servico{ini: caminhoINI, chegouApp: make(chan struct{}, 1)}
+	s := &servico{
+		ini:         caminhoINI,
+		chegouApp:   make(chan struct{}, 1),
+		atalhoMudou: make(chan struct{}, 1),
+	}
 
 	// O tema tem de estar pronto ANTES da primeira caixa: ela nasce de um
 	// sinal do D-Bus, e montar tema/fonte ali dentro atrasaria justo o que
@@ -155,6 +168,14 @@ func (s *servico) conversa(c net.Conn) {
 			if !s.mandarParaApp(m) {
 				fmt.Fprintln(os.Stderr, "serviço: ninguém para abrir a conexão")
 			}
+		case msgAtalho:
+			// Os Ajustes ligaram/desligaram o atalho. Quem lê a chave e
+			// registra (ou solta) é manterAtalho; aqui só batemos na
+			// porta. Sem bloquear, e sem o valor: ver atalhoMudou.
+			select {
+			case s.atalhoMudou <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
@@ -247,6 +268,21 @@ func (s *servico) garantirApp() bool {
 func (s *servico) manterAtalho() {
 	espera := 2 * time.Second
 	for {
+		// Desligado pelos Ajustes (ver atalhopref.go): fica parado aqui,
+		// sem registrar nada, até alguém religar. O serviço continua de
+		// pé — ele também é instância única e ponte para abrir conexão
+		// vinda de outra janela.
+		if !atalhoGlobalLigado(s.ini) {
+			fmt.Fprintln(os.Stderr, "atalho global: desligado nos Ajustes")
+			for {
+				<-s.atalhoMudou
+				if atalhoGlobalLigado(s.ini) {
+					break
+				}
+			}
+			espera = 2 * time.Second
+		}
+
 		a, err := registrarAtalhoGlobal("abrir-busca",
 			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
 			func(token string) { s.abrirBusca(token) })
@@ -270,11 +306,42 @@ func (s *servico) manterAtalho() {
 		// autostart_linux.go.
 		go garantirAutostart(s.ini)
 
-		// Registrado. A goroutine de sinais do portal fica com ele; só
-		// voltamos aqui se a sessão do portal cair (portal reiniciado,
-		// logout parcial), e aí registramos de novo.
-		<-a.Caiu
-		fmt.Fprintln(os.Stderr, "atalho global: a sessão do portal caiu; registrando de novo")
+		// Registrado. A goroutine de sinais do portal fica com ele.
+		// Voltamos aqui por dois motivos: a sessão do portal caiu (portal
+		// reiniciado, logout parcial) e é preciso registrar de novo, ou o
+		// app desligou o atalho pelos Ajustes e é preciso SOLTAR a tecla.
+		// O laço aqui dentro é o que impede registrar DUAS vezes: um
+		// aviso de "mudou" que no fim das contas manteve o atalho ligado
+		// (desligar e religar antes de chegarmos aqui) tem de voltar a
+		// esperar, não cair no registrarAtalhoGlobal lá de cima. Dois
+		// registros vivos é o bug de "um aperto, duas caixas de busca"
+		// que motivou o processo separado — ver instancia.go.
+		for soltou := false; !soltou; {
+			select {
+			case <-a.Caiu:
+				fmt.Fprintln(os.Stderr, "atalho global: a sessão do portal caiu; registrando de novo")
+				soltou = true
+			case <-s.atalhoMudou:
+				if atalhoGlobalLigado(s.ini) {
+					continue // religado antes de soltarmos: segue de pé
+				}
+				fmt.Fprintln(os.Stderr, "atalho global: desligado nos Ajustes; soltando a tecla")
+				a.Fechar()
+				// Espera o portal confirmar pelo Session.Closed, mas COM
+				// PRAZO: a especificação não garante esse sinal para quem
+				// fechou a própria sessão, e esperar sem prazo prenderia
+				// o serviço aqui para sempre — atalho solto e sem jeito
+				// de religar. O que importa (tecla liberada) já aconteceu
+				// no Fechar; isto é só para não deixar a goroutine de
+				// sinais da sessão velha de pé junto com um registro novo.
+				select {
+				case <-a.Caiu:
+				case <-time.After(5 * time.Second):
+					fmt.Fprintln(os.Stderr, "atalho global: o portal não confirmou o fim da sessão")
+				}
+				soltou = true
+			}
+		}
 		espera = 2 * time.Second
 	}
 }

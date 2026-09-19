@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -118,6 +119,8 @@ type clienteServico struct {
 	// Msgs entrega o que o serviço mandar (abrir uma máquina, pipocar a
 	// caixa de busca). Quem consome é main.go.
 	Msgs chan mensagem
+	// mu serializa a escrita — ver Enviar.
+	mu sync.Mutex
 }
 
 // ligarNoServico é o aperto de mão do app. Devolve:
@@ -189,3 +192,17 @@ func (cli *clienteServico) ler() {
 }
 
 func (cli *clienteServico) Fechar() { _ = cli.c.Close() }
+
+// Enviar manda uma mensagem ao serviço. Depois do aperto de mão o app só
+// escreve daqui (hoje, o aviso de que o atalho global mudou nos Ajustes),
+// e sempre da goroutine do laço de quadro — mas a trava fica porque o
+// caminho de escrita do serviço já ensinou que confiar em "só um escreve"
+// custa caro: ver o comentário do tipo canal, em instancia.go.
+func (cli *clienteServico) Enviar(m mensagem) error {
+	if cli == nil {
+		return nil
+	}
+	cli.mu.Lock()
+	defer cli.mu.Unlock()
+	return escrever(cli.c, m)
+}

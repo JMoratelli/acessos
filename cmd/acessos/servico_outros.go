@@ -17,6 +17,10 @@ type clienteServico struct{ Msgs chan mensagem }
 
 func (cli *clienteServico) Fechar() {}
 
+// Enviar existe para main.go compilar igual: aqui não há serviço do outro
+// lado, e quem liga/desliga o atalho é o próprio app, em processo.
+func (cli *clienteServico) Enviar(m mensagem) error { return nil }
+
 func rodarServico(caminhoINI string) {
 	fmt.Println("o modo serviço só existe no Linux")
 }

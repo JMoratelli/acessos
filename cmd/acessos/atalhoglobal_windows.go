@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -38,11 +39,14 @@ const (
 	idAtalho = 1 // único hotkey que este processo registra
 )
 
+const wmQuit = 0x0012
+
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	procRegisterHotKey   = user32.NewProc("RegisterHotKey")
-	procUnregisterHotKey = user32.NewProc("UnregisterHotKey")
-	procGetMessageW      = user32.NewProc("GetMessageW")
+	user32                 = windows.NewLazySystemDLL("user32.dll")
+	procRegisterHotKey     = user32.NewProc("RegisterHotKey")
+	procUnregisterHotKey   = user32.NewProc("UnregisterHotKey")
+	procGetMessageW        = user32.NewProc("GetMessageW")
+	procPostThreadMessageW = user32.NewProc("PostThreadMessageW")
 )
 
 // msg espelha o bastante da MSG do Win32 (winuser.h) para GetMessageW
@@ -59,10 +63,33 @@ type msg struct {
 
 type AtalhoGlobal struct {
 	Gatilho string
-	// Caiu não fecha na prática: RegisterHotKey não tem sessão externa
-	// para morrer junto com o processo, ao contrário do portal do Linux.
-	// Existe só para este tipo compilar igual nas duas plataformas.
+	// Caiu fecha quando o laço de mensagens sai — na prática, só por
+	// Fechar: RegisterHotKey não tem sessão externa para morrer junto com
+	// o processo, ao contrário do portal do Linux.
 	Caiu chan struct{}
+
+	// tid é a thread do SO que registrou o atalho e está parada no
+	// GetMessageW. É por ela que Fechar acorda o laço: WM_HOTKEY e
+	// WM_QUIT chegam na fila da thread, não do processo.
+	tid      uint32
+	fecharUm sync.Once
+}
+
+// Fechar solta o atalho, liberando a tecla para o resto do sistema.
+// Idempotente. Posta WM_QUIT na thread do laço: GetMessageW devolve 0, o
+// laço sai e o UnregisterHotKey adiado roda na MESMA thread que
+// registrou — exigência do Win32, e a razão de não dar para simplesmente
+// chamar UnregisterHotKey daqui.
+func (a *AtalhoGlobal) Fechar() {
+	if a == nil {
+		return
+	}
+	a.fecharUm.Do(func() {
+		if a.tid == 0 {
+			return
+		}
+		procPostThreadMessageW.Call(uintptr(a.tid), wmQuit, 0, 0)
+	})
 }
 
 func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string)) (*AtalhoGlobal, error) {
@@ -76,6 +103,9 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string))
 
 	go func() {
 		runtime.LockOSThread()
+		// Antes de registrar: quem chamou só recebe o ponteiro depois do
+		// <-pronto, então gravar aqui não corre com o Fechar.
+		a.tid = windows.GetCurrentThreadId()
 
 		ok, _, chamouErr := procRegisterHotKey.Call(0, idAtalho, uintptr(mods|modNoRepeat), uintptr(vk))
 		if ok == 0 {

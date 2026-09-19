@@ -53,6 +53,7 @@ const (
 	msgAbrir   = "abrir"   // abra estas conexões na janela grande
 	msgBusca   = "busca"   // pipoque a caixa de busca (o app tem foco, o serviço não)
 	msgAtivar  = "ativar"  // traga a janela grande para a frente com este token
+	msgAtalho  = "atalho"  // o atalho global foi ligado/desligado nos Ajustes
 	msgPing    = "ping"
 	msgPong    = "pong"
 	msgOK      = "ok"
@@ -77,6 +78,10 @@ type mensagem struct {
 	// por quem digitou; Alvo é uma escolha no inventário, que a janela
 	// grande ainda vai resolver com as credenciais dela.
 	Alvo *alvoAbrir `json:"alvo,omitempty"`
+	// Ligado acompanha msgAtalho. Sem omitempty de propósito: "desligar"
+	// é justamente o valor falso, e omiti-lo deixaria a mensagem mais
+	// importante das duas viajando vazia.
+	Ligado bool `json:"ligado"`
 }
 
 // alvoAbrir é uma máquina escolhida na caixa de busca.

@@ -24,3 +24,7 @@ type AtalhoGlobal struct {
 func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string)) (*AtalhoGlobal, error) {
 	return nil, errors.New("atalho global ainda não implementado nesta plataforma")
 }
+
+// Fechar existe para o desligar dos Ajustes compilar aqui. Nada a soltar:
+// registrarAtalhoGlobal nunca devolve um atalho nestas plataformas.
+func (a *AtalhoGlobal) Fechar() {}

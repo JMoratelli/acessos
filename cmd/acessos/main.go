@@ -547,14 +547,47 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 				}
 			}
 		}()
+	}
+
+	if cli != nil {
+		// No Linux quem segura o atalho é o serviço: os Ajustes só avisam
+		// pelo socket, e quem relê a chave e registra (ou solta) é o
+		// manterAtalho de lá.
+		aplicarAtalhoGlobal = func(ligado bool) {
+			if err := cli.Enviar(mensagem{Tipo: msgAtalho, Ligado: ligado}); err != nil {
+				fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
+			}
+		}
 	} else {
 		// Sem serviço à parte (Windows e as demais plataformas fora do
 		// Linux — ver atalhoglobal_windows.go e atalhoglobal_outros.go):
 		// o atalho global mora aqui dentro, no próprio app.
-		if _, err := registrarAtalhoGlobal("abrir-busca",
-			"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
-			abrirBusca); err != nil {
-			fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
+		var atalhoVivo *AtalhoGlobal
+		ligarAtalho := func() {
+			if atalhoVivo != nil {
+				return
+			}
+			a, err := registrarAtalhoGlobal("abrir-busca",
+				"Abrir a busca de máquinas do Acessos", "CTRL+SHIFT+F12",
+				abrirBusca)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "atalho global: %v\n", err)
+				return
+			}
+			atalhoVivo = a
+		}
+		if atalhoGlobalLigado(caminhoINI) {
+			ligarAtalho()
+		}
+		// Só é chamado do laço de quadro (o clique nos Ajustes), sempre
+		// na mesma goroutine — daí atalhoVivo não precisar de trava.
+		aplicarAtalhoGlobal = func(ligado bool) {
+			if ligado {
+				ligarAtalho()
+				return
+			}
+			atalhoVivo.Fechar()
+			atalhoVivo = nil
 		}
 	}
 

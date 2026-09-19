@@ -28,6 +28,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -39,18 +40,46 @@ const (
 	portalAtalhos = "org.freedesktop.portal.GlobalShortcuts"
 )
 
-// AtalhoGlobal é o resultado do registro. A sessão do portal vive
-// enquanto o processo viver — não guardamos a conexão nem o caminho dela
-// porque o app nunca desregistra o atalho em vida; quem o solta é o fim
-// do processo, e quem o muda de tecla é o usuário, pelas Preferências do
-// Sistema (e aí o ShortcutsChanged atualiza o Gatilho abaixo).
+// AtalhoGlobal é o resultado do registro. Quem muda a TECLA é o usuário,
+// pelas Preferências do Sistema (e aí o ShortcutsChanged atualiza o
+// Gatilho abaixo).
+//
+// A conexão e o caminho da sessão ficam guardados por causa do Fechar:
+// antes a sessão do portal vivia enquanto o processo vivesse, porque nada
+// desregistrava o atalho em vida. Com a chave `[geral] atalho_global`
+// (ver atalhopref.go) isso deixou de ser verdade — desligar o atalho pelos
+// Ajustes precisa SOLTAR a tecla, não só ignorar o disparo.
 type AtalhoGlobal struct {
 	Gatilho string // o que o SISTEMA amarrou; vazio = sem tecla
 
 	// Caiu fecha quando a sessão do portal acaba (portal reiniciado,
-	// sessão encerrada pelo desktop). Sem isto o atalho morria calado e
-	// só voltava reiniciando o app: quem escuta registra de novo.
+	// sessão encerrada pelo desktop, ou Fechar daqui). Sem isto o atalho
+	// morria calado e só voltava reiniciando o app: quem escuta registra
+	// de novo.
 	Caiu chan struct{}
+
+	conn     *dbus.Conn
+	sessao   dbus.ObjectPath
+	fecharUm sync.Once
+}
+
+// Fechar solta o atalho: encerra a sessão do portal, o que libera a tecla
+// para o resto do sistema. Idempotente — pode ser chamado junto com a
+// sessão caindo por conta própria, que é justamente quando as duas coisas
+// correm ao mesmo tempo.
+func (a *AtalhoGlobal) Fechar() {
+	if a == nil {
+		return
+	}
+	a.fecharUm.Do(func() {
+		if a.conn == nil || a.sessao == "" {
+			return
+		}
+		// Erro aqui não tem a quem interessar: se a sessão já morreu, o
+		// objetivo (tecla livre) está cumprido do mesmo jeito.
+		_ = a.conn.Object(portalDestino, a.sessao).
+			Call("org.freedesktop.portal.Session.Close", 0).Err
+	})
 }
 
 // registrarAtalhoGlobal pede o atalho e começa a escutar. Devolve erro
@@ -124,7 +153,11 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string))
 		return nil, err
 	}
 
-	a := &AtalhoGlobal{Caiu: make(chan struct{})}
+	a := &AtalhoGlobal{
+		Caiu:   make(chan struct{}),
+		conn:   conn,
+		sessao: dbus.ObjectPath(sessao),
+	}
 	a.Gatilho = gatilhoAmarrado(res, id)
 
 	go func() {
