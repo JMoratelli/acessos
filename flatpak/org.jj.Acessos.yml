@@ -155,3 +155,17 @@ modules:
         skip:
           - go.work
           - go.work.sum
+          # build/ é o cache local do porte Windows (scripts/build-windows.sh)
+          # — sysroot MSYS2, DLLs resolvidas, o .exe montado. Não tem nada a
+          # ver com este build, e pode passar de alguns GB depois de rodar o
+          # script uma vez; copiar isso pra dentro do sandbox do
+          # flatpak-builder só desperdiça tempo e disco.
+          - build
+          # .flatpak-builder/ é o cache do PRÓPRIO flatpak-builder (estado de
+          # builds anteriores) — se existir dentro do checkout (acontece
+          # quando o build roda com o diretório de trabalho aqui dentro),
+          # entra em loop de propósito nenhum copiar o cache de build para
+          # dentro do build.
+          - .flatpak-builder
+          # Histórico do git não é fonte nenhuma para o build.
+          - .git
