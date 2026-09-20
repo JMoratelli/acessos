@@ -34,6 +34,7 @@ import "C"
 import (
 	"io"
 	"os"
+	"sync"
 	"unsafe"
 
 	"acessos-go/internal/cgoregistry"
@@ -63,6 +64,21 @@ var registro = cgoregistry.New[Handle]()
 // Handle é uma sessão de captura ativa. Chame Stop ao perder foco ou
 // fechar a janela para devolver os atalhos ao compositor.
 type Handle struct {
+	// mu protege g contra um Stop concorrente.
+	//
+	// Antes não havia trava, e o único motivo de não quebrar era ninguém
+	// chamar Stop: os três pontos de uso documentavam que não chamavam,
+	// porque fazê-lo contra um wl_display em desmonte derrubava o
+	// processo. Com a sessão remota indo para janela própria, Stop passa
+	// a ser chamado de verdade — a janela que fecha solta a captura dela
+	// — e a corrida deixa de ser teórica: grab_parar faz free(g) enquanto
+	// o callback do Wayland, noutra thread, já está dentro de
+	// grab_modificadores com o ponteiro antigo.
+	//
+	// Leitura compartilhada porque as chamadas do C já se protegem entre
+	// si (ver o mutex de fonte/clip_local em grab_wayland.c); o que falta
+	// é só impedir que o ponteiro morra debaixo delas.
+	mu     sync.RWMutex
 	g      *C.Grab
 	handle uintptr
 
@@ -105,10 +121,15 @@ func Start(display, surface unsafe.Pointer,
 	return h
 }
 
-// deHandle devolve a captura do ctx, ou nil se ela já parou — um callback
-// em voo quando o Stop acontece é normal, e cair em nil aqui é o
+// deHandle devolve a captura do handle, ou nil se ela já parou — um
+// callback em voo quando o Stop acontece é normal, e cair em nil aqui é o
 // tratamento certo para ele.
-func deHandle(ctx unsafe.Pointer) *Handle { return registro.De(uintptr(ctx)) }
+//
+// Recebe uintptr, e não unsafe.Pointer, de propósito: só os //export
+// precisam falar a língua do C, e manter a conversão confinada a eles
+// deixa todo o resto (inclusive o teste) longe de unsafe — o checkptr do
+// -race reclama, com razão, de transformar um handle pequeno em ponteiro.
+func deHandle(h uintptr) *Handle { return registro.De(h) }
 
 // Modificadores devolve quais modificadores estão ativos AGORA, como
 // máscara: 1=Ctrl, 2=Shift, 4=Alt, 8=Super.
@@ -120,7 +141,12 @@ func deHandle(ctx unsafe.Pointer) *Handle { return registro.De(uintptr(ctx)) }
 // fica com a tecla presa em "apertada" e passa a errar todo teste de
 // tecla limpa a partir dali.
 func (h *Handle) Modificadores() int {
-	if h == nil || h.g == nil {
+	if h == nil {
+		return 0
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.g == nil {
 		return 0
 	}
 	return int(C.grab_modificadores(h.g))
@@ -131,7 +157,12 @@ func (h *Handle) Modificadores() int {
 // for uma sessão remota — com ela ligada no painel, o usuário perde os
 // atalhos do próprio desktop sem entender por quê. Idempotente.
 func (h *Handle) Inibir(ligar bool) {
-	if h == nil || h.g == nil {
+	if h == nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.g == nil {
 		return
 	}
 	v := C.int(0)
@@ -169,7 +200,12 @@ func (h *Handle) Inibir(ligar bool) {
 // No cmd/acessos a regra continua sendo: quem publica é o laço, nunca as
 // goroutines das sessões — ver clipboard.go no app.
 func (h *Handle) SetClipboardText(text string) {
-	if h == nil || h.g == nil {
+	if h == nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.g == nil {
 		return
 	}
 	cText := C.CString(text)
@@ -178,27 +214,40 @@ func (h *Handle) SetClipboardText(text string) {
 }
 
 // Stop libera a captura. Idempotente; seguro chamar em um Handle nil.
+//
+// Tira do registro ANTES de liberar o C: a partir daí nenhum callback novo
+// acha este Handle, e os que já estavam em voo terminam no ponteiro antigo
+// — que a trava abaixo segura até eles saírem.
+//
+// CUIDADO DE QUEM CHAMA, que a trava não resolve: não chame com o
+// wl_display do Gio já em desmonte. Chamar ali derrubava o processo, e é
+// por isso que o app só solta a captura ao fechar uma janela que ele
+// mesmo controla, nunca de dentro do caminho de destruição do Gio.
 func (h *Handle) Stop() {
-	if h == nil || h.g == nil {
+	if h == nil {
+		return
+	}
+	registro.Remover(h.handle)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.g == nil {
 		return
 	}
 	C.grab_parar(h.g)
 	h.g = nil
-	// Sai do registro junto: um handle que sobrevivesse à captura
-	// deixaria callbacks tardios achando um Handle já morto.
-	registro.Remover(h.handle)
 }
 
 //export goTecla
 func goTecla(ctx unsafe.Pointer, keysym, keycodeX11 C.uint32_t, pressionada C.int) {
-	entregarTecla(ctx, uint32(keysym), uint32(keycodeX11), pressionada != 0)
+	entregarTecla(uintptr(ctx), uint32(keysym), uint32(keycodeX11), pressionada != 0)
 }
 
 // entregarTecla é o roteamento de verdade, separado de goTecla só porque
 // arquivo _test.go não pode importar "C" — sem esta divisão o caminho que
 // o defeito do singleton quebrava ficaria sem teste nenhum.
-func entregarTecla(ctx unsafe.Pointer, keysym, keycodeX11 uint32, pressionada bool) {
-	h := deHandle(ctx)
+func entregarTecla(handle uintptr, keysym, keycodeX11 uint32, pressionada bool) {
+	h := deHandle(handle)
 	if h == nil || h.onKey == nil {
 		return
 	}
@@ -207,11 +256,17 @@ func entregarTecla(ctx unsafe.Pointer, keysym, keycodeX11 uint32, pressionada bo
 
 //export goClipOferta
 func goClipOferta(ctx unsafe.Pointer, fd C.int) {
+	entregarClipOferta(uintptr(ctx), int(fd))
+}
+
+// entregarClipOferta é o roteamento, separado do //export pelo mesmo
+// motivo de entregarTecla.
+func entregarClipOferta(handle uintptr, fd int) {
 	// O fd é lido e fechado mesmo sem captura do outro lado: ele já veio
 	// aberto do C, e largá-lo aqui vazaria um descritor por oferta de
 	// clipboard — uma por cópia feita no sistema inteiro.
 	f := os.NewFile(uintptr(fd), "clipboard-wayland")
-	h := deHandle(ctx)
+	h := deHandle(handle)
 	go func() {
 		defer f.Close()
 		data, err := io.ReadAll(f)

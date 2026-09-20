@@ -140,6 +140,40 @@ func (b *tabBar) fechar(i int) {
 	}
 }
 
+// retirar tira a aba da tira SEM fechá-la, devolvendo-a com a chave de
+// identidade. É o que separa "destacar" de "fechar": fechar chama
+// t.Close(), que derruba a sessão e mata o processo-filho; destacar só
+// muda quem desenha a aba, e a sessão nem percebe.
+//
+// A aba fixa (Painel) não sai — ela não tem sessão para destacar, e tirá-la
+// deixaria a tira no estado "zero abas" que ela existe para impedir.
+func (b *tabBar) retirar(i int) (Tab, string, bool) {
+	if i < 0 || i >= len(b.tabs) || b.tabs[i].Pinned() {
+		return nil, "", false
+	}
+	t := b.tabs[i]
+	chave := b.chave(t)
+	delete(b.chaves, t)
+	b.tabs = append(b.tabs[:i], b.tabs[i+1:]...)
+	b.selectBtn = append(b.selectBtn[:i], b.selectBtn[i+1:]...)
+	b.closeBtn = append(b.closeBtn[:i], b.closeBtn[i+1:]...)
+	if b.idx >= len(b.tabs) {
+		b.idx = len(b.tabs) - 1
+	}
+	return t, chave, true
+}
+
+// indiceDe acha a aba na tira. -1 quando ela não está lá (destacada, por
+// exemplo).
+func (b *tabBar) indiceDe(t Tab) int {
+	for i := range b.tabs {
+		if b.tabs[i] == t {
+			return i
+		}
+	}
+	return -1
+}
+
 func (b *tabBar) update(gtx layout.Context) {
 	for i := range b.tabs {
 		if b.selectBtn[i].Clicked(gtx) {

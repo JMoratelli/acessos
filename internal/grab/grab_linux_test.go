@@ -3,8 +3,8 @@
 package grab
 
 import (
+	"sync"
 	"testing"
-	"unsafe"
 )
 
 // A captura JÁ FOI singleton: onKey e onClipboardText eram variáveis de
@@ -30,9 +30,9 @@ func TestCadaCapturaRecebeSoAsProprias(t *testing.T) {
 		t.Fatal("duas capturas ganharam o mesmo handle")
 	}
 
-	entregarTecla(unsafe.Pointer(a.handle), 65, 38, true)
-	entregarTecla(unsafe.Pointer(b.handle), 66, 56, true)
-	entregarTecla(unsafe.Pointer(a.handle), 67, 54, true)
+	entregarTecla(a.handle, 65, 38, true)
+	entregarTecla(b.handle, 66, 56, true)
+	entregarTecla(a.handle, 67, 54, true)
 
 	if len(teclasA) != 2 || teclasA[0] != 65 || teclasA[1] != 67 {
 		t.Errorf("A recebeu %v, esperado [65 67]", teclasA)
@@ -51,14 +51,14 @@ func TestCapturaParadaNaoRecebeMais(t *testing.T) {
 	h := &Handle{onKey: func(uint32, uint32, bool) { chamou = true }}
 	h.handle = registro.Registrar(h)
 
-	entregarTecla(unsafe.Pointer(h.handle), 65, 38, true)
+	entregarTecla(h.handle, 65, 38, true)
 	if !chamou {
 		t.Fatal("deveria ter recebido antes de parar")
 	}
 
 	chamou = false
 	registro.Remover(h.handle) // é o que o Stop faz
-	entregarTecla(unsafe.Pointer(h.handle), 65, 38, true)
+	entregarTecla(h.handle, 65, 38, true)
 	if chamou {
 		t.Fatal("captura parada não pode receber mais tecla")
 	}
@@ -70,10 +70,53 @@ func TestCapturaSemCallbackNaoEstoura(t *testing.T) {
 	h := &Handle{}
 	h.handle = registro.Registrar(h)
 	t.Cleanup(func() { registro.Remover(h.handle) })
-	entregarTecla(unsafe.Pointer(h.handle), 65, 38, true)
+	entregarTecla(h.handle, 65, 38, true)
 }
 
 // ctx desconhecido (handle que nunca existiu) também não pode estourar.
 func TestCtxDesconhecidoNaoEstoura(t *testing.T) {
-	entregarTecla(unsafe.Pointer(uintptr(0xdead)), 65, 38, true)
+	entregarTecla(uintptr(0xdead), 65, 38, true)
+}
+
+// Stop tem de ser seguro de chamar concorrentemente com o resto — é o que
+// acontece quando a janela destacada fecha enquanto o callback do Wayland,
+// noutra thread, ainda está dentro de Modificadores. Sem a trava, o
+// grab_parar liberava o ponteiro debaixo dele.
+//
+// O Handle daqui não tem C por trás (não há Wayland em teste), então o que
+// se exercita é a disciplina de travas: com -race, um Stop sem
+// sincronização contra os leitores aparece aqui.
+func TestStopConcorrenteNaoQuebra(t *testing.T) {
+	h := &Handle{onKey: func(uint32, uint32, bool) {}}
+	h.handle = registro.Registrar(h)
+
+	pronto := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-pronto
+			for j := 0; j < 200; j++ {
+				h.Modificadores()
+				h.Inibir(j%2 == 0)
+				h.SetClipboardText("x")
+				entregarTecla(h.handle, 65, 38, true)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-pronto
+		h.Stop()
+		h.Stop() // idempotente
+	}()
+
+	close(pronto)
+	wg.Wait()
+
+	if registro.De(h.handle) != nil {
+		t.Fatal("Stop tem de tirar o handle do registro")
+	}
 }

@@ -47,7 +47,17 @@ func corChip(tipo string) (fundo, texto color.NRGBA) {
 	return tema.Vidro2, tema.Sec
 }
 
-func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao) layout.Dimensions {
+// layoutBarraSessao desenha a faixa. `extras` são botões de JANELA (tela
+// cheia, devolver a aba), e não da sessão: vão no extremo direito, depois
+// da geometria, separados dos controles da sessão de propósito — um age
+// sobre a máquina remota, o outro sobre a janela que a mostra.
+//
+// A MESMA barra serve a janela principal e a janela destacada. Ela já era
+// "a barrinha fina do topo" pedida: 26dp, com chip de estado, destino e
+// geometria. Duplicá-la para a tela cheia seria criar a segunda cópia de
+// algo que já existe.
+func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao,
+	extras ...layout.Widget) layout.Dimensions {
 	h := gtx.Dp(barraSessaoAltura)
 	gtx.Constraints.Min.Y = h
 	gtx.Constraints.Max.Y = h
@@ -73,6 +83,19 @@ func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao) layo
 			}),
 			layout.Rigid(layout.Spacer{Width: 10}.Layout),
 			layout.Rigid(txt(th, fonteMono, spSecundario, e.Geo, tema.Fraco).Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if len(extras) == 0 {
+					return layout.Dimensions{}
+				}
+				filhos := make([]layout.FlexChild, 0, len(extras)*2)
+				for _, x := range extras {
+					filhos = append(filhos,
+						layout.Rigid(layout.Spacer{Width: 6}.Layout),
+						layout.Rigid(x))
+				}
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.
+					Layout(gtx, filhos...)
+			}),
 		)
 	})
 }

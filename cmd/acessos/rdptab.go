@@ -64,7 +64,11 @@ func computeRDPView(size image.Point, fw, fh int, modo int32) rdpView {
 }
 
 type rdpTab struct {
-	w                 *app.Window
+	// jan é a janela que desenha esta aba AGORA — trocada quando a sessão
+	// é destacada para janela própria e quando volta para a tira.
+	// Atômica porque as goroutines de rede e de quadro leem daqui, e a
+	// troca acontece no laço da janela principal.
+	jan               atomic.Pointer[app.Window]
 	title             string
 	host              string
 	port              int
@@ -131,17 +135,28 @@ const modoDinamico = 2
 
 var rotulosModoRDP = []string{"Encaixar", "1:1", "Dinâmico"}
 
+// janela é onde esta aba está sendo desenhada agora. Tudo que pede
+// redesenho ou abre diálogo passa por aqui em vez de guardar a janela do
+// nascimento: destacada, a aba desenha noutra, e pedir quadro para a
+// janela errada simplesmente não repinta nada.
+func (t *rdpTab) janela() *app.Window { return t.jan.Load() }
+
+// TrocarJanela reaponta a aba. Chamado ao destacar a sessão e ao devolvê-la
+// à tira — ver janelasessao.go. A sessão NÃO é tocada: quem muda é só quem
+// desenha, e o processo-filho que hospeda o RDP nem fica sabendo.
+func (t *rdpTab) TrocarJanela(w *app.Window) { t.jan.Store(w) }
+
 func newRDPTab(w *app.Window, spec map[string]string) *rdpTab {
 	host := spec["host"]
 	port := specInt(spec, "port", 3389)
 	t := &rdpTab{
-		w:       w,
 		title:   rotuloAba(spec, "RDP", host),
 		host:    host,
 		port:    port,
 		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
+	t.jan.Store(w)
 	t.splash = novoSplash(w)
 	t.auto.Store(true)
 	t.clipOn.Store(true)
@@ -182,7 +197,7 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 		title:   t.title,
 		stop:    t.stop,
 		religar: t.religar,
-		w:       t.w,
+		w:       t.janela(),
 		caiu:    &t.caiu,
 		auto:    &t.auto,
 		rodar:   func() fimSessao { return t.rodarSessao(user, pass, domain) },
@@ -291,7 +306,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.proc.Store(proc)
 			t.caiu.Store(false)
 			t.splash.avancar(2)
-			t.w.Invalidate()
+			t.janela().Invalidate()
 			_ = proc.Credito()
 
 		case telaproc.EvtFalha:
@@ -317,7 +332,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.splash.concluir()
 			// Só se a aba estiver à vista: quadro para aba escondida
 			// redesenha a janela inteira sem mostrar nada de novo.
-			invalidarSeVisivel(t.w, t)
+			invalidarSeVisivel(t.janela(), t)
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
 			// aqui consome. E sai devagar quando a aba não está à vista —
@@ -337,12 +352,12 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			if !t.clip.checkAndSet(texto) {
 				continue
 			}
-			publicarClipboard(t.w, texto)
+			publicarClipboard(t.janela(), texto)
 
 		case telaproc.EvtCursor:
 			if c, ok := telaproc.LerCursor(corpo); ok {
 				t.cursorAtual.Store(c)
-				t.w.Invalidate()
+				t.janela().Invalidate()
 			}
 
 		case telaproc.EvtDisplayPronto:
@@ -351,7 +366,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			// primeiro quadro) caía antes do handshake e era descartado —
 			// daí a sessão só se ajustar quando a janela mexia.
 			t.esquecerTamanho()
-			t.w.Invalidate()
+			t.janela().Invalidate()
 
 		case telaproc.EvtCertPedido:
 			var c telaproc.Certificado
@@ -365,13 +380,13 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			// vivo para a aba continuar desenhando enquanto se pergunta.
 			go func() {
 				resp := make(chan int, 1)
-				pedirConfiancaCertificado(t.w, rdp.Certificado{
+				pedirConfiancaCertificado(t.janela(), rdp.Certificado{
 					Host: c.Host, Porta: c.Porta,
 					NomeComum: c.NomeComum, Assunto: c.Assunto,
 					Emissor: c.Emissor, Digital: c.Digital,
 					DigitalAnterior: c.DigitalAnterior, Mudou: c.Mudou,
 				}, func(d int) { resp <- d })
-				t.w.Invalidate()
+				t.janela().Invalidate()
 				select {
 				case d := <-resp:
 					_ = proc.CertResposta(d)

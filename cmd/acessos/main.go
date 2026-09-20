@@ -17,6 +17,8 @@ import (
 	"acessos-go/internal/chaveiro"
 	"acessos-go/internal/conexoes"
 
+	"gio.tools/icons"
+
 	"gioui.org/app"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -24,6 +26,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"gioui.org/x/explorer"
 )
@@ -613,6 +616,43 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 	est := novoEstadoJanela(w)
 	defer esquecerJanela(w)
 
+	// Botão de tela cheia da barra de sessão. Mora aqui, e não na aba,
+	// porque a ação é sobre a JANELA — a aba só é levada junto.
+	var btnTelaCheia widget.Clickable
+
+	// devolverAba recoloca na tira uma sessão que estava destacada.
+	// Enfileirado para rodar no laço DESTA janela: quem chama é a
+	// goroutine da janela de sessão, e mexer na tira de fora daqui seria
+	// corrida de dados com o desenho.
+	// A CHAVE viaja junto: é ela que identifica "o que a aba é" (protocolo
+	// + máquina) e impede abrir a mesma coisa duas vezes. retirar a tira do
+	// mapa, e devolver sem ela faria a aba voltar identificada só pelo
+	// rótulo — e o Painel passaria a abrir uma segunda sessão para a mesma
+	// máquina achando que não havia nenhuma.
+	devolverAba := func(t abaDestacavel, chave string) {
+		naJanelaPrincipalInsistindo(w, func() {
+			t.TrocarJanela(w)
+			bar.appendCom(t, chave)
+			w.Invalidate()
+		})
+	}
+
+	// destacar tira a aba da tira e a abre em janela própria, já em tela
+	// cheia. Roda de dentro do quadro, na goroutine do laço — é quem pode
+	// mexer na tira.
+	destacar := func(t abaDestacavel) {
+		i := bar.indiceDe(t)
+		if i < 0 {
+			return
+		}
+		aba, chave, ok := bar.retirar(i)
+		if !ok {
+			return
+		}
+		abrirJanelaSessao(th, aba.(abaDestacavel), true,
+			func(v abaDestacavel) { devolverAba(v, chave) })
+	}
+
 	for {
 		// Trabalho vindo de outras janelas (a caixa de busca) e do socket
 		// (segunda invocação do app) roda AQUI, e não mais no começo do
@@ -667,6 +707,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			focoEmCampo.Store(false)
 			est.atualizarInibicao(activeTab())
 			gtx := app.NewContext(&ops, e)
+			if btnTelaCheia.Clicked(gtx) {
+				if t, ok := activeTab().(abaDestacavel); ok {
+					destacar(t)
+				}
+			}
 			// Teclado e clipboard fora do Linux (Windows) passam pelo
 			// próprio Gio, não pelo grab — ver entrada_outros.go. No
 			// Linux estas duas só repassam pro caminho de sempre.
@@ -771,7 +816,19 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 									if !ok {
 										return layout.Dimensions{}
 									}
-									return layoutBarraSessao(gtx, th, a)
+									// Só quem sabe trocar de janela ganha o
+									// botão de tela cheia: destacar uma aba
+									// que continuasse pedindo quadro para
+									// esta janela abriria uma janela que
+									// nunca repinta.
+									if _, pode := activeTab().(abaDestacavel); !pode {
+										return layoutBarraSessao(gtx, th, a)
+									}
+									return layoutBarraSessao(gtx, th, a,
+										func(gtx layout.Context) layout.Dimensions {
+											return botaoIcone(gtx, &btnTelaCheia,
+												icons.NavigationFullscreen, tema.Sec, tema.Texto)
+										})
 								}),
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									size := gtx.Constraints.Max
@@ -780,42 +837,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 									// Painel a posição do ponteiro relativa
 									// a ela, e precisa somar isto.
 									offsetConteudo = image.Pt(larguraLateralAtual, alturaTopoAtual)
-									area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
-									event.Op(gtx.Ops, contentTag)
-									area.Pop()
-
-									t := activeTab()
-
-									for {
-										ev, ok := gtx.Source.Event(
-											pointer.Filter{
-												Target: contentTag,
-												Kinds:  pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Scroll,
-												// Sem ScrollX/ScrollY o Gio devolve
-												// e.Scroll SEMPRE (0,0) — a faixa aqui
-												// não é um filtro de "quanto aceitar",
-												// é o que HABILITA o valor de verdade
-												// chegar (ver clampScroll no Gio). Sem
-												// isto, rolarHistorico (SSH) e a roda
-												// de RDP/VNC (rdptab.go/vnctab.go)
-												// nunca recebiam delta nenhum, mesmo
-												// checando ev.Scroll certinho.
-												ScrollX: pointer.ScrollRange{Min: -1000, Max: 1000},
-												ScrollY: pointer.ScrollRange{Min: -1000, Max: 1000},
-											},
-										)
-										if !ok {
-											break
-										}
-										if pe, ok := ev.(pointer.Event); ok && t != nil {
-											t.HandlePointer(pe, size)
-										}
-									}
-
-									if t == nil {
-										return layout.Dimensions{Size: size}
-									}
-									return t.Layout(gtx)
+									return rotearPonteiroEDesenhar(gtx, activeTab(), contentTag, size)
 								}),
 							)
 						}),
