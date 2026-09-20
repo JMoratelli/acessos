@@ -130,6 +130,29 @@ go build -ldflags "-H=windowsgui" -o "$DIST/acessos.exe" ./cmd/acessos
 #    vem daqui.
 echo ">> resolvendo DLLs"
 python3 scripts/dlls-windows.py "$DIST/acessos.exe" "$SYSROOT" "$DIST"
+
+# 5b. Provider "legacy" do OpenSSL. NÃO é pego pelo passo acima, e esta é
+#     a armadilha: o dlls-windows.py percorre a TABELA DE IMPORTAÇÃO do
+#     PE, e um provider do OpenSSL 3 não está nela — é carregado em tempo
+#     de execução, pelo nome, de dentro do MODULESDIR compilado na
+#     libcrypto. Na libcrypto do MSYS2 esse caminho é
+#     /ucrt64/lib/ossl-modules, que não existe em máquina nenhuma sem o
+#     MSYS2 instalado.
+#
+#     Sem o legacy não há MD4 nem RC4, e o FreeRDP diz no log o que isso
+#     custa: "md4: NTLM support not available" e "rc4: ... NTLM and
+#     autoreconnect cookies will not work". Na prática: login recusado
+#     (ERRCONNECT_LOGON_FAILURE) contra servidor que não faz Kerberos, e
+#     reconexão automática depois de queda passageira que não acontece.
+#     Os dois apareceram no log de produção do Windows.
+#
+#     A pasta vai junto do .exe; quem aponta o OPENSSL_MODULES para ela é
+#     o próprio app, no start (ver cmd/acessos/ossl_windows.go). O
+#     instalador leva a pasta inteira (recursesubdirs no .iss).
+echo ">> copiando o provider legacy do OpenSSL"
+mkdir -p "$DIST/ossl-modules"
+cp "$SYSROOT/lib/ossl-modules/legacy.dll" "$DIST/ossl-modules/"
+
 echo "pronto: $DIST ($(du -sh "$DIST" | cut -f1))"
 
 [ "${1:-}" = "--instalador" ] || exit 0

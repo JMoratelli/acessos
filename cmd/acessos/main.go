@@ -62,10 +62,17 @@ func specInt(spec map[string]string, key string, def int) int {
 }
 
 func main() {
-	// Antes de qualquer coisa: este processo pode ser um FILHO hospedando
-	// uma sessão remota, e não o app. Ele não tem janela, não lê .ini e
-	// não mexe no log — só abre o canal com quem o criou. Ver
-	// internal/telaproc e telaworker.go.
+	// Antes de tudo, inclusive do worker: no Windows é aqui que o
+	// OPENSSL_MODULES passa a apontar para os providers que vão junto do
+	// .exe. Sem isso a libcrypto embarcada procura num caminho do MSYS2
+	// que não existe na máquina do usuário, fica sem MD4/RC4, e o FreeRDP
+	// perde NTLM e reconexão automática — ver ossl_windows.go. Quem
+	// conecta de verdade é o FILHO, então tem de valer para ele também.
+	ajustarOpenSSL()
+
+	// Este processo pode ser um FILHO hospedando uma sessão remota, e não
+	// o app. Ele não tem janela, não lê .ini e não mexe no log — só abre
+	// o canal com quem o criou. Ver internal/telaproc e telaworker.go.
 	if modoWorker() {
 		return
 	}

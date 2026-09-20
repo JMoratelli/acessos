@@ -214,14 +214,40 @@ recorrente contra um host específico era `ERRINFO_RPC_INITIATED_
 DISCONNECT` (ferramenta administrativa NO SERVIDOR derrubando a sessão
 a cada ~35s) — nada a corrigir aqui, é comportamento do servidor.
 
-**E o teste ao vivo só existe no Linux**, o que é um problema justamente
-aqui: as quedas foram relatadas no Windows. `telaworker_aovivo_test.go` e
-`telaworker_aovivo_vnc_test.go` são `//go:build linux`, e a única coisa
-que os prende ali é um `syscall.Kill(pid, SIGKILL)` — `os.FindProcess(pid).Kill()`
-faz o mesmo nos dois sistemas. O `memoriaDe` que também faltava já tem as
-duas metades desde 2026-09-19 (ver
-[memoriaproc_win_test.go](cmd/acessos/memoriaproc_win_test.go)). Soltar a
-tag é barato e é pré-requisito do que vem abaixo.
+**Causa nova, achada e corrigida em 2026-09-19 testando ao vivo a partir
+do Windows: o provider "legacy" do OpenSSL nunca ia no instalador.** A
+libcrypto empacotada vem do MSYS2 e traz compilado o MODULESDIR
+`/ucrt64/lib/ossl-modules`, que não existe fora de quem tem o MSYS2; e o
+`scripts/dlls-windows.py` não podia pegá-lo, porque percorre a tabela de
+importação do PE e provider é carregado em tempo de execução, pelo nome.
+Sem ele não há MD4 nem RC4 — o FreeRDP perde NTLM e o cookie de
+autoreconnect. Traduzindo: login recusado contra servidor que não fecha
+por Kerberos (o caso normal ao conectar por IP), e queda passageira que
+não se resolve sozinha. As duas assinaturas estavam no freerdp.log desta
+máquina. O build passa a copiar `ossl-modules/legacy.dll` para o lado do
+.exe e o app aponta o `OPENSSL_MODULES` para lá no start (ver
+cmd/acessos/ossl_windows.go). **Vale um instalador novo para confirmar na
+prática** — aqui foi conferido com o layout do dist montado à mão, com
+controle negativo.
+
+**Sobra um suspeito no mesmo lugar**: o pacote `freerdp` do MSYS2
+(3.31.1-1, o mesmo que o instalador embarca) é compilado com
+`WITH_VAAPI_H264_ENCODING=ON`, e a própria libfreerdp avisa a cada
+conexão que "[experimental] build options might crash the application".
+VA-API é coisa de Linux e o caminho não deve nem ser exercitado por um
+cliente no Windows, mas é a única diferença de BUILD conhecida entre o
+FreeRDP do Windows e o do Flatpak — e queda "sem motivo" no Windows é
+justamente o que se está caçando. Conferir se uma versão mais nova do
+pacote sai sem a flag antes de considerar compilar o FreeRDP do zero para
+o sysroot.
+
+**Os testes ao vivo já rodam no Windows** (soltos da tag `linux` em
+2026-09-19) e foram exercitados contra máquinas de verdade a partir
+daqui: RDP 1024x768 em 60 quadros seguidos sem queda, gastando 30% do
+que seria mandar tela cheia toda vez; VNC em 150 quadros, 9%; morte do
+filho a ferro não derruba o principal, nos dois protocolos. O que sobra
+abaixo continua sobrando — mas agora dá para validar no sistema onde as
+quedas foram relatadas.
 
 O que ficou de fora, por ser mais arriscado de mexer sem um teste ao
 vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
