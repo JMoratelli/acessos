@@ -79,7 +79,7 @@ func LerResize(corpo []byte) (w, h int, ok bool) {
 
 // ------------------------------------------------------- eventos tipados
 
-// EnviarQuadro manda um retângulo da tela. pix é NRGBA empacotado, W*H*4.
+// EnviarQuadro manda um retângulo da tela. pix é RGBA empacotado, W*H*4.
 func (c *Conn) EnviarQuadro(q Quadro, pix []byte) error {
 	return c.Enviar(EvtQuadro, q.Codificar(pix))
 }

@@ -197,9 +197,12 @@ func (s *Session) KeyEvent(keysym uint32, down bool) {
 func (s *Session) SendCutText(text string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cText := C.CString(text)
-	defer C.free(unsafe.Pointer(cText))
-	C.vs_enviar_texto(s.s, cText, C.int(len(text)))
+	// LATIN-1 no fio: é o que o protocolo RFB manda e o que a
+	// libvncclient documenta. Ver utf8ParaLatin1.
+	b := utf8ParaLatin1(text)
+	p := C.CBytes(b)
+	defer C.free(p)
+	C.vs_enviar_texto(s.s, (*C.char)(p), C.int(len(b)))
 }
 
 // Close libera a sessão. Não chame Run/eventos depois disso.
@@ -239,22 +242,61 @@ func goAoRedimensionar(ctx unsafe.Pointer, w, h C.int) {
 func goAoReceberTexto(ctx unsafe.Pointer, texto *C.char, tam C.int) {
 	sess := sessionFromHandle(ctx)
 	if sess != nil && sess.OnCutText != nil {
-		sess.OnCutText(C.GoStringN(texto, tam))
+		sess.OnCutText(latin1ParaUTF8(C.GoBytes(unsafe.Pointer(texto), tam)))
 	}
 }
 
 //export goAoCursor
 func goAoCursor(ctx unsafe.Pointer, xhot, yhot, w, h C.int, mask *C.uint8_t) {
 	sess := sessionFromHandle(ctx)
-	if sess == nil || sess.OnCursor == nil || mask == nil {
+	if sess == nil || sess.OnCursor == nil {
 		return
 	}
+	// mask nil é o aviso DELIBERADO de "cursor escondido" que o
+	// hook_cursor manda de propósito (vncshim.c) — descartá-lo aqui
+	// anulava a correção do lado C e deixava o ponteiro local preso na
+	// última forma (I-beam, ampulheta) até o servidor mandar outra. O
+	// irmão RDP já repassa assim; ver rdp.go.
 	n := int(w) * int(h)
-	if n <= 0 {
+	if mask == nil || n <= 0 {
+		sess.OnCursor(int(xhot), int(yhot), 0, 0, nil)
 		return
 	}
 	src := unsafe.Slice((*byte)(unsafe.Pointer(mask)), n)
 	buf := make([]byte, n)
 	copy(buf, src)
 	sess.OnCursor(int(xhot), int(yhot), int(w), int(h), buf)
+}
+
+// O clipboard do RFB é LATIN-1, não UTF-8 — está no protocolo e no header
+// da libvncclient (rfbclient.h, em SendClientCutText). Os bytes viajavam
+// crus nos dois sentidos e eram tratados como UTF-8 na outra ponta, contra
+// a invariante escrita em telaproc/protocolo.go: copiar "conferência" de um
+// PDV trazia um 0xEA solto — UTF-8 inválido — para o clipboard do sistema,
+// e colar "ç" chegava no servidor como "Ã§". Silencioso nos dois sentidos, e
+// invisível em qualquer teste que use só ASCII.
+//
+// A conversão fica no Go de propósito: o C não precisa saber de codificação,
+// e aqui ela é testável sem servidor nenhum.
+func latin1ParaUTF8(b []byte) string {
+	r := make([]rune, len(b))
+	for i, c := range b {
+		r[i] = rune(c) // byte Latin-1 == code point Unicode, de 0 a 255
+	}
+	return string(r)
+}
+
+// utf8ParaLatin1 é o caminho de volta. O que não cabe em um byte vira '?':
+// o protocolo não tem como carregar, e um '?' visível é melhor que um byte
+// truncado que o servidor exibe como outra letra.
+func utf8ParaLatin1(s string) []byte {
+	b := make([]byte, 0, len(s))
+	for _, r := range s {
+		if r < 0x100 {
+			b = append(b, byte(r))
+			continue
+		}
+		b = append(b, '?')
+	}
+	return b
 }

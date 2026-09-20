@@ -282,8 +282,8 @@ func rodarSessaoEstresse(t *testing.T, cred credenciaisEstresse, fim time.Time, 
 
 	// acum e tela: a MESMA montagem que a aba faz, para a memória do lado
 	// de cá ser a de verdade.
-	var acum *image.NRGBA
-	var tela atomic.Pointer[image.NRGBA]
+	var acum *image.RGBA
+	var tela atomic.Pointer[image.RGBA]
 
 	msgs := lerAoVivo(proc)
 	prazoConexao := time.After(45 * time.Second)

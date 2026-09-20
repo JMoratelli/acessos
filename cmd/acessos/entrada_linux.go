@@ -132,8 +132,24 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// não só na que por acaso estava em foco quando o Wayland
 				// avisou que o clipboard mudou (ver clipboard.go).
 				registrarClipboardSistema(text)
-				if h, ok := activeTab().(clipboardReceiver); ok {
-					h.OnLocalClipboard(text)
+				// abaAtivaRef, e NÃO activeTab(): este callback roda numa
+				// goroutine solta (ver grab.go), e activeTab() lê o índice
+				// e a fatia de abas da barra sem trava, enquanto o laço de
+				// quadro reescreve os dois ao abrir e fechar aba. É corrida
+				// de dados limpa — das que só aparecem com -race — e o
+				// desfecho provável é entregar o texto para a aba errada ou
+				// já fechada. O ponteiro atômico existe exatamente para
+				// isto e é atualizado a cada quadro (ver clipboard.go).
+				//
+				// O irmão entrada_outros.go NÃO precisa disto, e é de
+				// propósito: lá o clipboard é lido de dentro do quadro
+				// (tratarClipboardFrame recebe o gtx), ou seja na própria
+				// goroutine que mexe na barra — ler activeTab() ali é
+				// seguro. Conferir que continua assim antes de propagar.
+				if p := abaAtivaRef.Load(); p != nil {
+					if h, ok := (*p).(clipboardReceiver); ok {
+						h.OnLocalClipboard(text)
+					}
 				}
 			},
 		)

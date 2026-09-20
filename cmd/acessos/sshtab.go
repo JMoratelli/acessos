@@ -161,20 +161,37 @@ func (t *sshTab) cursorAceso() bool {
 	return (time.Now().UnixMilli()/piscarPeriodo.Milliseconds())%2 == 0
 }
 
-// piscarCursor invalida a aba periodicamente enquanto ela existir, só
-// para o piscar do cursor ter quadro pra acontecer quando ninguém digita
-// nem chega saída nova — sem isto o cursor congelaria na fase em que
-// estava da última vez que algo mais pediu um quadro.
-func (t *sshTab) piscarCursor() {
-	tk := time.NewTicker(piscarPeriodo)
-	defer tk.Stop()
-	for !t.encerrada() {
-		<-tk.C
-		if t.encerrada() {
-			return
-		}
-		t.invalidar()
+// proximaViradaDoCursor é quanto falta para o cursor MUDAR de fase, e é o
+// que o desenho usa para pedir o próximo quadro (ver layoutTerminal).
+//
+// Era um ticker de 530ms numa goroutine por sessão, chamando t.invalidar()
+// — que é a rajada de invalidar.go, escrita para dado de rede chegando, e
+// que vira até quatro pedidos de quadro da JANELA INTEIRA por piscada. Pior:
+// piscava igual com a aba invisível, então cada sessão SSH aberta em
+// segundo plano mantinha a janela redesenhando para sempre.
+//
+// Pedir de dentro do Layout resolve sozinho, porque o Layout só roda para
+// a aba que está à vista: aba escondida para de pedir quadro, e o primeiro
+// Layout de quando ela volta rearma o piscar. É o mesmo padrão da contagem
+// regressiva do confirmdlg.go e do massapausa.go.
+//
+// São duas fases possíveis a esperar, e vale a mais próxima: a virada do
+// relógio (cursorAceso alterna em múltiplos do período) e o fim da janela
+// de "aceso porque acabou de digitar".
+func (t *sshTab) proximaViradaDoCursor(agora time.Time) time.Duration {
+	t.mu.Lock()
+	ultima := t.ultimaTecla
+	t.mu.Unlock()
+
+	p := piscarPeriodo
+	falta := p - time.Duration(agora.UnixMilli()%p.Milliseconds())*time.Millisecond
+	if desde := agora.Sub(ultima); desde >= 0 && desde < p && p-desde < falta {
+		falta = p - desde
 	}
+	if falta <= 0 {
+		falta = p
+	}
+	return falta
 }
 
 // celula é uma posição na grade: coluna e linha.
@@ -227,7 +244,6 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 	t.term = vt10x.New(vt10x.WithSize(t.cols, t.rows), vt10x.WithWriter(escritorEntrada{t}),
 		vt10x.WithScrollback(20000))
 	go t.laco()
-	go t.piscarCursor()
 	return t, nil
 }
 
@@ -1107,6 +1123,13 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 	// sempre visível logo depois de uma tecla digitada (senão o cursor
 	// "sumiria" bem no instante em que a pessoa está olhando pra ele), e
 	// alternando num período fixo quando ocioso.
+	//
+	// O pedido do próximo quadro fica FORA do if de baixo de propósito: se
+	// ficasse dentro, só a fase ACESA rearmaria o piscar, e o cursor
+	// apagaria de vez na primeira virada.
+	if rolagem == 0 && t.term.CursorVisible() {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(t.proximaViradaDoCursor(gtx.Now))})
+	}
 	if rolagem == 0 && t.term.CursorVisible() && t.cursorAceso() {
 		c := t.term.Cursor()
 		if c.X < cols && c.Y < rows {

@@ -53,13 +53,13 @@ func TestAplicarQuadroColaNoLugarCerto(t *testing.T) {
 	if img.Rect != image.Rect(0, 0, 4, 3) {
 		t.Fatalf("tela ficou %v", img.Rect)
 	}
-	if got := img.NRGBAAt(1, 1); got.R != 9 {
+	if got := img.RGBAAt(1, 1); got.R != 9 {
 		t.Fatalf("pixel (1,1) = %+v", got)
 	}
-	if got := img.NRGBAAt(2, 1); got.R != 8 {
+	if got := img.RGBAAt(2, 1); got.R != 8 {
 		t.Fatalf("pixel (2,1) = %+v", got)
 	}
-	if got := img.NRGBAAt(0, 0); got.R != 0 {
+	if got := img.RGBAAt(0, 0); got.R != 0 {
 		t.Fatalf("pixel (0,0) foi tocado: %+v", got)
 	}
 
@@ -79,13 +79,13 @@ func TestAplicarQuadroColaNoLugarCerto(t *testing.T) {
 	}
 }
 
-func TestRecortarBGRXparaNRGBARespeitaStride(t *testing.T) {
+func TestRecortarBGRXparaRGBARespeitaStride(t *testing.T) {
 	// tela 3x2 com stride 16 (4 pixels de largura alocada, 3 usados)
 	const stride = 16
 	buf := make([]byte, stride*2)
 	// pixel (1,1) em BGRX = B,G,R,X
 	copy(buf[stride+4:], []byte{0x11, 0x22, 0x33, 0xff})
-	out := recortarBGRXparaNRGBA(buf, stride, 1, 1, 1, 1)
+	out := recortarBGRXparaRGBA(buf, stride, 1, 1, 1, 1)
 	quer := []byte{0x33, 0x22, 0x11, 255} // R,G,B,A
 	if string(out) != string(quer) {
 		t.Fatalf("saiu %v, esperava %v", out, quer)

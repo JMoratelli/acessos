@@ -70,7 +70,7 @@ const (
 	EvtOla           // token de autenticação, cru (primeira mensagem)
 	EvtConectado     // vazio
 	EvtFalha         // JSON Falha
-	EvtQuadro        // cabeçalho binário + pixels NRGBA (ver Quadro)
+	EvtQuadro        // cabeçalho binário + pixels RGBA (ver Quadro)
 	EvtDesconectado  // motivo, texto cru
 	EvtClipboard     // texto UTF-8 cru
 	EvtCursor        // pointer.Cursor já classificado (uint32)
@@ -120,9 +120,14 @@ type Certificado struct {
 // e manda só a caixa que os envolve — é o que faz valer a pena passar
 // pixels por socket em vez de compartilhar memória.
 //
-// Os pixels vêm em NRGBA (o formato que o Gio consome direto), já
-// convertidos do BGRX da biblioteca: a conversão é um laço por pixel, e
+// Os pixels vêm em RGBA empacotado (R,G,B,A por pixel, com A sempre 255),
+// já convertidos do BGRX da biblioteca: a conversão é um laço por pixel, e
 // ela roda no filho justamente para sair da thread que desenha.
+//
+// RGBA e não NRGBA porque *image.RGBA é o único tipo de imagem que o paint
+// do Gio aceita sem converter — o porquê inteiro está em
+// recortarBGRXparaRGBA (cmd/acessos/telaworker.go), que é quem produz
+// estes bytes.
 type Quadro struct {
 	X, Y, W, H     int32 // retângulo sujo, em pixels da tela remota
 	TotalW, TotalH int32 // tamanho atual da tela remota inteira

@@ -215,17 +215,29 @@ func (b *bombaTela) enviarQuadro() bool {
 		X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0),
 		TotalW: int32(fw), TotalH: int32(fh),
 	}
-	if b.c.EnviarQuadro(q, recortarBGRXparaNRGBA(buf, stride, x0, y0, x1-x0, y1-y0)) != nil {
+	if b.c.EnviarQuadro(q, recortarBGRXparaRGBA(buf, stride, x0, y0, x1-x0, y1-y0)) != nil {
 		b.encerrar()
 	}
 	return true
 }
 
-// recortarBGRXparaNRGBA converte um retângulo do framebuffer (BGRX de 32
-// bits, com stride próprio) para NRGBA empacotado, que é o que o Gio
-// consome direto do outro lado. É o mesmo laço que antes rodava na thread
-// de desenho do app a cada quadro, sobre a tela INTEIRA.
-func recortarBGRXparaNRGBA(buf []byte, stride, x, y, w, h int) []byte {
+// recortarBGRXparaRGBA converte um retângulo do framebuffer (BGRX de 32
+// bits, com stride próprio) para RGBA empacotado. É o mesmo laço que antes
+// rodava na thread de desenho do app a cada quadro, sobre a tela INTEIRA.
+//
+// RGBA e NÃO NRGBA, e a diferença custa caro: o paint do Gio só tem caminho
+// direto para *image.Uniform e *image.RGBA (op/paint/paint.go) — qualquer
+// outro tipo ele converte com draw.Draw, pixel a pixel, na THREAD QUE
+// DESENHA e a cada tela publicada. Eram 8,3 MB alocados e ~2 ms por quadro
+// em 1080p (33 MB e ~8-12 ms em 4K) para chegar ao MESMO byte, porque o
+// alfa aqui é sempre 255 — e com alfa 255 premultiplicado e não
+// premultiplicado são a mesma coisa. Trocar o tipo não muda um pixel; só
+// tira esse trabalho do caminho que entrega teclado e mouse.
+//
+// Para quem mexer aqui: se este laço um dia gravar alfa != 255, o tipo tem
+// de voltar a ser NRGBA (ou os canais passam a ter de vir premultiplicados),
+// senão a cor sai ERRADA em vez de sair devagar.
+func recortarBGRXparaRGBA(buf []byte, stride, x, y, w, h int) []byte {
 	out := make([]byte, w*h*4)
 	for linha := 0; linha < h; linha++ {
 		src := buf[(y+linha)*stride+x*4:]

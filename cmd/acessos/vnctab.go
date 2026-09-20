@@ -92,12 +92,12 @@ type vncTab struct {
 	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
 	// permite entregá-la ao Gio sem trava e sem risco de ela mudar
 	// debaixo do upload da textura.
-	tela atomic.Pointer[image.NRGBA]
+	tela atomic.Pointer[image.RGBA]
 	// opCache guarda a ImageOp da última tela publicada: sem isto o Gio
 	// remontaria (e reenviaria à GPU) a textura a cada quadro DA
 	// INTERFACE, mesmo sem nada ter mudado do lado remoto.
 	opCache  paint.ImageOp
-	opDaTela *image.NRGBA
+	opDaTela *image.RGBA
 
 	// estado mostrado e controlado pela barra de sessão
 	auto   atomic.Bool // reconectar sozinho ao cair
@@ -227,7 +227,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 	// acum é a tela remota inteira, montada retângulo a retângulo. Fica
 	// nesta goroutine e nunca é entregue ao Gio: o que vai para a
 	// interface é sempre uma cópia congelada (ver publicarTela).
-	var acum *image.NRGBA
+	var acum *image.RGBA
 
 	for {
 		tipo, corpo, err := proc.Ler()
@@ -249,7 +249,17 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			reg("[%s] falha: %s (auth=%v precisa_usuario=%v recusado=%v)",
 				t.title, f.Mensagem, f.AuthFalhou, f.PrecisaUsuario, f.Recusado)
 			t.splash.setErro(f.Mensagem)
-			return true
+			// Os três sinalizadores existem PARA ESTA DECISÃO (ver o
+			// comentário da Falha em telaproc/protocolo.go) e não eram
+			// lidos em lugar nenhum: todo EvtFalha devolvia true, que
+			// vira fimFalhou e NUNCA entra no backoff. Resultado: PDV
+			// desligado ou reiniciando parava a aba em CAIU até alguém
+			// clicar em Reconectar, enquanto a mesma aba caindo depois
+			// de ter subido religava sozinha. Falha de rede deixa os
+			// três zerados (vncshim.c), então ela volta a ser queda
+			// comum; recusa do UltraVNC continua travando o backoff,
+			// que é o caso em que insistir DOBRA o bloqueio.
+			return f.AuthFalhou || f.PrecisaUsuario || f.Recusado
 
 		case telaproc.EvtQuadro:
 			q, pix, err := telaproc.DecodificarQuadro(corpo)

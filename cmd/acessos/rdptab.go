@@ -90,12 +90,12 @@ type rdpTab struct {
 	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
 	// permite entregá-la ao Gio sem trava e sem risco de ela mudar
 	// debaixo do upload da textura.
-	tela atomic.Pointer[image.NRGBA]
+	tela atomic.Pointer[image.RGBA]
 	// opCache guarda a ImageOp da última tela publicada: sem isto o Gio
 	// remontaria (e reenviaria à GPU) a textura a cada quadro DA
 	// INTERFACE, mesmo sem nada ter mudado do lado remoto.
 	opCache  paint.ImageOp
-	opDaTela *image.NRGBA
+	opDaTela *image.RGBA
 
 	// estado mostrado e controlado pela barra de sessão
 	religar     chan struct{}
@@ -278,7 +278,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 	// acum é a tela remota inteira, montada retângulo a retângulo. Fica
 	// nesta goroutine e nunca é entregue ao Gio: o que vai para a
 	// interface é sempre uma cópia congelada (ver publicar).
-	var acum *image.NRGBA
+	var acum *image.RGBA
 
 	for {
 		tipo, corpo, err := proc.Ler()
@@ -299,7 +299,10 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			_ = json.Unmarshal(corpo, &f)
 			reg("[%s] falha: %s (auth=%v)", t.title, f.Mensagem, f.AuthFalhou)
 			t.splash.setErro(f.Mensagem)
-			return true
+			// Só credencial recusada trava o backoff; o resto é queda
+			// comum e volta a religar sozinho. Ver o irmão em vnctab.go,
+			// que tem o porquê inteiro.
+			return f.AuthFalhou
 
 		case telaproc.EvtQuadro:
 			q, pix, err := telaproc.DecodificarQuadro(corpo)

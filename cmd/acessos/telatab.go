@@ -75,13 +75,13 @@ const intervaloSegundoPlano = time.Second
 
 // aplicarQuadro cola o retângulo recebido na tela acumulada, criando ou
 // trocando a imagem quando a resolução remota muda.
-func aplicarQuadro(acum *image.NRGBA, q telaproc.Quadro, pix []byte) *image.NRGBA {
+func aplicarQuadro(acum *image.RGBA, q telaproc.Quadro, pix []byte) *image.RGBA {
 	tw, th := int(q.TotalW), int(q.TotalH)
 	if tw <= 0 || th <= 0 {
 		return acum
 	}
 	if acum == nil || acum.Rect.Dx() != tw || acum.Rect.Dy() != th {
-		acum = image.NewNRGBA(image.Rect(0, 0, tw, th))
+		acum = image.NewRGBA(image.Rect(0, 0, tw, th))
 	}
 	x, y, w, h := int(q.X), int(q.Y), int(q.W), int(q.H)
 	if x < 0 || y < 0 || x+w > tw || y+h > th {
@@ -273,14 +273,14 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 // está sendo colado no acumulador.
 //
 // Antes disto a interface fazia, A CADA QUADRO DELA, uma cópia da tela
-// inteira vinda do C mais uma conversão BGRX->NRGBA pixel a pixel — mesmo
+// inteira vinda do C mais uma conversão BGRX->RGBA pixel a pixel — mesmo
 // quando nada tinha mudado na sessão remota. Agora a cópia acontece uma
 // vez por quadro REMOTO, e fora da thread que desenha.
-func publicarTela(destino *atomic.Pointer[image.NRGBA], acum *image.NRGBA) {
+func publicarTela(destino *atomic.Pointer[image.RGBA], acum *image.RGBA) {
 	if acum == nil {
 		return
 	}
-	pub := image.NewNRGBA(acum.Rect)
+	pub := image.NewRGBA(acum.Rect)
 	copy(pub.Pix, acum.Pix)
 	destino.Store(pub)
 }
