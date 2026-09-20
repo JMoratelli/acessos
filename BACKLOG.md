@@ -11,18 +11,19 @@ compilado ou testado no Windows se resolve no Windows, e o que já foi
 corrigido aparece no git. Item que só pede um olhar vira ruído e empurra
 para baixo o que é para ser feito.
 
-Os números foram refeitos em 2026-09-19, do 1 em diante. Antes disso a
-numeração tinha buracos, porque os itens resolvidos saíam e os que
-ficavam mantinham o número — com a lista curta isso deixou de valer a
-pena. Mensagem de commit antiga que fale em "item 7d", "item 9" e afins
-se refere à numeração velha; o git conta o que era.
+Os números foram refeitos em 2026-09-19, do 1 em diante, e correram de
+novo em 2026-09-20 quando o item do cursor remoto saiu resolvido. Antes
+disso a numeração tinha buracos, porque os itens resolvidos saíam e os
+que ficavam mantinham o número — com a lista curta isso deixou de valer
+a pena. Mensagem de commit antiga que fale em "item 7d", "item 9", ou no
+"item 2" do cursor, se refere à numeração de então; o git conta o que
+era.
 
 1. Busca por atalho global — as pontas que ficaram
-2. Cursor remoto — conferir contra máscaras de verdade
-3. Capturas de tela do metainfo
-4. Tela cheia
+2. Capturas de tela do metainfo
+3. Tela cheia
 
-Atualizado em 2026-09-19.
+Atualizado em 2026-09-20.
 
 ---
 
@@ -50,25 +51,14 @@ pontas continuam abertas:
   Ctrl+Shift+F12**: com uma sessão remota em foco, a tecla vai para a
   máquina remota, não para o portal.
 
-## 2. Cursor remoto: conferir contra máscaras de verdade
-
-A classificação de forma foi reescrita em 2026-09-18 (fim da "mão presa" e
-do "ocupado" que nunca aparecia) e é exercitada por silhuetas desenhadas à
-mão em [cursorforma_test.go](cmd/acessos/cursorforma_test.go), com as
-proporções dos cursores reais. O que falta é o passo seguinte, e barato:
-capturar as MÁSCARAS de verdade de uma sessão Windows (o `RS_LOG=1` do
-rdpshim já imprime tamanho e hotspot de cada uma; falta despejar os bytes)
-e virar caso de teste. Sem isso, os limiares continuam calibrados por
-proporção, não por amostra.
-
-## 3. Capturas de tela do metainfo
+## 2. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 4. Tela cheia
+## 3. Tela cheia
 
 Pedido em 2026-09-16: tela cheia estilo F11 do Chrome / cliente RDP da
 Microsoft / Remmina (a REFERÊNCIA de comportamento, não o atalho) — some a

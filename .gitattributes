@@ -1,0 +1,5 @@
+# Máscara de cursor capturada de sessão real (cmd/cursorcap): PGM binário,
+# byte-a-byte significativo. Sem isto o checkout com core.autocrlf=true do
+# lado Windows converteria fim de linha DENTRO dos pixels e corromperia a
+# amostra — em silêncio, porque o cabeçalho continuaria legível.
+*.pgm binary

@@ -374,8 +374,30 @@ func (f formaCursor) cursor() pointer.Cursor {
 // As duas compostas caem em CursorProgress. Ajuda não tem cursor nomeado
 // no Gio, e "seta com ocupado ao lado" descreve bem melhor a de espera —
 // que é a que aparece o tempo todo numa sessão remota.
+// setaLarga separa a seta COMUM da seta acompanhada (seta+anel, seta+
+// ampulheta, seta+interrogação): o acompanhante engorda a caixa para a
+// direita e o aspecto sobe.
+//
+// O valor saiu de medida, não de proporção desenhada. As amostras reais
+// de testdata/cursores (ver cursorreal_test.go, e
+// `go test -run Retrato -v` para o retrato de cada uma):
+//
+//	seta comum, RDP e VNC .... 0,632   (a mesma forma pelos dois protocolos)
+//	seta + anel, 2 quadros ... 0,846
+//
+// O corte anterior era 0,9 — acima das DUAS, então a seta+anel do
+// "abrindo programa" caía em CursorDefault e o aviso de carregando nunca
+// aparecia. Mesmo defeito de família do "ocupado que nunca saía", e pela
+// mesma causa: limiar calibrado por proporção, sem amostra.
+//
+// 0,78 fica dentro do vão mas PUXADO PARA CIMA, de propósito: os dois
+// erros não custam igual. Seta comum virando "carregando" põe um cursor
+// de carga permanente na tela; seta+anel virando seta comum só perde uma
+// dica que dura um instante. Na dúvida, erra para o lado barato.
+const setaLarga = 0.78
+
 func (f formaCursor) familiaSeta() pointer.Cursor {
-	if f.aspecto() >= 0.9 {
+	if f.aspecto() >= setaLarga {
 		return pointer.CursorProgress
 	}
 	return pointer.CursorDefault
