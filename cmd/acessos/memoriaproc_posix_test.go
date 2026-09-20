@@ -4,8 +4,8 @@ package main
 
 // memoriaDe, no Linux. O irmão é memoriaproc_win_test.go — os dois dão o
 // mesmo mapa para quem mede o custo de um processo-filho de sessão (ver
-// telaworker_filho_test.go, que roda nos DOIS sistemas, e os testes ao
-// vivo, que só existem no Linux).
+// telaworker_filho_test.go e os testes ao vivo, que desde 2026-09-19
+// rodam nos DOIS sistemas).
 //
 // O nome do arquivo NÃO usa o sufixo _linux: ele valeria como restrição
 // de build por cima do //go:build acima, e a armadilha silenciosa disso

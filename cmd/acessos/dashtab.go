@@ -100,7 +100,7 @@ type dashTab struct {
 	aoExecMassa    func([]conexoes.Conexao)
 	aoExcluirMassa func([]conexoes.Conexao)
 	recarregar     func()
-	aoInvalidar func()
+	aoInvalidar    func()
 
 	// menu de contexto: onde o ponteiro está (para ancorar o menu) e a
 	// tag de área do botão direito de cada card.
@@ -114,15 +114,15 @@ type dashTab struct {
 	// ainda não checado. Só os cards que estão SENDO DESENHADOS entram na
 	// fila — sondar 274 máquinas de uma vez inunda a rede e não serve
 	// para nada, porque o operador está olhando uma loja de cada vez.
-	vidaMu        sync.Mutex
-	vida          map[string]vida.Estado
-	naFila        map[string]bool
-	ultimoAviso   time.Time
-	fila          chan conexoes.Conexao
-	travaAbrir    int // quadros em que clique não abre (gesto do botão direito)
-	aoMenuCard    func(cx conexoes.Conexao, pos image.Point)
-	aoNova        func(grupo string)
-	aoEfemera     func(destino string)
+	vidaMu      sync.Mutex
+	vida        map[string]vida.Estado
+	naFila      map[string]bool
+	ultimoAviso time.Time
+	fila        chan conexoes.Conexao
+	travaAbrir  int // quadros em que clique não abre (gesto do botão direito)
+	aoMenuCard  func(cx conexoes.Conexao, pos image.Point)
+	aoNova      func(grupo string)
+	aoEfemera   func(destino string)
 	// aoRascunho abre um destino NÃO cadastrado (o card temporário da
 	// busca): quem trata pergunta as credenciais antes de conectar.
 	aoRascunho func(cx conexoes.Conexao, p conexoes.Protocolo)

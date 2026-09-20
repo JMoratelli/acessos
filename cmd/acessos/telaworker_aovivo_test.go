@@ -281,5 +281,6 @@ func matarAFerro(pid int) error {
 }
 
 // memoriaDe mora em memoriaproc_posix_test.go / memoriaproc_win_test.go:
-// este arquivo é só Linux, e o telaworker_filho_test.go, que também a
-// usa, roda nos dois sistemas.
+// este arquivo passou a rodar nos DOIS sistemas quando saiu da tag linux,
+// e o telaworker_filho_test.go, que também a usa, sempre rodou nos dois —
+// por isso ela não pode morar aqui dentro.

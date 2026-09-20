@@ -59,6 +59,14 @@
     um arquivo, comparar ignorando o `\r`
     (`diff <(cat f) <(gofmt f)` com `tr -d '\r'` nos dois lados).
 
+    Consequência que já mordeu: como o sinal vem sujo, **desalinhamento de
+    verdade passa batido no Windows**. `dashtab.go` e `topbar.go` ficaram
+    com campos de struct fora de alinhamento e só apareceram na conferência
+    do lado Linux, onde o working tree é LF e o `gofmt -l` é limpo. A
+    formatação é, portanto, tarefa do lado LINUX: rodar `gofmt -l cmd/
+    internal/` lá antes de fechar a release (o `third_party/vt10x`
+    aparece e fica como está — é código de terceiro).
+
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:
   FreeRDP e libvncserver (versões fixas no manifesto Flatpak,

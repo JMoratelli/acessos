@@ -27,14 +27,14 @@ type topBar struct {
 	// sem botão "início" aqui: a aba fixa da casinha, logo abaixo, JÁ é
 	// esse botão. Dois controles iguais a 30px um do outro só fazem o
 	// operador perguntar qual é a diferença.
-	recarrega  widget.Clickable
-	novaConex  widget.Clickable
-	snippets   widget.Clickable
-	ajustes    widget.Clickable
-	cofre      widget.Clickable
-	chaveiro   widget.Clickable
-	tema       widget.Clickable
-	fonte      widget.Clickable
+	recarrega widget.Clickable
+	novaConex widget.Clickable
+	snippets  widget.Clickable
+	ajustes   widget.Clickable
+	cofre     widget.Clickable
+	chaveiro  widget.Clickable
+	tema      widget.Clickable
+	fonte     widget.Clickable
 	minimizar widget.Clickable
 	maximizar widget.Clickable
 	fechar    widget.Clickable
