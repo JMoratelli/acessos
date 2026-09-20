@@ -64,6 +64,21 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.6.2" date="2026-09-19">
+      <description>
+        <p>Corrige o login recusado em conexões RDP no Windows contra servidores que autenticam por NTLM — o caso normal ao conectar por endereço IP. Faltava um componente de criptografia no instalador, e a mesma falta impedia a sessão de se recuperar sozinha de uma queda passageira.</p>
+        <p>Corrige símbolos que apareciam como quadradinhos vazios no Windows: as setas que abrem e fecham os blocos do editor de conexão, o botão de recarregar do SFTP e o botão de teclas da barra de sessão.</p>
+        <p>A caixa do atalho global no Windows não mostra mais a moldura do sistema em volta, com os botões de fechar e maximizar, e passa a nascer no meio da tela. A linha de ajuda do rodapé — inclusive o aviso de que há mais máquinas do que as listadas — agora cabe na caixa, nos dois sistemas; antes ela ficava cortada.</p>
+        <p>Escolher uma máquina pelo atalho global com o Acessos minimizado não abria nada: a caixa fechava, a aba não nascia e a janela não voltava. No Windows, a aba também podia abrir atrás das outras janelas. Os dois casos estão corrigidos.</p>
+        <p>O tema claro/escuro volta a ser lembrado: trocá-lo valia só até fechar o aplicativo.</p>
+        <p>Uma sessão RDP ou VNC que não conectou porque a máquina estava desligada ou reiniciando volta a tentar sozinha. Antes ela parava em CAIU esperando um clique em Reconectar, enquanto a mesma sessão caindo depois de ter aberto religava normalmente. Senha recusada continua interrompendo as tentativas, de propósito.</p>
+        <p>As sessões de tela desenham com menos trabalho: a imagem da máquina remota era convertida inteira, pixel a pixel, a cada atualização, na mesma linha que entrega o teclado e o mouse. Em tela cheia são alguns milissegundos a menos por quadro em 1080p e mais de dez em 4K — o ganho aparece como resposta mais imediata ao digitar e mexer o mouse dentro da sessão.</p>
+        <p>Uma aba SSH aberta em segundo plano mantinha a janela inteira sendo redesenhada sem parar, só por causa do cursor piscando. Agora o cursor pisca apenas na aba que está à vista.</p>
+        <p>Corrige texto com acento no copiar e colar de sessões VNC, que chegava trocado nas duas direções — "conferência" virava lixo ao copiar da máquina remota, e "ç" chegava como dois caracteres estranhos ao colar nela.</p>
+        <p>O aviso de que a identidade de um servidor SSH MUDOU volta a aparecer quando o arquivo de chaves conhecidas tem alguma linha inválida. Bastava uma linha ilegível para todas as máquinas passarem a ser tratadas como novas, e o alerta vermelho — que é o que denuncia alguém no meio do caminho — deixava de aparecer.</p>
+        <p>A caixa do atalho global passa a respeitar o tamanho de letra escolhido no botão A+, que valia em todas as telas menos nela.</p>
+      </description>
+    </release>
     <release version="2.6.1" date="2026-09-19">
       <description>
         <p>Corrige a janela RDP não acompanhar o tamanho da aba ao conectar: a sessão podia ficar presa na resolução padrão do servidor (800x600 ou 1024x768) até a janela ser redimensionada manualmente — dependia de quão cheia estava uma fila interna bem no instante da conexão.</p>

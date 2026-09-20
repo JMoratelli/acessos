@@ -16,39 +16,176 @@ Atualizado em 2026-09-19.
 
 A rodada de 2026-09-19 inteira foi feita e testada na máquina Windows —
 lá dá para compilar nativo (MSYS2 ucrt64 tem gcc, freerdp3 e
-libvncclient). O lado Linux NÃO foi compilado: falta cross-toolchain
-para o cgo. Nada aqui é suspeita de defeito; é a conferência que a outra
-metade do porte exige.
+libvncclient). Nada aqui é suspeita de defeito; é a conferência que a
+outra metade do porte exige. Já conferido no Linux, não precisa refazer:
+`go mod vendor`, `go build ./...` e `go test ./...`, tudo verde.
 
-- **`go mod vendor` ANTES de compilar.** `third_party/gio` mudou (patch
-  décimo terceiro: `app.Translucent` no Windows). Sem isso o build local
-  usa a cópia velha em `vendor/gioui.org` e falha com método inexistente
-  — é a armadilha que o CLAUDE.md descreve e que já mordeu mais de uma
-  vez.
-- **`go build ./...` e `go test ./...`.** Os testes do `cmd/acessos`
-  mudaram de forma: `memoriaDe` saiu do arquivo de teste ao vivo para
-  `memoriaproc_posix_test.go` (o irmão Windows é
-  `memoriaproc_win_test.go`), e os três testes ao vivo (RDP, VNC, SSH)
-  deixaram de ser `//go:build linux`. Rodar os ao vivo lá também, com
-  `ACESSOS_RDP_AOVIVO`/`ACESSOS_VNC_AOVIVO`/`ACESSOS_SSH_AOVIVO`, para
-  confirmar que a troca de `syscall.Kill` por `os.Process.Kill` não
-  mudou nada no Linux.
-- **Olhar a caixa do atalho global.** Ela ficou 14dp mais alta
-  (`buscaCartaoAlt` foi de 76 para 90): o rodapé "Enter conecta · Esc
-  fecha · mais N — refine o termo" NUNCA coube, nos dois sistemas, e
-  agora cabe. Conferir que no KWin o cartão continua certo e que a linha
-  aparece.
+- **Rodar os testes AO VIVO no Linux**, com
+  `ACESSOS_RDP_AOVIVO`/`ACESSOS_VNC_AOVIVO`/`ACESSOS_SSH_AOVIVO`. Os três
+  deixaram de ser `//go:build linux` e a morte do filho passou de
+  `syscall.Kill` para `os.Process.Kill` — é o que falta confirmar que não
+  mudou nada deste lado.
+- **Olhar a caixa do atalho global, e olhar DUAS vezes.** Ela ficou 14dp
+  mais alta (`buscaCartaoAlt` foi de 76 para 90): o rodapé "Enter conecta
+  · Esc fecha · mais N — refine o termo" NUNCA coube, nos dois sistemas, e
+  agora cabe. Conferir no KWin que o cartão continua certo e que a linha
+  aparece — **uma vez com a fonte no padrão e outra com o A+ ligado**
+  (nível 2), porque a caixa passou a obedecer à escala da interface e
+  antes não obedecia: `escalaFonte` era aplicado só na janela principal, e
+  o serviço do atalho (processo à parte) nem lia `[geral] fonte`. Os dois
+  caminhos agora passam por `aplicarGeral` (persistir.go). O que se quer
+  ver: a caixa cresce junto, o rodapé continua dentro e a lista de
+  resultados não estoura a tela em 1366x768.
 - **X11 ganhou comportamento novo.** A caixa agora pede
   `system.ActionCenter` depois do primeiro quadro. No Wayland a ação é
   ignorada (quem posiciona é o compositor), mas no X11 o Gio a
   implementa de verdade — conferir que ela não briga com o
   posicionamento do gerenciador de janelas.
-- **Gerar o instalador do Windows a partir daí**
-  (`scripts/build-windows.sh --instalador`) para fechar duas pontas que
-  só um instalador novo confirma: o provider legacy do OpenSSL (item 9)
-  e o ícone do executável (item 4). O passo novo copia
-  `ossl-modules/legacy.dll` do sysroot e o build FALHA se ele não
-  estiver lá — de propósito.
+- **Gerar o instalador do Windows** (`scripts/build-windows.sh
+  --instalador`) para fechar duas pontas que só um instalador novo
+  confirma: o provider legacy do OpenSSL (item 9) e o ícone do
+  executável (item 4). O passo novo copia `ossl-modules/legacy.dll` do
+  sysroot e o build FALHA se ele não estiver lá — de propósito.
+
+## 13. Conferir no Windows o que saiu na 2.6.2 pelo lado Linux
+
+Espelho do item 10, e pela mesma razão: esta metade da 2.6.2 foi feita e
+testada no LINUX (build e suíte verdes, `go vet` limpo), e o Windows não
+foi compilado daqui. Nada aqui é suspeita de defeito.
+
+- **A tela remota passou a viajar como RGBA** em vez de NRGBA, do filho
+  até o `paint` do Gio. É byte a byte igual enquanto o alfa for sempre
+  255, que é o que o laço grava — mas é o caminho do quadro inteiro, e
+  merece um olhar: abrir RDP e VNC no Windows e conferir que as cores
+  saem certas e que não há transparência onde não devia.
+- **O cursor do SSH deixou de ter ticker próprio** e passou a pedir o
+  próximo quadro de dentro do desenho. Conferir que ele continua piscando
+  numa aba SSH em foco, e que para de piscar quando a aba sai de vista.
+- **A caixa do atalho global passou a aplicar o A+.** No Linux há dois
+  caminhos (o app e o serviço, que é processo à parte); no Windows só o
+  do app. Conferir com o nível 2 que a janela cresce junto com a letra e
+  que o rodapé continua dentro.
+- **`entrada_outros.go` NÃO recebeu a correção de clipboard que o
+  `entrada_linux.go` recebeu**, e isso é deliberado: fora do Linux o
+  clipboard é lido de dentro do quadro, onde ler a barra de abas é
+  seguro. Está anotado no próprio arquivo — conferir que continua
+  verdade antes de propagar.
+- **O saneamento do known_hosts cria um arquivo temporário** quando o
+  arquivo tem linha ilegível (`os.CreateTemp`, apagado em seguida).
+  Conferir no Windows, onde o known_hosts vive em
+  `%USERPROFILE%\.ssh\known_hosts`.
+
+## 11. Correções nos shims C — achadas por varredura, pendentes de teste ao vivo
+
+Varredura adversarial dos shims em 2026-09-19 (cada achado passou por um
+refutador que leu o código da própria libfreerdp/libvncclient). Estas são
+as que SOBREVIVERAM e ainda não foram aplicadas, porque mexem em C e o
+critério do item 9 continua valendo: não mexer sem um teste ao vivo
+validando. As correções em Go que saíram da mesma varredura já foram
+aplicadas (ver git log).
+
+- **[VNC, a mais grave] `Framebuffer()` lê largura, altura e ponteiro em
+  três chamadas cgo separadas** (internal/vnc/vnc.go:168-170). A
+  libvncclient grava `client->width/height` ANTES de trocar o buffer em
+  `ResizeClientBuffer`, então existe uma janela em que o Go copia
+  (largura nova × altura nova × 4) de dentro do buffer VELHO — num
+  1024x768 que vira 1920x1080 são ~5 MB lidos além do fim da alocação.
+  É o mesmo defeito que o RDP já fechou com `fb_lock`, e o comentário de
+  `telaworker.go` afirma "sob trava" para os dois protocolos. Correção:
+  um `vs_capturar_quadro(Sessao*, int *w, int *h)` que leia os três numa
+  chamada só, sob um `fb_lock` novo tomado também por `hook_malloc_fb`
+  (vncshim.c:275-312) — as duas metades são necessárias, porque a chamada
+  única sozinha ainda corre com o `free(s->fb_velho)`.
+- **[VNC] Colar texto grande pode derrubar a sessão.** `SendClientCutText`
+  escreve cabeçalho e corpo em DUAS chamadas de `WriteToRFBServer`,
+  enquanto a goroutine de rede pode encaixar um `FramebufferUpdateRequest`
+  no meio — o servidor lê o pedido como se fosse texto e o fluxo
+  dessincroniza. Sintoma: queda ao colar texto grande com a tela em
+  movimento. Correção: um mutex no vncshim tomado por `vs_ponteiro`,
+  `vs_tecla`, `vs_enviar_texto` e `vs_processar` — e NUNCA por
+  `vs_esperar`, que bloqueia 200ms.
+- **[RDP] `s->disp`/`s->cliprdr` são testados e usados sem trava**
+  (rdpshim.c:864/888 e :846/855) enquanto a thread própria do drdynvc os
+  zera (:677-682). O refutador rebaixou o sintoma: o `DispClientContext`
+  não é liberado no fechamento do canal, e a queda recorrente NÃO vem
+  daqui. O que sobra são duas janelas estreitas e reais (redirecionamento
+  de broker; fechamento de canal DVC pelo servidor) em que
+  `SendMonitorLayout` cai num `channel_callback` já liberado dentro da
+  própria lib. Correção: um `canais_lock` próprio (não o `clip_lock`, para
+  não inverter ordem) em volta do par teste+uso e das escritas dos hooks.
+  **Não trocar o RLock por Lock no lado Go**: `poll()` segura o RLock
+  durante os 200ms de `rs_esperar` e isso engasgaria teclado e ponteiro.
+- **[RDP] Retângulo de 1px colado na borda apaga o dano do lote.**
+  `gdi_CRgnToRect` reprova `x=0,w=1` e `gdi_InvalidateRegion` responde
+  zerando a caixa com `null=TRUE`, então `hook_end_paint` (rdpshim.c:226)
+  sai calado e os pixels ficam no framebuffer sem ninguém do lado Go
+  saber. Há chamadores reais nos dois caminhos (line.c e o pipeline gfx,
+  que é o default aqui). Correção de uma linha: quando `invalid->null` for
+  verdadeiro mas `ninvalid > 0`, reportar a tela inteira em vez de
+  retornar calado.
+- **[RDP, só o `cmd/rdpview`] `rs_destruir` gateia toda a desmontagem em
+  `s->conectado`**, que `rs_processar` já zerou em qualquer queda: vazam o
+  framebuffer, os caches do gdi, um FD e a thread do drdynvc por
+  reconexão. E `freerdp_context_free` nunca é chamado — o comentário de
+  rdpshim.c:1177-1180 afirma o contrário do que o header da lib manda.
+  No `cmd/acessos` o caminho é inalcançável (o filho sai por `os.Exit`),
+  então é risco latente, não defeito em produção.
+- **[Wayland] `teclado_leave` não solta as teclas em baixo.** Perder o
+  foco com uma tecla pressionada nunca gera o "soltou": o modificador fica
+  presente do lado remoto — no RDP tudo vira atalho, no SSH passa a mandar
+  caracteres de controle. Correção: um bitmap de 256 bits marcado em
+  `teclado_tecla`, varrido e solto no `leave`, fechando com
+  `xkb_state_update_mask(..., 0,0,0,0,0,0)`.
+
+## 12. Desempenho — o que foi medido e ainda não aplicado
+
+Varredura de 2026-09-19, cada proposta conferida por um crítico que
+refez as contas. O que já foi aplicado saiu do backlog (ver git log): a
+tela passou a viajar como `*image.RGBA`, que é o único tipo que o paint
+do Gio aceita sem converter, e o cursor do SSH deixou de ter um ticker
+por sessão. O que sobrou:
+
+- **`Quadro.Codificar` copia o payload inteiro só para prefixar 24 bytes**
+  (telaproc/protocolo.go:144-156), uma vez por quadro remoto: 8,3 MB
+  alocados e copiados em 1080p, ~1,5 ms de latência serial dentro do
+  filho (~6 ms em 4K). Vale junto com o reuso do buffer de saída de
+  `recortarBGRXparaRGBA`, que hoje é alocado por quadro — as duas juntas
+  tiram a rotatividade do filho de três buffers de tela por quadro para
+  um. Atenção: o prefixo de tamanho e o teto `tamMax` passam a valer
+  sobre `24+len(pix)`, e o buffer reaproveitado precisa ser fatiado
+  exato, senão `DecodificarQuadro` recusa o quadro.
+- **Invalidate de aba invisível — NA ORDEM CERTA.** As goroutines de
+  sessão pedem quadro da janela inteira mesmo com a aba fora da tela, e o
+  guarda `ehAbaAtiva(t)` está calculado na linha de baixo. Mas
+  condicionar o Invalidate a ele HOJE trava a aba: `marcarAbaAtiva` roda
+  no TOPO do FrameEvent (main.go:655) e a troca de aba acontece DEPOIS,
+  dentro do mesmo quadro (tabbar.go:143-147) — a aba recém-aberta ficaria
+  com a imagem parada até alguém mexer no mouse, e o Gio silencia um
+  Invalidate emitido com quadro em voo. Primeiro mover `marcarAbaAtiva`
+  para depois do `bar.layout` (mexe também na arbitragem do clipboard),
+  DEPOIS condicionar. O custo atual é ~1 quadro por segundo por sessão
+  escondida.
+- **`filtrar()` monta uma fatia do inventário inteiro a cada quadro**
+  (dashtab.go:807) só para testar se ela está vazia — até 274 conexões,
+  ~90 KB por quadro enquanto se digita, e a lateral repete a varredura na
+  taxa de quadro da sessão ativa. Um `algumCasa(lista, termo) bool` que
+  retorne no primeiro casamento resolve a pior passada em ~6 linhas, no
+  estilo do `contarSelecao` que já existe ali.
+- **`vida.Checar` faz ICMP e TCP em série**: host morto custa 800 ms em
+  vez de 400. NÃO disparar os dois juntos — o TCP é reserva deliberada
+  (vida.go:33-35) e 264 conexões apontam para VNC 5900; servidor VNC em
+  modo pergunta abre prompt no lado remoto a cada batida. A versão que
+  vale é escalonada: o toque TCP só entra se o ICMP não respondeu em
+  ~60-80 ms.
+- **[NÃO é desempenho, é perda de dado] Detectar plataforma regrava o
+  .ini inteiro por máquina**, e cada gravação gera uma cópia de
+  histórico. Com `maxHistorico = 20`, detectar numa loja de 54 máquinas
+  APAGA as cópias de edição de verdade em `~/.config/acessos/historico`.
+  Sete dos oito grupos passam de 20, então acontece na prática. Correção
+  mínima: uma cópia de histórico por OPERAÇÃO em vez de por máquina
+  (~5 linhas em internal/conexoes). Depois, se quiser, o pool de sondas —
+  lembrando que gravar tudo só no fim faz fechar o app no meio perder o
+  que já foi detectado.
 
 ## 3d. Busca por atalho global — o que ainda falta
 
@@ -88,20 +225,11 @@ proporção, não por amostra.
 ## 4. Ícone do EXECUTÁVEL no Windows — confirmar com instalador novo
 
 **Relatado no teste da 2.0.4: os ícones saem errados no Windows.** O
-relato juntava duas coisas diferentes; uma está fechada, a outra não.
+relato juntava duas coisas; a metade que era glifo de fonte na interface
+foi resolvida em 2026-09-19 (ver `glifos_test.go`). Sobra o ícone do
+executável e do instalador.
 
-**Fechada (2026-09-19): os "ícones" da interface que não renderizavam.**
-Não eram ícones — eram CARACTERES de texto que a IBM Plex embutida não
-tem: `▸`/`▾` nos blocos do editor de conexão, `⟳` no recarregar do SFTP,
-`⌁` no botão de teclas da barra de sessão. No Linux o shaper cai numa
-fonte do sistema e ninguém vê; no Windows não há em quem cair e sai o
-quadradinho vazio. As setas viraram ícone vetorial (`setaExpansor`, em
-[tema.go](cmd/acessos/tema.go)), o `⟳` virou `↻` (que a Plex tem) e o
-`⌁` saiu. [glifos_test.go](cmd/acessos/glifos_test.go) agora quebra o
-build se entrar símbolo novo que as fontes embutidas não tenham.
-
-**Aberta: o ícone do executável e do instalador.** Uma causa concreta foi
-achada e corrigida em 2026-09-19, no
+Uma causa concreta foi achada e corrigida no
 [build-windows.sh](scripts/build-windows.sh): o `.ico` multi-resolução
 era montado com `magick "$tmp"/*.png`, e o glob ordena por NOME. O
 arquivo saía na ordem **128, 16, 24, 256, 32, 48, 64** — ou seja, com a
@@ -194,71 +322,31 @@ Por onde entra:
 
 ## 9. Estabilidade RDP/VNC — sobras da auditoria de 2026-09-19
 
-Auditoria pedida depois de queixa de queda/glitch em sessão RDP. Cinco
-causas confirmadas já foram corrigidas: ordem invertida de
-captura/consumo de dano deixando remendo permanente na tela (comum a
-RDP e VNC — ver `enviarQuadro()` em
-[telaworker.go](cmd/acessos/telaworker.go)), tempestade de `CmdResize`
-ao arrastar a borda da janela sem debounce (só RDP — canal Display
-Control não existe no VNC), callbacks da libfreerdp/libvncclient
-(`OnCursor`/`OnClipboardText`/`OnDisplayPronto`) escrevendo direto no
-socket e podendo travar a sessão inteira esperando o mesmo mutex que um
-`EvtQuadro` grande usa, `rs_processar` (rdpshim.c) engolindo uma falha
-de `freerdp_check_event_handles` e caindo num laço quente (100% de CPU,
-tela congelada, sem reconectar), e — achado em 2026-09-19, efeito
-colateral da correção anterior — `OnDisplayPronto` competindo por vaga
-com `OnCursor`/`OnClipboardText` na mesma fila de descarte-se-cheia:
-como é um evento ÚNICO por sessão (não "estado atual" como os outros
-dois), perder essa vaga numa rajada de conexão deixava a aba presa na
-resolução padrão do servidor até a janela ser redimensionada na mão.
-Ganhou canal próprio (`workerRDP.dispPronto` em
-[telaworker_rdp.go](cmd/acessos/telaworker_rdp.go)).
+A auditoria (pedida depois de queixa de queda/glitch em sessão RDP)
+fechou seis causas, a última delas o provider legacy do OpenSSL que nunca
+ia junto no instalador do Windows — todas no histórico do git. Uma queda
+recorrente contra um host específico ficou explicada e NÃO é defeito
+nosso: `ERRINFO_RPC_INITIATED_DISCONNECT`, ferramenta administrativa NO
+SERVIDOR derrubando a sessão a cada ~35s. Como o `Run()` passou a devolver
+o motivo específico do FreeRDP em vez do genérico "conexão perdida", esse
+tipo de queda agora se identifica pelo log.
 
-De quebra, `rs_processar`/`rs_esperar` agora guardam o motivo específico
-do FreeRDP (`freerdp_get_last_error_string`) antes de marcar a sessão
-como caída, e `Run()` devolve esse motivo em vez do genérico "conexão
-perdida" — foi o que permitiu identificar, no mesmo dia, que uma queda
-recorrente contra um host específico era `ERRINFO_RPC_INITIATED_
-DISCONNECT` (ferramenta administrativa NO SERVIDOR derrubando a sessão
-a cada ~35s) — nada a corrigir aqui, é comportamento do servidor.
+Para validar o que sobra: os testes ao vivo (`ACESSOS_RDP_AOVIVO`,
+`ACESSOS_VNC_AOVIVO`) rodam nos dois sistemas desde 2026-09-19 — inclusive
+no Windows, onde as quedas foram relatadas.
 
-**Causa nova, achada e corrigida em 2026-09-19 testando ao vivo a partir
-do Windows: o provider "legacy" do OpenSSL nunca ia no instalador.** A
-libcrypto empacotada vem do MSYS2 e traz compilado o MODULESDIR
-`/ucrt64/lib/ossl-modules`, que não existe fora de quem tem o MSYS2; e o
-`scripts/dlls-windows.py` não podia pegá-lo, porque percorre a tabela de
-importação do PE e provider é carregado em tempo de execução, pelo nome.
-Sem ele não há MD4 nem RC4 — o FreeRDP perde NTLM e o cookie de
-autoreconnect. Traduzindo: login recusado contra servidor que não fecha
-por Kerberos (o caso normal ao conectar por IP), e queda passageira que
-não se resolve sozinha. As duas assinaturas estavam no freerdp.log desta
-máquina. O build passa a copiar `ossl-modules/legacy.dll` para o lado do
-.exe e o app aponta o `OPENSSL_MODULES` para lá no start (ver
-cmd/acessos/ossl_windows.go). **Vale um instalador novo para confirmar na
-prática** — aqui foi conferido com o layout do dist montado à mão, com
-controle negativo.
+**Suspeito em aberto**: o pacote `freerdp` do MSYS2 (3.31.1-1, o mesmo que
+o instalador embarca) é compilado com `WITH_VAAPI_H264_ENCODING=ON`, e a
+própria libfreerdp avisa a cada conexão que "[experimental] build options
+might crash the application". VA-API é coisa de Linux e o caminho não deve
+nem ser exercitado por um cliente no Windows, mas é a única diferença de
+BUILD conhecida entre o FreeRDP do Windows e o do Flatpak — e queda "sem
+motivo" no Windows é justamente o que se está caçando. Conferir se uma
+versão mais nova do pacote sai sem a flag antes de considerar compilar o
+FreeRDP do zero para o sysroot.
 
-**Sobra um suspeito no mesmo lugar**: o pacote `freerdp` do MSYS2
-(3.31.1-1, o mesmo que o instalador embarca) é compilado com
-`WITH_VAAPI_H264_ENCODING=ON`, e a própria libfreerdp avisa a cada
-conexão que "[experimental] build options might crash the application".
-VA-API é coisa de Linux e o caminho não deve nem ser exercitado por um
-cliente no Windows, mas é a única diferença de BUILD conhecida entre o
-FreeRDP do Windows e o do Flatpak — e queda "sem motivo" no Windows é
-justamente o que se está caçando. Conferir se uma versão mais nova do
-pacote sai sem a flag antes de considerar compilar o FreeRDP do zero para
-o sysroot.
-
-**Os testes ao vivo já rodam no Windows** (soltos da tag `linux` em
-2026-09-19) e foram exercitados contra máquinas de verdade a partir
-daqui: RDP 1024x768 em 60 quadros seguidos sem queda, gastando 30% do
-que seria mandar tela cheia toda vez; VNC em 150 quadros, 9%; morte do
-filho a ferro não derruba o principal, nos dois protocolos. O que sobra
-abaixo continua sobrando — mas agora dá para validar no sistema onde as
-quedas foram relatadas.
-
-O que ficou de fora, por ser mais arriscado de mexer sem um teste ao
-vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
+O que ficou de fora da auditoria, por ser mais arriscado de mexer sem um
+teste ao vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
 
 - **Cópia do framebuffer sem lock contra a pintura.** `fb_lock` em
   rdpshim.c só protege `gdi_resize` e a própria captura — a pintura de
