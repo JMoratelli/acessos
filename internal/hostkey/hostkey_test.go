@@ -32,10 +32,23 @@ func sementeDe(b byte) []byte {
 	return s
 }
 
-func escreverKnownHosts(t *testing.T, conteudo string) {
+// larDeMentira aponta o os.UserHomeDir() para um diretório temporário.
+//
+// Os DOIS nomes são obrigatórios: o Unix lê $HOME e o WINDOWS lê
+// %USERPROFILE%. Só com HOME, o teste rodava contra o known_hosts DE
+// VERDADE da máquina no Windows — passava por acaso quando o host de
+// teste não estava lá, e falhava sem explicar nada quando estava.
+func larDeMentira(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	return dir
+}
+
+func escreverKnownHosts(t *testing.T, conteudo string) {
+	t.Helper()
+	dir := larDeMentira(t)
 	dotSSH := filepath.Join(dir, ".ssh")
 	if err := os.MkdirAll(dotSSH, 0o700); err != nil {
 		t.Fatal(err)
@@ -82,8 +95,7 @@ func TestLinhaIlegivelNaoCegaADeteccaoDeTrocaDeChave(t *testing.T) {
 // Sem arquivo é o caso normal da primeira execução: tudo é primeira vez,
 // e sem barulho.
 func TestSemKnownHostsTodoHostEhPrimeiraVez(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	larDeMentira(t)
 
 	err := Callback()("10.0.0.7:22",
 		&net.TCPAddr{IP: net.IPv4(10, 0, 0, 7), Port: 22}, chaveDeTeste(t, 7))
