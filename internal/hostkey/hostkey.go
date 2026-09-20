@@ -13,8 +13,10 @@
 package hostkey
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,10 +78,7 @@ func Callback() ssh.HostKeyCallback {
 	}
 	verificar, err := knownhosts.New(arq)
 	if err != nil {
-		// sem known_hosts ainda: tudo é primeira vez
-		verificar = func(string, net.Addr, ssh.PublicKey) error {
-			return &knownhosts.KeyError{}
-		}
+		verificar = semKnownHosts(arq, err)
 	}
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if err := verificar(hostname, remote, key); err != nil {
@@ -168,4 +167,94 @@ func casaHost(linha, host string) bool {
 		}
 	}
 	return false
+}
+
+// primeiraVez trata todo host como novo. É a degradação: perde-se a
+// detecção de chave TROCADA, que é justamente a que protege contra alguém
+// no meio do caminho.
+func primeiraVez(string, net.Addr, ssh.PublicKey) error {
+	return &knownhosts.KeyError{}
+}
+
+// semKnownHosts decide o que fazer quando o known_hosts não carrega.
+//
+// São dois mundos diferentes, e o código tratava os dois como um só ("sem
+// known_hosts ainda: tudo é primeira vez"):
+//
+//   - o arquivo NÃO EXISTE — primeira execução, caso normal, silêncio;
+//   - o arquivo existe e NÃO PARSEIA — e aqui morava um defeito sério.
+//     Uma única linha ilegível (tipo de chave que esta versão não conhece,
+//     base64 truncado, linha editada à mão) faz o knownhosts.New abortar o
+//     arquivo INTEIRO. Todo host virava Desconhecida, o ramo Mudou ficava
+//     inalcançável e o operador via o azul de rotina "confiar e conectar"
+//     no lugar do vermelho de "alguém está interceptando" — em silêncio, e
+//     para sempre, porque Confiar() só acrescenta uma linha e o arquivo
+//     continua sem parsear.
+//
+// No segundo caso as linhas BOAS são salvas: o arquivo é relido linha a
+// linha, o que não passa fica de fora, e o verificador é montado com o
+// resto. A checagem de troca de chave volta a valer para todo host que
+// tenha linha legível, que é o que importa.
+func semKnownHosts(arq string, err error) ssh.HostKeyCallback {
+	if errors.Is(err, os.ErrNotExist) {
+		return primeiraVez // ainda não existe: tudo é primeira vez
+	}
+	if v, ruins, erroSaneado := sanear(arq); erroSaneado == nil {
+		fmt.Fprintf(os.Stderr,
+			"hostkey: %s tem %d linha(s) ilegível(is) — ignoradas, o resto do "+
+				"arquivo continua valendo (%v)\n", arq, ruins, err)
+		return v
+	}
+	// Não deu nem saneado: é melhor dizer alto do que conectar calado,
+	// porque daqui em diante troca de chave não é mais detectada.
+	fmt.Fprintf(os.Stderr,
+		"hostkey: não consegui ler %s (%v); TODO host vai aparecer como "+
+			"desconhecido e a TROCA de chave deixa de ser detectada\n", arq, err)
+	return primeiraVez
+}
+
+// sanear monta um verificador só com as linhas que parseiam. Devolve
+// quantas foram descartadas.
+//
+// O arquivo temporário existe porque knownhosts.New só aceita CAMINHO, e é
+// apagado assim que ele termina de ler — o DB fica em memória. A conferência
+// linha a linha usa ssh.ParseKnownHosts, que pula vazia e comentário
+// devolvendo io.EOF.
+func sanear(arq string) (ssh.HostKeyCallback, int, error) {
+	bruto, err := os.ReadFile(arq)
+	if err != nil {
+		return nil, 0, err
+	}
+	var bons [][]byte
+	ruins := 0
+	for _, linha := range bytes.Split(bruto, []byte("\n")) {
+		_, _, _, _, _, perr := ssh.ParseKnownHosts(append(append([]byte{}, linha...), '\n'))
+		if perr != nil && !errors.Is(perr, io.EOF) {
+			ruins++
+			continue
+		}
+		bons = append(bons, linha)
+	}
+	if ruins == 0 {
+		// A falha não era de linha: não há o que sanear, e insistir só
+		// esconderia a causa real.
+		return nil, 0, fmt.Errorf("nenhuma linha ilegível encontrada em %s", arq)
+	}
+	tmp, err := os.CreateTemp("", "acessos-known-hosts-*")
+	if err != nil {
+		return nil, ruins, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(bytes.Join(bons, []byte("\n"))); err != nil {
+		tmp.Close()
+		return nil, ruins, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, ruins, err
+	}
+	v, err := knownhosts.New(tmp.Name())
+	if err != nil {
+		return nil, ruins, err
+	}
+	return v, ruins, nil
 }
