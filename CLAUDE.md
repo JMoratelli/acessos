@@ -53,6 +53,18 @@
     que fazia escolher máquina no atalho global não abrir nada. Drenar no
     topo do laço, que o `Invalidate` acorda mesmo sem quadro (ver
     `cmd/acessos/filajanela.go`).
+  - **Tela cheia do Gio no Windows parava na ÁREA ÚTIL** (achado em
+    2026-09-20, na v2.7.0, com a sessão em janela própria). Ela é
+    "maximizada SEM `WS_OVERLAPPEDWINDOW`", e a janela até nasce do
+    tamanho do monitor inteiro — quem encolhia era o `WM_NCCALCSIZE` do
+    próprio Gio, que grampeia o CLIENTE na `mi.WorkArea` quando a janela
+    é sem decoração e está maximizada. Certo para a janela maximizada de
+    verdade (senão comeria a barra de tarefas), errado para a tela
+    cheia: medido em 1920x1036, o app pintava 1920x996 e sobrava a faixa
+    da barra. Corrigido no fork (ver `third_party/gio/PATCH.md`), e
+    `cmd/telacheia` mede as quatro transições numa janela de verdade —
+    sai 1 se alguma regredir. Nada disso aparece em `go test`: não há
+    HWND, nem monitor, nem barra de tarefas.
   - **`gofmt -l` aqui acusa o repositório inteiro** porque o working tree
     é CRLF (`core.autocrlf=true`) e o gofmt normaliza para LF. NÃO rodar
     `gofmt -w` no repositório: reescreve todos os arquivos. Para conferir
@@ -66,6 +78,35 @@
     formatação é, portanto, tarefa do lado LINUX: rodar `gofmt -l cmd/
     internal/` lá antes de fechar a release (o `third_party/vt10x`
     aparece e fica como está — é código de terceiro).
+
+- **Compilar no Windows não é o build oficial** (conferido em
+  2026-09-20, nesta máquina). O `.exe` entregue sai de
+  `scripts/build-windows.sh`, no Linux, e o script monta o sysroot MSYS2
+  UMA VEZ e reaproveita (`if [ ! -d "$SYSROOT/lib/pkgconfig" ]`). Quatro
+  diferenças, todas medidas:
+
+  - **O sysroot congela a versão das bibliotecas.** A v2.7.0 instalada
+    traz FreeRDP/WinPR **3.30.0**; o MSYS2 desta máquina está em
+    **3.31.1**. Das 101 DLLs instaladas só essas três diferem — todo o
+    resto, `libcrypto-3-x64.dll` inclusive, é byte a byte igual. Um
+    `.exe` compilado aqui liga contra a 3.31.1; os 43 símbolos que ele
+    importa existem na 3.30.0 (conferido com `objdump -p`), então
+    carregaria — mas é variável solta num "só troca o exe". **Para
+    substituir só o binário, gerar pelo script, no Linux.**
+  - **O `PATH` daqui acha o `gcc` e o `pkg-config` do Strawberry Perl
+    antes do MSYS2** — o `pkg-config` é um stub que nem existe
+    (`Can't find C:\Strawberry\perl\bin\pkg-config.bat`) e o `gcc` é
+    outra ABI. Build nativo só com
+    `PATH=/c/msys64/ucrt64/bin:$PATH` e
+    `PKG_CONFIG=/c/msys64/ucrt64/bin/pkg-config`.
+  - **Duas coisas do script não acontecem sozinhas:**
+    `-ldflags "-H=windowsgui"` (sem ele abre um console preto atrás da
+    janela) e o `cmd/acessos/recurso_windows.syso` (ícone e versão na
+    aba Detalhes), gerado por `windres` e fora do git.
+  - **`ossl-modules/legacy.dll` só existe na INSTALAÇÃO.** Um build
+    nativo rodado de dentro de `build/` fica sem MD4/RC4 — NTLM e
+    autoreconnect quebrados —, e isso é silêncio, não erro (ver
+    `cmd/acessos/ossl_windows.go`).
 
 - **Pegadinhas de MAIS DE UMA JANELA (achadas em 2026-09-20, ao pôr a
   sessão remota em janela própria).** Todas têm a mesma forma: com uma

@@ -382,6 +382,30 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		// Note that trying to do the adjustment in WM_GETMINMAXINFO is ignored by Windows.
 		szp := (*windows.NCCalcSizeParams)(unsafe.Pointer(lParam))
 		mi := windows.GetMonitorInfo(w.hwnd)
+		// patch acessos: TELA CHEIA cobre o monitor INTEIRO, não a área útil.
+		//
+		// Fullscreen aqui é "maximizada E sem WS_OVERLAPPEDWINDOW" — é
+		// assim que o Configure a monta e é assim que o update() a
+		// reconhece, logo acima. A janela nasce do tamanho certo: o
+		// maximizado de uma janela sem moldura já dá o retângulo do
+		// monitor inteiro. Quem encolhia era ESTA linha, que grampeava o
+		// CLIENTE na área útil e deixava a faixa da barra de tarefas de
+		// fora — o app pintava 1920x996 numa janela de 1920x1036.
+		//
+		// MEDIDO (Windows 10, 1920x1036, barra de 40px): com WorkArea o
+		// cliente sai 1920x996 e sobra a barra; com Monitor sai
+		// 1920x1036, e o shell tira o TOPMOST da barra de tarefas nos
+		// dois casos — o que faltava não era o shell ceder a tela, era o
+		// app ocupá-la.
+		//
+		// A área útil continua valendo para a janela MAXIMIZADA de
+		// verdade (a principal, que é CSD mas mantém
+		// WS_OVERLAPPEDWINDOW): lá o grampo é o certo, senão a janela
+		// comeria a barra de tarefas ao maximizar.
+		if windows.GetWindowLong(w.hwnd, windows.GWL_STYLE)&windows.WS_OVERLAPPEDWINDOW == 0 {
+			szp.Rgrc[0] = mi.Monitor
+			return 0
+		}
 		szp.Rgrc[0] = mi.WorkArea
 		return 0
 	case windows.WM_PAINT:

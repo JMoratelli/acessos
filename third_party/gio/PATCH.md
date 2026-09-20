@@ -220,3 +220,35 @@ wl_display, o pipe de notificação e o memfd do tema de cursor).
 O patch entrega o evento pendente antes de recriar: com `driver == nil` e
 um `DestroyEvent` na fila, `Event()` devolve o que está na fila em vez de
 abrir janela nova.
+
+Um patch novo, em `app/os_windows.go` (`windowProc`, no `WM_NCCALCSIZE`):
+**a tela cheia do Windows cobria a ÁREA ÚTIL do monitor, não o monitor
+inteiro** — sobrava na tela justamente a faixa da barra de tarefas.
+
+A tela cheia do Gio no Windows é "maximizada SEM `WS_OVERLAPPEDWINDOW`"
+(ver o `case Fullscreen` do `Configure` e a classificação de modo em
+`update`). A JANELA nasce certa: maximizar uma janela sem moldura já dá o
+retângulo do monitor inteiro. Quem encolhia era o próprio Gio, uma linha
+depois: numa janela sem decoração e maximizada ele grampeia o CLIENTE na
+`mi.WorkArea`, que é a área útil — o certo para a janela maximizada de
+verdade (senão ela comeria a barra de tarefas), e errado para a tela
+cheia.
+
+Medido com `cmd/telacheia`, num monitor de 1920x1036 com barra de 40px:
+
+	sem o patch   janela 1920x1036, cliente 1920x996
+	com o patch   janela 1920x1036, cliente 1920x1036
+
+Nos dois casos o shell TIRA o `WS_EX_TOPMOST` da barra de tarefas, ou
+seja, ele reconhecia a tela cheia e cedia a tela desde sempre — o que
+faltava era o app ocupá-la.
+
+O patch escolhe o retângulo pelo estilo da janela, que é o mesmo critério
+que o `update()` usa para dizer `Fullscreen`: sem `WS_OVERLAPPEDWINDOW`,
+`mi.Monitor`; com ele, `mi.WorkArea` como antes. A janela principal, que
+é CSD mas mantém o estilo, não muda em nada.
+
+O jeito canônico (`SetWindowPos` no retângulo do monitor, sem maximizar)
+foi medido e funciona igual, mas exigiria mexer no `Configure`, no
+`update()` e em guardar/restaurar o `WINDOWPLACEMENT` — três lugares
+contra uma condição, para o mesmo pixel.
