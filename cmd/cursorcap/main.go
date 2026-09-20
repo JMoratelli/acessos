@@ -243,7 +243,8 @@ func main() {
 	}
 
 	prazo := time.After(*limite)
-	interrompido := passear(r, col, area, *passoX, *passoY, *pausa, prazo, fimBomba, desconectou)
+	interrompido, bombaMorreu := passear(r, col, area, *passoX, *passoY, *pausa,
+		prazo, fimBomba, desconectou)
 
 	// A foto da tela sai ANTES de parar a bomba, que é enquanto o quadro
 	// ainda está vivo: sem ela não dá para saber depois sobre o que o
@@ -252,9 +253,15 @@ func main() {
 
 	// Só agora, com a bomba parada, é que se grava o resto em disco.
 	close(parar)
-	select {
-	case <-fimBomba:
-	case <-time.After(2 * time.Second):
+	// Só espera quem ainda não terminou. fimBomba tem UMA vaga, e o
+	// passeio já a consome quando vê a sessão cair — sem esta guarda a
+	// espera abaixo nunca recebia nada e estourava os 2s inteiros antes
+	// de gravar as máscaras, justamente no caminho de erro.
+	if !bombaMorreu {
+		select {
+		case <-fimBomba:
+		case <-time.After(2 * time.Second):
+		}
 	}
 
 	formas, nulos := col.instantaneo()
@@ -297,10 +304,12 @@ func esperarTela(r remoto, limite time.Duration) (w, h int, ok bool) {
 // pela borda mais próxima e cruza mais bordas de janela por segundo de
 // sessão.
 //
-// Devolve o motivo de ter parado antes da hora, ou "" se varreu tudo.
+// Devolve o motivo de ter parado antes da hora (ou "" se varreu tudo) e se
+// a bomba JÁ TERMINOU — quem chama precisa saber, porque fimBomba tem uma
+// vaga só e este laço a consome.
 func passear(r remoto, col *coletor, area image.Rectangle, passoX, passoY int,
 	pausa time.Duration, prazo <-chan time.Time,
-	fimBomba <-chan error, desconectou <-chan string) string {
+	fimBomba <-chan error, desconectou <-chan string) (string, bool) {
 
 	if passoX < 1 {
 		passoX = 1
@@ -323,11 +332,11 @@ func passear(r remoto, col *coletor, area image.Rectangle, passoX, passoY int,
 		for _, x := range xs {
 			select {
 			case <-prazo:
-				return "tempo limite"
+				return "tempo limite", false
 			case err := <-fimBomba:
-				return fmt.Sprintf("a sessão caiu (%v)", err)
+				return fmt.Sprintf("a sessão caiu (%v)", err), true
 			case motivo := <-desconectou:
-				return "o servidor desconectou: " + motivo
+				return "o servidor desconectou: " + motivo, false
 			default:
 			}
 			col.marcarPonto(image.Pt(x, y))
@@ -338,7 +347,7 @@ func passear(r remoto, col *coletor, area image.Rectangle, passoX, passoY int,
 		fmt.Fprintf(os.Stderr, "\r   linha %d/%d — %d formas até aqui   ",
 			linhas, totalLinhas, col.quantas())
 	}
-	return ""
+	return "", false
 }
 
 // lerRegiao converte "x0,y0,x1,y1" no recorte, já cortado pela tela. Vazio

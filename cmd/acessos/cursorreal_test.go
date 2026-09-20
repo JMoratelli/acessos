@@ -63,7 +63,7 @@ var casosReais = []casoReal{
 		"seta dupla ↕ de divisor de painel; o não-I-beam que segura larguraTopo"},
 
 	// Seta + anel ("abrindo programa"): é da família SETA, não da
-	// centrada, e sai por aspecto >= 0.9 em familiaSeta(). Os dois
+	// centrada, e sai por aspecto >= setaLarga em familiaSeta(). Os dois
 	// quadros têm de dar o mesmo resultado — cursor animado chega como
 	// várias máscaras distintas e oscilar entre dois cursores locais
 	// seria pior que errar os dois.

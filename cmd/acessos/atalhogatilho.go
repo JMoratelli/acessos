@@ -38,7 +38,13 @@ type estadoGatilho struct {
 	// tido chance de responder — um alarme falso a cada abertura.
 	Sabido bool
 	// Tecla é o que o sistema amarrou, como ele descreve ("Ctrl+Shift+F12").
-	// Vazia COM Sabido = registrado sem tecla.
+	//
+	// Vazia COM Sabido = não há tecla amarrada AGORA, e isso cobre três
+	// caminhos diferentes: o diálogo do KDE foi recusado, o registro
+	// falhou (portal fora do ar), ou a sessão do portal caiu. Os três
+	// dão o mesmo sintoma — o atalho não faz nada —, e é por isso que a
+	// mensagem na tela fala do fato ("não amarrou tecla") em vez de
+	// chutar a causa.
 	Tecla string
 }
 

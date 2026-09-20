@@ -587,9 +587,15 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			}
 			atalhoVivo = a
 			// Aqui o registro é do próprio app, então a notícia não
-			// precisa de socket. E "registrado sem tecla" não existe
-			// nesta ponta: RegisterHotKey ou amarra ou devolve erro,
-			// que o if acima já tratou. Ver atalhogatilho.go.
+			// precisa de socket.
+			//
+			// E ela PODE ser vazia: este ramo não é só do Windows. Ele
+			// vale sempre que cli == nil, o que inclui o Linux quando
+			// não houve como falar com o serviço (ver ligarNoServico) —
+			// e aí quem registra é o portal, que devolve gatilho vazio
+			// se o diálogo do KDE for recusado. No Windows é que o caso
+			// não existe: RegisterHotKey ou amarra ou devolve erro, que
+			// o if acima já tratou. Ver atalhogatilho.go.
 			definirGatilho(a.Gatilho)
 		}
 		if atalhoGlobalLigado(caminhoINI) {

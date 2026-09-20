@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"acessos-go/internal/conexoes"
+
 	"gioui.org/app"
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -35,6 +37,22 @@ type dlgAjustes struct {
 	lista       widget.List
 	erro        string
 	aviso       string
+	// atencao é o aviso que pede providência mas não é falha nossa (o
+	// sistema recusou). Sai em AtencaoFg: o vermelho é de destrutivo e
+	// de erro, e gastá-lo aqui o faria parar de significar perigo.
+	atencao string
+
+	// iniEmUso é o arquivo que o app REALMENTE está lendo. Não confundir
+	// com d.ini, que é o texto do editor e pode estar apontando para um
+	// arquivo que ninguém aplicou ainda.
+	//
+	// Preferência gravada tem de ir para o arquivo em uso: quem digita um
+	// caminho novo, NÃO clica em "Usar este arquivo" e marca uma caixa
+	// estava gravando a preferência no outro arquivo, enquanto o app e o
+	// serviço seguiam lendo este. No autostart isso é pior, porque o
+	// estado do sistema muda de verdade e só o registro vai para o lugar
+	// errado.
+	iniEmUso string
 
 	// procurar() roda em goroutine (ChooseFile bloqueia até o usuário
 	// decidir) — o resultado só é aplicado no editor dentro do Corpo,
@@ -50,16 +68,31 @@ type dlgAjustes struct {
 	// por minutos. autoIndo tranca o segundo clique; pendAuto é ponteiro
 	// porque o resultado FALSO é resposta legítima ("o sistema disse
 	// não") e precisa se distinguir de "ainda não respondeu".
-	autoIndo bool
-	pendAuto *bool
+	autoIndo    bool
+	pendAuto    *bool
+	pendAtencao string
 }
 
 func abrirAjustes(w *app.Window, ini string) {
 	d := &dlgAjustes{w: w}
 	d.ini.SingleLine = true
 	d.ini.SetText(ini)
-	d.atalhoOn = atalhoGlobalLigado(ini)
-	d.autostartOn = lerAutostart(ini) == autostartLigado
+	d.iniEmUso = ini
+	// Uma leitura só para as duas preferências: cada helper faz o próprio
+	// conexoes.Carregar, que lê e faz o parse do inventário INTEIRO. Com o
+	// arquivo num Drive/Insync — o caso para o qual este diálogo existe —
+	// eram duas leituras de rede e dois parses completos dentro do laço de
+	// quadro, travando a janela na abertura.
+	arq, err := conexoes.Carregar(ini)
+	if err == nil {
+		d.atalhoOn = arq.Geral[chaveAtalhoGlobal] != "0"
+		d.autostartOn = arq.Geral[chaveAtalhoAutostart] == "1"
+	} else {
+		// Mesmo padrão dos helpers: ilegível vale como atalho LIGADO (um
+		// atalho a mais surpreende menos que um que sumiu sozinho) e
+		// autostart não decidido.
+		d.atalhoOn = true
+	}
 	abrirDialogo(d)
 }
 
@@ -123,7 +156,13 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.pendAuto != nil {
 		d.autostartOn = *d.pendAuto
 		d.pendAuto = nil
-		d.erro = ""
+		// NÃO limpa d.erro aqui: ele pode ser de outra coisa que a pessoa
+		// ainda não tratou (um caminho de arquivo inexistente, por
+		// exemplo), e apagá-lo faria a mensagem sumir da tela sozinha.
+	}
+	if d.pendAtencao != "" {
+		d.atencao = d.pendAtencao
+		d.pendAtencao = ""
 	}
 	autoIndo := d.autoIndo
 	d.mu.Unlock()
@@ -152,6 +191,10 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.erro != "" {
 		filhos = append(filhos, espaco(8),
 			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.erro, tema.ErroFg)))
+	}
+	if d.atencao != "" {
+		filhos = append(filhos, espaco(8),
+			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.atencao, tema.AtencaoFg)))
 	}
 	if d.aviso != "" {
 		filhos = append(filhos, espaco(8),
@@ -246,7 +289,7 @@ func (d *dlgAjustes) corpoAtalho(th *material.Theme, autoIndo bool) []layout.Fle
 	if d.atalhoOn && atalhoSemTecla() {
 		filhos = append(filhos, espaco(4), layout.Rigid(recuado(
 			rotulo(th, fonteMono, spSecundario,
-				"registrado SEM TECLA — amarre em Preferências do Sistema → Atalhos → Acessos",
+				"o sistema não amarrou nenhuma tecla — confira em Preferências do Sistema → Atalhos → Acessos",
 				tema.AtencaoFg))))
 	}
 
@@ -305,7 +348,7 @@ func (d *dlgAjustes) corpoDiagnostico(th *material.Theme) []layout.FlexChild {
 // sobreviveu ao próximo start é pior que não marcar nada.
 func (d *dlgAjustes) trocarAtalho() {
 	novo := !d.atalhoOn
-	if err := salvarAtalhoGlobalLigado(d.ini.Text(), novo); err != nil {
+	if err := salvarAtalhoGlobalLigado(d.iniEmUso, novo); err != nil {
 		d.erro = err.Error()
 		return
 	}
@@ -329,6 +372,14 @@ func (d *dlgAjustes) trocarAtalho() {
 // pessoa ler (prazo de minutos, ver definirAutostart): no laço de quadro
 // isso é a janela inteira congelada. Mesmo desenho do procurar().
 func (d *dlgAjustes) trocarAutostart() {
+	// O desenho já esconde a caixa onde o gancho é nil, mas o clique é
+	// conferido antes do desenho e por outro caminho: sem esta guarda, um
+	// evento de ponteiro que chegasse nesse Clickable viraria chamada de
+	// função nil DENTRO de uma goroutine — que o laço de quadro não tem
+	// como recuperar, e derruba o processo.
+	if definirAutostartNoSistema == nil {
+		return
+	}
 	d.mu.Lock()
 	ja := d.autoIndo
 	d.autoIndo = true
@@ -337,9 +388,7 @@ func (d *dlgAjustes) trocarAutostart() {
 		return
 	}
 	quer := !d.autostartOn
-	// O caminho é lido AQUI, no laço de quadro: tocar no widget.Editor de
-	// outra goroutine não é seguro (ver o comentário da struct).
-	caminho := d.ini.Text()
+	caminho := d.iniEmUso
 	go func() {
 		ok, err := definirAutostartNoSistema(quer)
 		if err == nil {
@@ -349,9 +398,24 @@ func (d *dlgAjustes) trocarAutostart() {
 		}
 		d.mu.Lock()
 		d.autoIndo = false
-		if err != nil {
+		switch {
+		case err != nil:
 			d.pendErro = err.Error()
-		} else {
+		case ok != quer:
+			// O sistema respondeu o CONTRÁRIO do pedido. Acontece sem
+			// diálogo nenhum quando o portal já tem um "negado" guardado
+			// nas permissões: a caixa simplesmente voltava sozinha, sem
+			// mensagem, indistinguível de um clique que não pegou — e a
+			// pessoa clica de novo e de novo, porque o portal não
+			// pergunta outra vez.
+			d.pendAuto = &ok
+			if quer {
+				d.pendAtencao = "o sistema recusou — confira a permissão de " +
+					"segundo plano do Acessos nos ajustes do seu desktop"
+			} else {
+				d.pendAtencao = "o sistema manteve o autostart ligado"
+			}
+		default:
 			d.pendAuto = &ok
 		}
 		d.mu.Unlock()

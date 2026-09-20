@@ -8,7 +8,7 @@ package main
 // Sobe sozinho quando o app parte (ver ligarNoServico) e continua vivo
 // depois que a janela grande fecha — é isso que faz o Ctrl+Shift+F12
 // funcionar com o app fechado. Para ele continuar existindo depois de um
-// logout, há o autostart pelo portal (ver pedirAutostart).
+// logout, há o autostart pelo portal (ver definirAutostart).
 //
 // O porquê da arquitetura, e o problema das duas caixas, está em
 // instancia.go.
@@ -38,6 +38,19 @@ type servico struct {
 	// escrevem nele: a conversa do próprio app e quem empurra pedidos de
 	// fora (outra instância, ou a caixa de busca). Ver instancia.go.
 	app *canal
+	// appPronto separa "a vaga é dele" de "o canal já aceita empurrão".
+	// Entre uma coisa e outra existe o msgOK do aperto de mão, e do outro
+	// lado pedirResposta lê EXATAMENTE uma mensagem: qualquer coisa
+	// empurrada nessa janela seria consumida COMO a resposta do
+	// handshake. Ver msgOlaApp.
+	appPronto bool
+	// appProntoCh fecha quando appPronto vira true. Existe porque
+	// DESISTIR na janela do aperto de mão também está errado: um "abrir"
+	// vindo de uma segunda instância chega exatamente quando a primeira
+	// janela acabou de nascer, e descartá-lo perde o pedido de quem
+	// clicou. Com o canal, quem empurra espera o handshake terminar em
+	// vez de falhar — ver mandarParaApp.
+	appProntoCh chan struct{}
 	// buscaAberta evita empilhar caixas: apertar o atalho de novo com uma
 	// na tela não abre a segunda.
 	buscaAberta bool
@@ -127,7 +140,7 @@ func (s *servico) conversa(c net.Conn) {
 		if souOApp {
 			s.mu.Lock()
 			if s.app == k {
-				s.app = nil
+				s.app, s.appPronto, s.appProntoCh = nil, false, nil
 			}
 			s.mu.Unlock()
 		}
@@ -152,19 +165,17 @@ func (s *servico) conversa(c net.Conn) {
 			fmt.Fprintln(os.Stderr, "serviço: versão nova pediu a vaga; saindo")
 			os.Exit(0)
 		case msgOlaApp:
+			// A vaga é tomada AQUI (ninguém mais entra), mas o canal só
+			// passa a aceitar empurrão depois do msgOK — ver appPronto.
 			s.mu.Lock()
 			ocupado := s.app != nil
 			if !ocupado {
-				s.app = k
+				s.app, s.appPronto = k, false
+				s.appProntoCh = make(chan struct{})
 				souOApp = true
 			}
+			pronto := s.appProntoCh
 			s.mu.Unlock()
-			if souOApp {
-				select {
-				case s.chegouApp <- struct{}{}:
-				default:
-				}
-			}
 			if ocupado {
 				if !responder(mensagem{Tipo: msgOcupado}) {
 					return
@@ -174,13 +185,33 @@ func (s *servico) conversa(c net.Conn) {
 			if !responder(mensagem{Tipo: msgOK}) {
 				return
 			}
+
+			// Só agora o canal é de mão única. Antes desta linha, um
+			// guardarGatilho disparado por manterAtalho no mesmo instante
+			// escrevia a notícia do gatilho no socket ANTES do msgOK: o
+			// pedirResposta do app lia essa mensagem como a resposta do
+			// aperto de mão, o msgOK caía depois como tipo desconhecido
+			// no cli.ler() e a notícia de "sem tecla" se perdia para
+			// sempre — calada. Um msgAbrir ou msgBusca no mesmo instante
+			// sumia do mesmo jeito.
+			s.mu.Lock()
+			s.appPronto = true
+			sabido, tecla := s.gatilhoSabido, s.gatilho
+			s.mu.Unlock()
+			close(pronto) // solta quem estiver esperando em mandarParaApp
+
+			// Quem espera por uma janela só é acordado com o canal já
+			// pronto, senão garantirApp devolveria true para um app que
+			// ainda não pode receber.
+			select {
+			case s.chegouApp <- struct{}{}:
+			default:
+			}
+
 			// O atalho normalmente já foi registrado quando a janela
 			// aparece: conta a ela o que se sabe, senão a notícia de
 			// "sem tecla" só existiria para quem estivesse aberto no
-			// instante do registro.
-			s.mu.Lock()
-			sabido, tecla := s.gatilhoSabido, s.gatilho
-			s.mu.Unlock()
+			// instante exato do registro.
 			if sabido && !responder(mensagem{Tipo: msgGatilho, Gatilho: tecla}) {
 				return
 			}
@@ -216,10 +247,28 @@ func (s *servico) guardarGatilho(tecla string) {
 // mandarParaApp entrega m à janela grande. Falso quando não há nenhuma.
 func (s *servico) mandarParaApp(m mensagem) bool {
 	s.mu.Lock()
-	k := s.app
+	k, pronto, ch := s.app, s.appPronto, s.appProntoCh
 	s.mu.Unlock()
 	if k == nil {
 		return false
+	}
+	if !pronto {
+		// Aperto de mão em curso. Esperar é o certo: esta é a janela em
+		// que um "abrir" de segunda instância mais aparece — a pessoa
+		// clicou no atalho, o app está subindo — e desistir aqui perderia
+		// o pedido dela. Com prazo, porque um app que trava no meio do
+		// handshake não pode prender quem empurra para sempre.
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			return false
+		}
+		s.mu.Lock()
+		k, pronto = s.app, s.appPronto
+		s.mu.Unlock()
+		if k == nil || !pronto {
+			return false
+		}
 	}
 	if err := k.enviar(m); err != nil {
 		// Escrita que falha é canal fora de sincronia: fechar libera a
@@ -238,7 +287,7 @@ func (s *servico) mandarParaApp(m mensagem) bool {
 // grande só nasce quando uma máquina é escolhida.
 func (s *servico) garantirApp() bool {
 	s.mu.Lock()
-	tem := s.app != nil
+	tem := s.app != nil && s.appPronto
 	s.mu.Unlock()
 	if tem {
 		return true
@@ -322,6 +371,13 @@ func (s *servico) manterAtalho() {
 		switch {
 		case err != nil:
 			fmt.Fprintf(os.Stderr, "atalho global: %v (nova tentativa em %s)\n", err, espera)
+			// Conta à janela que NÃO há tecla. Sem isto, um registro que
+			// falha (portal ainda não de pé no login, que é exatamente
+			// quando o autostart nos sobe) deixava a caixa marcada, sem
+			// aviso nenhum, e o Ctrl+Shift+F12 morto por até dois
+			// minutos de backoff — o mesmo silêncio que este aviso
+			// existe para acabar.
+			s.guardarGatilho("")
 			time.Sleep(espera)
 			if espera < 2*time.Minute {
 				espera *= 2
@@ -356,6 +412,10 @@ func (s *servico) manterAtalho() {
 			select {
 			case <-a.Caiu:
 				fmt.Fprintln(os.Stderr, "atalho global: a sessão do portal caiu; registrando de novo")
+				// A tecla foi embora com a sessão: manter a anterior
+				// guardada faria a janela seguir anunciando um atalho
+				// que não existe mais.
+				s.guardarGatilho("")
 				soltou = true
 			case <-s.atalhoMudou:
 				if atalhoGlobalLigado(s.ini) {
@@ -363,6 +423,7 @@ func (s *servico) manterAtalho() {
 				}
 				fmt.Fprintln(os.Stderr, "atalho global: desligado nos Ajustes; soltando a tecla")
 				a.Fechar()
+				s.guardarGatilho("")
 				// Espera o portal confirmar pelo Session.Closed, mas COM
 				// PRAZO: a especificação não garante esse sinal para quem
 				// fechou a própria sessão, e esperar sem prazo prenderia

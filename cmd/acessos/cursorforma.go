@@ -365,18 +365,9 @@ func (f formaCursor) cursor() pointer.Cursor {
 	return f.familiaCentrada()
 }
 
-// familiaSeta separa a seta comum das compostas (seta + ampulheta/anel,
-// que é o "trabalhando em segundo plano" do Windows, e seta + "?", que é
-// a ajuda). O que as denuncia é a caixa ficar LARGA: a seta sozinha é bem
-// mais alta que larga (proporção ~0,6); com um segundo glifo ao lado ela
-// passa de 0,9.
-//
-// As duas compostas caem em CursorProgress. Ajuda não tem cursor nomeado
-// no Gio, e "seta com ocupado ao lado" descreve bem melhor a de espera —
-// que é a que aparece o tempo todo numa sessão remota.
-// setaLarga separa a seta COMUM da seta acompanhada (seta+anel, seta+
-// ampulheta, seta+interrogação): o acompanhante engorda a caixa para a
-// direita e o aspecto sobe.
+// setaLarga é o corte de aspecto que separa a seta COMUM da seta
+// acompanhada (seta+anel, seta+ampulheta, seta+interrogação): o
+// acompanhante engorda a caixa para a direita e o aspecto sobe.
 //
 // O valor saiu de medida, não de proporção desenhada. As amostras reais
 // de testdata/cursores (ver cursorreal_test.go, e
@@ -396,6 +387,16 @@ func (f formaCursor) cursor() pointer.Cursor {
 // dica que dura um instante. Na dúvida, erra para o lado barato.
 const setaLarga = 0.78
 
+// familiaSeta separa a seta comum das compostas (seta + ampulheta/anel,
+// que é o "trabalhando em segundo plano" do Windows, e seta + "?", que é
+// a ajuda). O que as denuncia é a caixa ficar LARGA: a seta sozinha é bem
+// mais alta que larga (0,632 medido nas amostras reais); com um segundo
+// glifo ao lado ela chega a 0,846. O corte está em setaLarga, logo acima,
+// com a medida que o justifica.
+//
+// As duas compostas caem em CursorProgress. Ajuda não tem cursor nomeado
+// no Gio, e "seta com ocupado ao lado" descreve bem melhor a de espera —
+// que é a que aparece o tempo todo numa sessão remota.
 func (f formaCursor) familiaSeta() pointer.Cursor {
 	if f.aspecto() >= setaLarga {
 		return pointer.CursorProgress

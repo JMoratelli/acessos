@@ -415,9 +415,18 @@ static void hook_cursor(rfbClient *cl, int xhot, int yhot, int w, int h,
     if (!s || !s->ao_cursor) return;
     if (cl->rcMask && w > 0 && h > 0) {
         /* Buffer proprio porque o rcMask e da libvncclient e sera
-         * reescrito no proximo cursor. Liberar logo depois da chamada e
-         * seguro: o lado Go COPIA antes de entregar (ver goAoCursor, em
-         * vnc.go) — mesma garantia de que o irmao RDP depende. */
+         * reescrito no proximo cursor.
+         *
+         * Liberar logo depois da chamada e seguro por UM motivo so:
+         * goAoCursor (vnc.go) copia para uma fatia Go nova, de forma
+         * SINCRONA, antes de chamar sess.OnCursor. Quem tornar essa
+         * entrega assincrona um dia tem de mover o free junto, ou isto
+         * vira uso apos liberacao.
+         *
+         * NAO e o mesmo desenho do irmao RDP, e ja esteve escrito aqui
+         * que era: rdpshim.c guarda a mascara em mp->mascara e so libera
+         * em hook_pointer_free, entao la o buffer sobrevive ao callback.
+         * O contrato que vale aqui esta em goAoCursor, nao no irmao. */
         size_t n = (size_t)w * (size_t)h;
         uint8_t *alfa = (uint8_t *)malloc(n);
         if (!alfa) {
