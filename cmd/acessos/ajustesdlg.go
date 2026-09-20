@@ -25,8 +25,9 @@ type dlgAjustes struct {
 	btnOk       widget.Clickable
 	btnCanc     widget.Clickable
 	btnProcurar widget.Clickable
-	verDiag     widget.Clickable
-	diagOn      bool
+	// aba é a faceta em exibição; btnAba são os três segmentos.
+	aba         int
+	btnAba      [3]widget.Clickable
 	atalho      widget.Clickable
 	atalhoOn    bool
 	autostart   widget.Clickable
@@ -65,6 +66,24 @@ func abrirAjustes(w *app.Window, ini string) {
 func (d *dlgAjustes) Titulo() string   { return "Ajustes" }
 func (d *dlgAjustes) Largura() unit.Dp { return 620 }
 
+// As três facetas dos Ajustes.
+//
+// São ABAS-FACETA e não abas-documento: cada uma é uma vista fixa do mesmo
+// assunto, não algo que se abre e fecha. Por isso não há aba fixa nem
+// botão de fechar — o padrão das abas de sessão, na tira de cima, é o
+// outro e não se aplica aqui.
+//
+// Antes disto a tela era uma pilha plana: caminho de arquivo, quatro
+// linhas de informação, três caixas de marcar e um log, tudo junto, sem
+// nada dizendo o que pertencia a quê.
+const (
+	ajArquivos = iota
+	ajAtalho
+	ajDiagnostico
+)
+
+var rotulosAjustes = []string{"Arquivos", "Atalho", "Diagnóstico"}
+
 func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	if d.btnCanc.Clicked(gtx) {
 		fecharDialogo()
@@ -72,14 +91,16 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.btnOk.Clicked(gtx) {
 		d.aplicar()
 	}
-	if d.verDiag.Clicked(gtx) {
-		d.diagOn = !d.diagOn
-	}
 	if d.atalho.Clicked(gtx) {
 		d.trocarAtalho()
 	}
 	if d.autostart.Clicked(gtx) {
 		d.trocarAutostart()
+	}
+	for i := range d.btnAba {
+		if d.btnAba[i].Clicked(gtx) {
+			d.aba = i
+		}
 	}
 	if d.btnProcurar.Clicked(gtx) {
 		d.mu.Lock()
@@ -108,6 +129,63 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	d.mu.Unlock()
 	d.lista.Axis = layout.Vertical
 
+	filhos := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return segmentado(gtx, th,
+				[]*widget.Clickable{&d.btnAba[0], &d.btnAba[1], &d.btnAba[2]},
+				rotulosAjustes, d.aba)
+		}),
+		espaco(14),
+	}
+	switch d.aba {
+	case ajAtalho:
+		filhos = append(filhos, d.corpoAtalho(th, autoIndo)...)
+	case ajDiagnostico:
+		filhos = append(filhos, d.corpoDiagnostico(th)...)
+	default:
+		filhos = append(filhos, d.corpoArquivos(th)...)
+	}
+
+	// Erro e aviso moram FORA da aba, logo acima dos botões. Quem trocou
+	// o atalho e viu a gravação falhar pode estar em outra aba no quadro
+	// seguinte, e a mensagem não pode sumir junto com a aba que a gerou.
+	if d.erro != "" {
+		filhos = append(filhos, espaco(8),
+			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.erro, tema.ErroFg)))
+	}
+	if d.aviso != "" {
+		filhos = append(filhos, espaco(8),
+			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.aviso, tema.OkFg)))
+	}
+
+	filhos = append(filhos, espaco(14), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		botoes := []layout.FlexChild{
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: gtx.Constraints.Min}
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return botaoNeutro(gtx, th, &d.btnCanc, "Fechar")
+			}),
+		}
+		// "Usar este arquivo" age sobre o campo da aba de Arquivos. Nas
+		// outras seria oferecer ação sobre algo que não está na tela.
+		// Fechar fica em todas: sempre há caminho de saída.
+		if d.aba == ajArquivos {
+			botoes = append(botoes,
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return botaoPrimario(gtx, th, &d.btnOk, "Usar este arquivo")
+				}))
+		}
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, botoes...)
+	}))
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
+}
+
+// corpoArquivos: onde o app lê cada coisa. É a informação que mais some
+// quando o conexoes.ini está no Drive/Insync e existem duas cópias — sem
+// ver o caminho, ninguém descobre que está editando o inventário errado.
+func (d *dlgAjustes) corpoArquivos(th *material.Theme) []layout.FlexChild {
 	dir := filepath.Dir(d.ini.Text())
 	linhaInfo := func(rot, valor string) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -123,8 +201,7 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 			})
 		})
 	}
-
-	filhos := []layout.FlexChild{
+	return []layout.FlexChild{
 		layout.Rigid(rotulo(th, fonteMono, spSecundario, "conexões (arquivo em uso)", tema.Sec)),
 		espaco(4),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -144,24 +221,25 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		linhaInfo("cofre", ondeEstaOCofre()),
 		linhaInfo("tema", nomeDoTema()),
 	}
-	if d.erro != "" {
-		filhos = append(filhos, espaco(8),
-			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.erro, tema.ErroFg)))
-	}
-	if d.aviso != "" {
-		filhos = append(filhos, espaco(8),
-			layout.Rigid(rotulo(th, fonteMono, spSecundario, d.aviso, tema.OkFg)))
-	}
-	filhos = append(filhos, espaco(12),
+}
+
+// corpoAtalho junta o que decide se o Ctrl+Shift+F12 existe e até quando.
+func (d *dlgAjustes) corpoAtalho(th *material.Theme, autoIndo bool) []layout.FlexChild {
+	filhos := []layout.FlexChild{
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return caixaMarcar(gtx, th, &d.atalho, d.atalhoOn,
 				"atalho global (Ctrl+Shift+F12) para a busca de máquinas")
-		}))
+		}),
+	}
 
 	// O atalho existe mas o sistema não amarrou tecla nenhuma — o caso de
 	// quem fechou o diálogo do KDE sem querer. Antes isto só saía em
 	// stderr, e o Ctrl+Shift+F12 ficava morto sem nada na tela explicando.
 	// Ver atalhogatilho.go.
+	//
+	// Cor de ATENÇÃO, não a de erro: o vermelho aqui é de ação destrutiva
+	// e de falha, e gastá-lo num aviso que pede uma providência faria ele
+	// parar de significar perigo.
 	//
 	// Só aparece com a caixa MARCADA: desmarcada, "sem tecla" é o estado
 	// esperado, e avisar seria alarme sobre o que a pessoa acabou de pedir.
@@ -176,7 +254,7 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	// dali não há serviço à parte para subir no login, e a caixa não faria
 	// nada — ver autostartpref.go.
 	if definirAutostartNoSistema != nil {
-		filhos = append(filhos, espaco(8),
+		filhos = append(filhos, espaco(10),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return caixaMarcar(gtx, th, &d.autostart, d.autostartOn,
 					"manter o atalho valendo depois do login, sem abrir o app")
@@ -187,14 +265,17 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 					"esperando a resposta do sistema…", tema.Sec))))
 		}
 	}
+	return filhos
+}
 
-	filhos = append(filhos, espaco(8),
+// corpoDiagnostico era uma caixa de marcar que abria um painel embaixo de
+// tudo. Como aba, a própria escolha da aba é o "mostrar" — uma caixa para
+// revelar conteúdo dentro de uma aba dedicada a ele seria um clique a
+// mais sem dizer nada.
+func (d *dlgAjustes) corpoDiagnostico(th *material.Theme) []layout.FlexChild {
+	linhas := diagnostico()
+	return []layout.FlexChild{
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return caixaMarcar(gtx, th, &d.verDiag, d.diagOn, "mostrar diagnóstico")
-		}))
-	if d.diagOn {
-		linhas := diagnostico()
-		filhos = append(filhos, espaco(6), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Max.Y = gtx.Constraints.Max.Y / 2
 			return layout.Background{}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
@@ -211,23 +292,8 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 					})
 				},
 			)
-		}))
+		}),
 	}
-	filhos = append(filhos, espaco(14), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: gtx.Constraints.Min}
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return botaoNeutro(gtx, th, &d.btnCanc, "Fechar")
-			}),
-			layout.Rigid(layout.Spacer{Width: 8}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return botaoPrimario(gtx, th, &d.btnOk, "Usar este arquivo")
-			}),
-		)
-	}))
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 }
 
 // trocarAtalho liga/desliga o atalho global. Grava a chave ANTES de
