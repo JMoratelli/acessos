@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,13 +71,38 @@ var soMono = map[rune]bool{
 }
 
 // runasDesenhadas devolve os caracteres não-ASCII que aparecem em
-// literais do pacote, com o arquivo:linha de cada um. Só os arquivos de
+// literais de produção, com o arquivo:linha de cada um. Só os arquivos de
 // produção: o que um teste escreve vai para o terminal, não para a tela.
+//
+// Varre o pacote da interface E o internal/: TEXTO DE TELA TAMBÉM NASCE
+// LÁ. O ErrSemMemoria de internal/telaproc, por exemplo, é escrito lá
+// dentro e desenhado aqui, na aba que não abriu — se um símbolo novo
+// entrar por esse caminho, o quadradinho vazio aparece igual. Ficar só no
+// diretório do pacote era um furo: ele nunca veria essa metade.
+//
+// Consequência de propósito: um símbolo usado só em mensagem de TERMINAL
+// (stderr de um pacote do internal/) também é acusado. Nesse caso a saída
+// é a mesma dos outros — trocar por um caractere que as fontes tenham —,
+// porque a fonte do terminal também varia e não custa nada obedecer.
 func runasDesenhadas(t *testing.T) map[rune][]string {
 	t.Helper()
 	arqs, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// ../../internal a partir de cmd/acessos, que é onde o teste roda.
+	raizInternal := filepath.Join("..", "..", "internal")
+	err = filepath.WalkDir(raizInternal, func(caminho string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(caminho, ".go") {
+			arqs = append(arqs, caminho)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("varrendo %s: %v", raizInternal, err)
 	}
 	fset := token.NewFileSet()
 	uso := map[rune]map[string]bool{}
@@ -108,7 +134,16 @@ func runasDesenhadas(t *testing.T) map[rune][]string {
 					uso[r] = map[string]bool{}
 				}
 				p := fset.Position(lit.Pos())
-				uso[r][filepath.Base(p.Filename)+":"+strconv.Itoa(p.Line)] = true
+				// nome curto para o do próprio pacote, caminho para o
+				// resto: "sftptab.go:955" x "internal/telaproc/vigia.go:82"
+				onde := filepath.Base(p.Filename)
+				if strings.Contains(p.Filename, string(filepath.Separator)) {
+					onde = filepath.ToSlash(strings.TrimPrefix(p.Filename, "../../")) +
+						":" + strconv.Itoa(p.Line)
+				} else {
+					onde += ":" + strconv.Itoa(p.Line)
+				}
+				uso[r][onde] = true
 			}
 			return true
 		})
