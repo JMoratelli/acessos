@@ -40,8 +40,8 @@ int vs_processar(Sessao *s);
  * consistentes entre si. O chamador libera com vs_liberar_quadro.
  * Substituiu vs_framebuffer/vs_largura/vs_altura, que nao eram atomicas
  * entre si: ver o comentario em vncshim.c. */
-uint8_t *vs_capturar_quadro(Sessao *s, int *w_out, int *h_out);
-void vs_liberar_quadro(uint8_t *quadro);
+const uint8_t *vs_travar_quadro(Sessao *s, int *w_out, int *h_out);
+void vs_destravar_quadro(Sessao *s);
 int vs_morto(Sessao *s);
 
 void vs_ponteiro(Sessao *s, int x, int y, int botoes);

@@ -616,8 +616,12 @@ int vs_processar(Sessao *s) {
     return 1;
 }
 
-/* Devolve uma COPIA do framebuffer inteiro (w*h*4 bytes) que o chamador
- * libera com vs_liberar_quadro, ou NULL se ainda nao ha framebuffer.
+/* Trava o framebuffer e devolve o ponteiro para leitura DIRETA, com a
+ * geometria junto, ou NULL se ainda nao ha framebuffer (e ai a trava nao
+ * fica segurada). Quem recebe nao-NULL TEM de chamar vs_destravar_quadro.
+ *
+ * Nao devolve copia: o unico consumidor ja copia para um buffer proprio, e
+ * a copia intermediaria era um segundo buffer de tela cheia por quadro.
  *
  * SUBSTITUI ler vs_largura/vs_altura/vs_framebuffer em sequencia: as tres
  * chamadas nao sao atomicas entre si, e a libvncclient grava o tamanho novo
@@ -626,28 +630,23 @@ int vs_processar(Sessao *s) {
  * fim da alocacao. Aqui o trio sai sob a mesma trava, e vem do que NOS
  * alocamos (ver os campos fb/fb_w/fb_h). Mesmo desenho do
  * rs_capturar_quadro, no rdpshim. */
-uint8_t *vs_capturar_quadro(Sessao *s, int *w_out, int *h_out) {
+const uint8_t *vs_travar_quadro(Sessao *s, int *w_out, int *h_out) {
     if (!s) return NULL;
 
     MUTEX_LOCK(&s->fb_lock);
     uint8_t *fb = s->fb;
     int w = s->fb_w, h = s->fb_h;
-    uint8_t *copia = NULL;
-    if (fb && w > 0 && h > 0) {
-        size_t n = (size_t)w * (size_t)h * 4;
-        copia = (uint8_t *)malloc(n);
-        if (copia) memcpy(copia, fb, n);
+    if (!fb || w <= 0 || h <= 0) {
+        MUTEX_UNLOCK(&s->fb_lock);
+        return NULL;
     }
-    MUTEX_UNLOCK(&s->fb_lock);
-
-    if (!copia) return NULL;
     if (w_out) *w_out = w;
     if (h_out) *h_out = h;
-    return copia;
+    return fb;                    /* a trava SEGUE na mao do chamador */
 }
 
-void vs_liberar_quadro(uint8_t *quadro) {
-    free(quadro);
+void vs_destravar_quadro(Sessao *s) {
+    if (s) MUTEX_UNLOCK(&s->fb_lock);
 }
 
 int vs_morto(Sessao *s)   { return (!s || s->morto || !s->cl) ? 1 : 0; }

@@ -55,13 +55,16 @@ int rs_largura(Sessao *s);
 int rs_altura(Sessao *s);
 int rs_stride(Sessao *s);
 
-/* Cópia atômica (tamanho + conteúdo) do framebuffer — usar em vez das
- * quatro funções acima em sequência, que não são atômicas entre si frente
- * a um resize concorrente. Devolve NULL se ainda não há framebuffer.
- * Libere o retorno com rs_liberar_quadro. */
-uint8_t *rs_capturar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out);
-void rs_liberar_quadro(uint8_t *quadro);
-
+/* Trava o framebuffer e devolve ponteiro + geometria consistentes entre si
+ * — usar em vez das quatro funções acima em sequência, que não são
+ * atômicas frente a um resize concorrente. Devolve NULL se ainda não há
+ * framebuffer (e aí a trava NÃO fica segurada).
+ *
+ * Quem recebe não-NULL TEM de chamar rs_destravar_quadro assim que
+ * terminar de ler: enquanto a trava estiver na mão, um resize do lado do
+ * servidor fica esperando. */
+const uint8_t *rs_travar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out);
+void rs_destravar_quadro(Sessao *s);
 int rs_morto(Sessao *s);
 int rs_erro_auth(Sessao *s);
 const char *rs_erro_msg(Sessao *s);

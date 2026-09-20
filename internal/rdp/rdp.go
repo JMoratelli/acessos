@@ -53,6 +53,13 @@ type Session struct {
 	s      *C.Sessao
 	handle uintptr
 
+	// quadro é o destino da cópia do framebuffer, REAPROVEITADO entre
+	// quadros: era um make() de tela cheia por quadro (33 MB em 4K) que o
+	// coletor tinha de recolher logo em seguida. Só a goroutine que bombeia
+	// tela chama Framebuffer, e quem recebe o buffer o consome no mesmo
+	// quadro, sem guardar — ver bombaTela, em cmd/acessos/telaworker.go.
+	quadro []byte
+
 	OnUpdate        func(x, y, w, h int)
 	OnResize        func(w, h int)
 	OnDisconnect    func(reason string)
@@ -213,11 +220,18 @@ func (s *Session) poll() (morto bool, n int, ok bool, detalhe string) {
 // contrário do VNC, aqui o gdi pode alinhar cada linha a mais que w*4
 // bytes, então stride precisa ser respeitado ao interpretar o buffer.
 //
-// Usa rs_capturar_quadro (tamanho+cópia numa única chamada em C, sob
-// fb_lock) em vez de ler largura/altura/stride/ponteiro em chamadas
-// separadas: um resize no meio dessas quatro chamadas lia uma combinação
-// inconsistente de tamanho antigo com ponteiro novo (ou vice-versa) e
-// derrubava o processo — ver comentário em rdpshim.c sobre fb_lock.
+// Trava o framebuffer em C e copia DIRETO dele para cá, uma vez só. Antes
+// o C fazia malloc+memcpy da tela inteira e este lado copiava a cópia:
+// eram dois buffers de tela cheia por quadro (33 MB cada em 4K) para o
+// mesmo resultado.
+//
+// A geometria vem junto, sob a mesma trava, porque ler
+// largura/altura/stride/ponteiro em chamadas separadas dava combinação
+// inconsistente (tamanho novo com ponteiro velho) durante um resize — e
+// isso derrubava o processo. Ver fb_lock, em rdpshim.c.
+//
+// O destino é REAPROVEITADO entre quadros: quem chama usa o buffer e o
+// devolve para o recorte, sem guardá-lo.
 func (s *Session) Framebuffer() (buf []byte, w, h, stride int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -225,15 +239,18 @@ func (s *Session) Framebuffer() (buf []byte, w, h, stride int) {
 		return nil, 0, 0, 0
 	}
 	var cw, ch, cstride C.int
-	ptr := C.rs_capturar_quadro(s.s, &cw, &ch, &cstride)
+	ptr := C.rs_travar_quadro(s.s, &cw, &ch, &cstride)
 	if ptr == nil {
 		return nil, 0, 0, 0
 	}
-	defer C.rs_liberar_quadro(ptr)
+	defer C.rs_destravar_quadro(s.s)
 
 	w, h, stride = int(cw), int(ch), int(cstride)
 	n := stride * h
-	buf = make([]byte, n)
+	if cap(s.quadro) < n {
+		s.quadro = make([]byte, n)
+	}
+	buf = s.quadro[:n]
 	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n))
 	return buf, w, h, stride
 }

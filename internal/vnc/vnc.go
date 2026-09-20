@@ -36,6 +36,13 @@ type Session struct {
 	s      *C.Sessao
 	handle uintptr
 
+	// quadro é o destino da cópia do framebuffer, REAPROVEITADO entre
+	// quadros — mesmo desenho do irmão em internal/rdp/rdp.go, e pelo
+	// mesmo motivo: era uma alocação de tela cheia por quadro. Só a
+	// goroutine que bombeia tela chama Framebuffer, e quem recebe consome
+	// no mesmo quadro sem guardar.
+	quadro []byte
+
 	OnUpdate  func(x, y, w, h int)
 	OnResize  func(w, h int)
 	OnCutText func(text string)
@@ -171,15 +178,18 @@ func (s *Session) Framebuffer() (buf []byte, w, h int) {
 	// novo de dentro do buffer velho e ler além do fim da alocação. Ver
 	// vs_capturar_quadro, em vncshim.c.
 	var cw, ch C.int
-	ptr := C.vs_capturar_quadro(s.s, &cw, &ch)
+	ptr := C.vs_travar_quadro(s.s, &cw, &ch)
 	if ptr == nil {
 		return nil, 0, 0
 	}
-	defer C.vs_liberar_quadro(ptr)
+	defer C.vs_destravar_quadro(s.s)
 
 	w, h = int(cw), int(ch)
 	n := w * h * 4
-	buf = make([]byte, n)
+	if cap(s.quadro) < n {
+		s.quadro = make([]byte, n)
+	}
+	buf = s.quadro[:n]
 	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n))
 	return buf, w, h
 }

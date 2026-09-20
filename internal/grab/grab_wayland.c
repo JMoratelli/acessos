@@ -439,7 +439,22 @@ static void fonte_enviar(void *dados, struct wl_data_source *fonte,
      * outro lado pode estar lendo devagar — pode bloquear por tempo
      * indeterminado. Segurar clip_m durante ele penduraria o laco de quadro
      * na proxima publicacao de clipboard, trocando um bug de corrida por um
-     * de travamento. */
+     * de travamento.
+     *
+     * RISCO QUE SOBRA, ANOTADO DE PROPOSITO: este callback roda de dentro
+     * do dispatch do Wayland, que neste backend e a PROPRIA goroutine do
+     * laco de eventos. Se quem pediu o nosso clipboard parar de ler no meio,
+     * o pipe enche, o write fica preso e a interface inteira congela junto —
+     * sem clique, sem hover, sem redesenho. Quanto maior o texto, mais
+     * facil: colar um clipboard grande de uma sessao RDP num programa lento
+     * e o caso plausivel.
+     *
+     * Fica como esta DE PROPOSITO: em producao isso nunca foi observado, e
+     * a correcao (entregar o fd para uma thread propria, que escreve e
+     * fecha por conta) poe ciclo de vida de thread no caminho do clipboard
+     * — mais superficie de risco do que o defeito que evita. Se um dia
+     * alguem relatar "a interface travou ao copiar", o suspeito e este, e o
+     * caminho da correcao esta aqui. */
     char *copia = NULL;
     int tam = 0;
     pthread_mutex_lock(&g->clip_m);

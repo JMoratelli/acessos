@@ -200,8 +200,24 @@ typedef struct {
      * vivo até a próxima realocação, então ler tamanho/ponteiro em chamadas
      * separadas durante um resize lia lixo (ou estourava): visto na prática
      * derrubando o processo inteiro pouco depois de ligar o Display
-     * Control. rs_capturar_quadro faz tudo (tamanho + cópia) com este lock
-     * seguro, numa única chamada. */
+     * Control. rs_travar_quadro entrega tamanho e ponteiro com este lock
+     * na mão, e quem lê solta com rs_destravar_quadro.
+     *
+     * O QUE ESTA TRAVA NAO COBRE, e por que fica assim: a PINTURA no
+     * primary_buffer acontece dentro da libfreerdp, entre BeginPaint e
+     * EndPaint, sob a trava DELA (rdp_update_lock) e nao sob esta. Uma
+     * copia que caia no meio de um blit grande do canal gfx pode sair com
+     * metade nova e metade velha — quadro rasgado. E transitorio: o lote
+     * termina, o EndPaint reporta o dano e o quadro seguinte corrige.
+     *
+     * Fechar isso de verdade exigiria segurar ESTA trava entre o nosso
+     * hook_begin_paint e o hook_end_paint. Nao vale: se a lib pular um
+     * EndPaint por qualquer caminho de erro, a trava fica presa e a sessao
+     * congela de vez — troca um defeito visual passageiro por um
+     * travamento. A alternativa sem risco de travar seria um seqlock (ler
+     * um contador antes e depois da copia e repetir quando mudar), mas com
+     * lotes chegando continuamente a copia passaria a ser refeita com
+     * frequencia, gastando mais do que o rasgo custa. */
     rdpshim_mutex_t fb_lock;
 
     /* PROTEGE os ponteiros de canal (disp, cliprdr) e o disp_caps_ok.
@@ -1141,7 +1157,22 @@ int rs_stride(Sessao *s) {
  * meio delas dava ponteiro e tamanho de "fotos" diferentes do framebuffer —
  * o sintoma na pratica era o processo inteiro caindo (estouro de leitura)
  * pouco depois de um redimensionamento. */
-uint8_t *rs_capturar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out) {
+/* Trava o framebuffer e devolve o ponteiro para leitura DIRETA, junto com
+ * a geometria. Quem chama TEM de chamar rs_destravar_quadro logo depois —
+ * no Go isso e um defer, na linha seguinte.
+ *
+ * Substituiu a versao que fazia malloc + memcpy aqui dentro e devolvia a
+ * copia: o Go copiava essa copia para um buffer dele, entao eram DUAS
+ * copias da tela inteira por quadro (em 4K, 33 MB cada) mais um par
+ * malloc/free do mesmo tamanho. Como o unico consumidor ja copia para um
+ * buffer proprio, a copia intermediaria nao servia para nada alem de
+ * encurtar o tempo com a trava na mao.
+ *
+ * O que se paga em troca: a trava fica segurada durante a copia do Go, o
+ * que atrasa um resize que caia exatamente nesse instante em alguns
+ * milissegundos. E o mesmo custo que a copia em C ja tinha, movido de
+ * lugar. */
+const uint8_t *rs_travar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out) {
     if (!s) return NULL;
     MUTEX_LOCK(&s->fb_lock);
 
@@ -1151,23 +1182,19 @@ uint8_t *rs_capturar_quadro(Sessao *s, int *w_out, int *h_out, int *stride_out) 
     }
     rdpGdi *gdi = s->inst->context->gdi;
     int w = gdi->width, h = gdi->height, stride = gdi->stride;
-    uint8_t *copia = NULL;
-    if (w > 0 && h > 0 && stride > 0 && gdi->primary_buffer) {
-        size_t n = (size_t)stride * (size_t)h;
-        copia = (uint8_t *)malloc(n);
-        if (copia) memcpy(copia, gdi->primary_buffer, n);
+    if (w <= 0 || h <= 0 || stride <= 0 || !gdi->primary_buffer) {
+        MUTEX_UNLOCK(&s->fb_lock);
+        return NULL;
     }
-
-    MUTEX_UNLOCK(&s->fb_lock);
-
-    if (!copia) return NULL;
     *w_out = w; *h_out = h; *stride_out = stride;
-    return copia;
+    return gdi->primary_buffer;   /* a trava SEGUE na mao do chamador */
 }
 
-void rs_liberar_quadro(uint8_t *quadro) {
-    free(quadro);
+void rs_destravar_quadro(Sessao *s) {
+    if (s) MUTEX_UNLOCK(&s->fb_lock);
 }
+
+
 
 int rs_morto(Sessao *s) { return (!s || !s->conectado) ? 1 : 0; }
 int rs_erro_auth(Sessao *s) { return s ? s->erro_auth : 0; }

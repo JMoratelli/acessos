@@ -198,10 +198,12 @@ func (b *bombaTela) enviarQuadro() bool {
 	if !ok {
 		return false
 	}
-	// capturar copia a tela inteira do lado C sob trava (ver internal/rdp
-	// e internal/vnc). Recortar antes da cópia exigiria mexer nos shims em
-	// C; o que economizamos aqui, que é o que pesa, é o laço POR PIXEL e o
-	// tráfego no socket — ambos só sobre o retângulo sujo.
+	// capturar trava o framebuffer do lado C e copia DIRETO dele para um
+	// buffer reaproveitado (ver internal/rdp e internal/vnc): é uma cópia
+	// de tela por quadro, não mais duas. Recortar antes dela exigiria
+	// mexer nos shims em C; o que economizamos aqui, que é o que pesa, é o
+	// laço POR PIXEL e o tráfego no socket — ambos só sobre o retângulo
+	// sujo.
 	buf, fw, fh, stride := b.capturar()
 	if len(buf) == 0 || fw <= 0 || fh <= 0 {
 		// Sessão ainda sem framebuffer (ver rodar()). O retângulo já foi
@@ -215,6 +217,17 @@ func (b *bombaTela) enviarQuadro() bool {
 	x0, y0 := max(x, 0), max(y, 0)
 	x1, y1 := min(x+w, fw), min(y+h, fh)
 	if x1 <= x0 || y1 <= y0 {
+		// O retângulo ficou inteiro fora da tela atual: ela encolheu entre
+		// o acúmulo e agora. Ele JÁ FOI TOMADO acima, e devolvê-lo igual
+		// não adiantaria — continuaria fora. Marca a tela inteira, que é o
+		// que o OnResize faz de qualquer forma.
+		//
+		// Na prática o resize costuma chegar antes e cobrir isso, mas a
+		// ordem entre os dois não é garantida; sem esta linha, a área
+		// tomada some até alguma pintura futura por acaso passar por cima
+		// dela — o mesmo tipo de remendo permanente que a ordem
+		// tomar-antes-de-capturar (acima) existe para evitar.
+		b.dano.tudo()
 		return false
 	}
 	q := telaproc.Quadro{
