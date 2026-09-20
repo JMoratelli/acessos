@@ -25,10 +25,28 @@ var fatoresFonte = [nivelFonteMax + 1]float32{1.0, 1.15, 1.32}
 
 // escalaFonte aplica o nível corrente às métricas do quadro.
 func escalaFonte(m unit.Metric) unit.Metric {
-	f := fatoresFonte[nivelFonteValido()]
+	f := fatorFonte()
 	m.PxPerDp *= f
 	m.PxPerSp *= f
 	return m
+}
+
+// fatorFonte é o multiplicador do nível corrente para quem precisa do
+// NÚMERO, e não da métrica de um quadro.
+func fatorFonte() float32 {
+	return fatoresFonte[nivelFonteValido()]
+}
+
+// escalaDp aplica o nível a uma medida que vai para o SISTEMA — o tamanho
+// de uma janela, em app.Size —, e não para o layout.
+//
+// São duas réguas diferentes e é fácil confundir: o Dp de app.Size é
+// convertido pela métrica DO SISTEMA, que nunca passou por escalaFonte. Se
+// o conteúdo cresce 32% e a janela não, o que cresceu fica do lado de fora
+// — foi exatamente assim que o rodapé da caixa de busca se perdeu, com a
+// diferença de que lá a causa era constante errada e aqui seria a escala.
+func escalaDp(d unit.Dp) unit.Dp {
+	return unit.Dp(float32(d) * fatorFonte())
 }
 
 func nivelFonteValido() int {

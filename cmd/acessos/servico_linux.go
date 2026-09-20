@@ -80,8 +80,12 @@ func rodarServico(caminhoINI string) {
 	s.th = material.NewTheme()
 	s.th.Shaper = shaperDoApp()
 	temaApp = s.th
-	if arq, err := conexoes.Carregar(caminhoINI); err == nil && arq.Geral["tema"] == "escuro" {
-		tema = temaEscuro
+	// Tema E escala da interface — as duas preferências da pessoa, pelo
+	// mesmo aplicarGeral que o app usa (persistir.go). A fonte faltava
+	// aqui: este processo lia só o tema, e a caixa nascia em tamanho base
+	// para quem tinha o A+ ligado.
+	if arq, err := conexoes.Carregar(caminhoINI); err == nil {
+		aplicarGeral(arq.Geral)
 	}
 
 	go s.atender(ln)
@@ -384,6 +388,12 @@ func (s *servico) abrirBuscaAqui(token string) {
 		s.mu.Unlock()
 		return
 	}
+
+	// E as preferências junto, pelo mesmo motivo do parágrafo acima: o
+	// tema e o A+ que valem são os que a pessoa deixou por último no app,
+	// não os que estavam no .ini quando este serviço subiu — ele pode
+	// estar de pé há dias. O arquivo já está aqui na mão; custa nada.
+	aplicarGeral(arq.Geral)
 
 	abrirJanelaBusca(s.th, arq, token,
 		func(cx conexoes.Conexao, p conexoes.Protocolo, avulso bool, tk string) {

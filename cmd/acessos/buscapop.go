@@ -391,10 +391,10 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao s
 	w.Option(
 		app.Title("Acessos — busca"),
 		app.Decorated(false),
-		app.Size(buscaLarg, buscaAlt),
+		app.Size(escalaDp(buscaLarg), escalaDp(buscaAlt)),
 		// Mínimo = tamanho fechado, e nada de máximo: é por app.Size que
 		// a janela cresce quando a lista aparece (ver alturaDesejada).
-		app.MinSize(buscaLarg, buscaAlt),
+		app.MinSize(escalaDp(buscaLarg), escalaDp(buscaAlt)),
 		// Sem isto o Gio declara a superfície inteira opaca e o
 		// compositor pula a composição: a margem transparente em volta
 		// do cartão vira lixo de memória e os cantos arredondados saem
@@ -446,6 +446,12 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao s
 				}
 			case app.FrameEvent:
 				gtx := app.NewContext(&ops, e)
+				// A caixa obedece ao A+ como o resto do app. Sem esta
+				// linha ela era a ÚNICA janela em tamanho base — e
+				// justamente para quem aumentou a letra por precisar
+				// dela. O tamanho pedido ao sistema é escalado à parte
+				// (escalaDp, em fonte.go): app.Size não passa por aqui.
+				gtx.Metric = escalaFonte(gtx.Metric)
 				j.quadro(gtx, w)
 				e.Frame(gtx.Ops)
 				// Centraliza DEPOIS do primeiro quadro: a ação mede a
@@ -521,7 +527,10 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 	// acaojanela.go.
 	if alt := j.alturaDesejada(); alt != j.alturaAtual {
 		j.alturaAtual = alt
-		j.naJanela(w, func() { w.Option(app.Size(buscaLarg, alt)) })
+		// alturaAtual fica na régua do LAYOUT (sem o fator); só o pedido
+		// ao sistema é escalado. Misturar as duas réguas aqui faria a
+		// janela crescer de novo a cada quadro.
+		j.naJanela(w, func() { w.Option(app.Size(escalaDp(buscaLarg), escalaDp(alt))) })
 	}
 	for i := range j.cliques[:min(len(j.cliques), j.linhas())] {
 		// O ícone de protocolo fica DENTRO da linha, e no Gio o clique

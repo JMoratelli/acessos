@@ -146,6 +146,13 @@ func main() {
 	// as abas são criadas por newTab(w, spec), sem tema no caminho — este
 	// é o mesmo material.Theme do resto da janela.
 	temaApp = th
+	// Theme próprio da caixa de busca, montado AQUI e não na abertura
+	// dela: colecaoFontes() reparseia as seis fontes embutidas a cada
+	// chamada (fontes.go), e a caixa do atalho global tem de nascer
+	// instantânea. O porquê de não reaproveitar o th está no temaBusca,
+	// em tema.go.
+	temaBusca = material.NewTheme()
+	temaBusca.Shaper = shaperDoApp()
 
 	var tabs []Tab
 	for _, spec := range specs {
@@ -194,16 +201,13 @@ func main() {
 			chaveiroAtual = ch
 			fmt.Printf("chaveiro: %d credencial(is)\n", len(ch.Credenciais))
 		}
-		// [geral] tema=claro|escuro — o mesmo arquivo manda nos dois apps.
-		if arq.Geral["tema"] == "escuro" {
-			tema = temaEscuro
-		}
+		// [geral] tema=claro|escuro e fonte=0|1|2 — o mesmo arquivo manda
+		// nos dois apps, e quem aplica é o aplicarGeral de persistir.go,
+		// que o serviço do atalho global também chama.
+		aplicarGeral(arq.Geral)
 		// [geral] lateral=0|1 — a lateral volta como estava (ver sidebar.go).
+		// Fora do aplicarGeral de propósito: o serviço não tem lateral.
 		lateralInicialOculta = arq.Geral["lateral"] == "0"
-		// [geral] fonte=0|1|2 — escala da interface (ver fonte.go).
-		if n, err := strconv.Atoi(arq.Geral["fonte"]); err == nil {
-			nivelFonte = n
-		}
 		aplicarTemaFlag()
 		destrancarCofre(arq)
 		abrir := func(cx conexoes.Conexao, p conexoes.Protocolo) {
@@ -521,7 +525,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			buscaAberta.Store(false)
 			return
 		}
-		abrirJanelaBusca(th, arq, token,
+		abrirJanelaBusca(temaBusca, arq, token,
 			func(cx conexoes.Conexao, p conexoes.Protocolo, avulso bool, tk string) {
 				naJanelaPrincipal(w, func() {
 					abrirEscolhaDaBusca(w, bar, painel, cx, p, avulso, tk)

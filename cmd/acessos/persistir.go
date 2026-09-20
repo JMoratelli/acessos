@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"acessos-go/internal/conexoes"
 )
@@ -48,5 +49,37 @@ func lembrarGeral(chave, valor string) {
 	}
 	if err := conexoes.SalvarGeral(caminhoINI, map[string]string{chave: valor}); err != nil {
 		fmt.Fprintf(os.Stderr, "gravar [geral] %s: %v\n", chave, err)
+	}
+}
+
+// aplicarGeral põe de pé as preferências DA PESSOA que vêm do [geral]:
+// tema e escala da interface. É o par de leitura do lembrarGeral acima.
+//
+// Existe como função única porque são DOIS processos que abrem janela e
+// precisam das duas: o app (main.go) e o serviço do atalho global
+// (servico_linux.go), que é um processo à parte e monta a caixa de busca
+// sozinho. O serviço tinha ficado para trás — aplicava o tema e ignorava a
+// fonte —, então quem usava o app com A+ abria a caixa e ela vinha em
+// tamanho base, justamente para quem aumentou a letra por precisar dela.
+// É a armadilha de arquivo irmão fora de sincronia que o CLAUDE.md
+// descreve, e a saída é a mesma de sempre: um lugar só.
+//
+// A lateral NÃO entra aqui de propósito: é preferência do app, e o serviço
+// não tem uma.
+// Simétrica de propósito: "claro" VOLTA para o claro. No app isso nunca
+// pesou (ele nasce claro e lê o .ini uma vez), mas o serviço relê a cada
+// abertura da caixa — e sem o outro lado do if, trocar de escuro para
+// claro no app não chegaria nunca na busca, enquanto o caminho contrário
+// funcionava. Chave AUSENTE continua não mexendo em nada: quem não tem a
+// preferência gravada fica com o que já está de pé.
+func aplicarGeral(g map[string]string) {
+	switch g["tema"] {
+	case "escuro":
+		tema = temaEscuro
+	case "claro":
+		tema = temaClaro
+	}
+	if n, err := strconv.Atoi(g["fonte"]); err == nil {
+		nivelFonte = n
 	}
 }

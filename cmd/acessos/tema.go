@@ -217,6 +217,21 @@ func marcarFoco(focado bool) {
 // temaApp é o material.Theme do app (fonte/shaper), preenchido no main.
 var temaApp *material.Theme
 
+// temaBusca é o material.Theme SÓ da caixa de busca aberta pelo app.
+//
+// Tem de ser OUTRO, e isto não é zelo: a caixa é uma segunda janela e roda
+// o laço dela numa goroutine própria (buscapop.go), e o text.Shaper de um
+// Theme é um cache sem trava. O próprio Gio diz as duas coisas — em
+// text/shaper.go, que duas goroutines no mesmo shaper dão panic, e em
+// widget/material/theme.go, que é um Theme por janela de topo. Panic de
+// mapa não devolve erro: derruba o processo inteiro, com as sessões
+// abertas junto, e só aconteceria com a caixa na tela por cima de uma aba
+// recebendo dados — ou seja, no uso normal do atalho global.
+//
+// No serviço do atalho (servico_linux.go) o problema não existe: lá a
+// caixa é a única janela do processo, e o Theme dela já é exclusivo.
+var temaBusca *material.Theme
+
 // tema é o tema em uso. Trocar aqui troca o app inteiro.
 var tema = temaClaro
 
