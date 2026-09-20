@@ -64,6 +64,15 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.7.0" date="2026-09-20">
+      <description>
+        <p>A sessão RDP agora pode sair da tira de abas para uma janela própria, em tela cheia. O botão fica na barra de sessão, à direita. Na janela destacada a mesma barrinha fina continua mostrando o estado, o destino e a resolução, e ganha os botões de devolver a aba, alternar a tela cheia e os de janela — a barrinha é a barra de título dela.</p>
+        <p>Destacar não mexe na sessão: ela continua rodando no processo dela, sem reconectar nem renegociar resolução. Fechar a janela pelo botão de devolver põe a aba de volta na tira; o X encerra a sessão, como o X da aba sempre fez.</p>
+        <p>Corrige o cursor remoto do VNC, que nunca aparecia: a máscara chegava num formato diferente do esperado e o app caía sempre na seta padrão, qualquer que fosse a forma enviada pelo servidor. E o cursor de "abrindo programa" (seta com o anel ao lado) passou a ser reconhecido — o limiar que o separava da seta comum estava calibrado por proporção desenhada, não por amostra de servidor real.</p>
+        <p>Corrige o atalho global ficar mudo quando o sistema não amarra tecla nenhuma nele. Acontecia quando o diálogo de confirmação do desktop era fechado sem querer, ou quando o serviço subia antes do portal no login: o Ctrl+Shift+F12 simplesmente não fazia nada e não havia nada na tela dizendo por quê. Agora os Ajustes avisam.</p>
+        <p>Os Ajustes ganharam abas (Arquivos, Atalho, Diagnóstico) e uma caixa para manter o atalho valendo depois do login sem abrir o app — antes essa escolha só podia ser mudada editando o arquivo de configuração à mão.</p>
+      </description>
+    </release>
     <release version="2.6.3" date="2026-09-19">
       <description>
         <p>Corrige a detecção de plataforma apagando o histórico do inventário. Cada máquina detectada gravava o arquivo e guardava a sua própria cópia de segurança, e como só as 20 últimas são mantidas, detectar numa loja com mais de 20 máquinas descartava todas as cópias das edições de verdade — justamente o que serve para voltar atrás de um erro. Agora a operação inteira guarda uma cópia só, e duas gravações no mesmo segundo deixaram de se sobrescrever.</p>
