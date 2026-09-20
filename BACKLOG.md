@@ -4,10 +4,6 @@ O que falta para fechar o porte. Ordem de cima para baixo é a ordem de
 prioridade acordada; o que já está pronto não mora aqui (o histórico do
 git e o metainfo contam essa parte).
 
-A numeração tem buracos de propósito: os itens resolvidos foram removidos
-e os que ficaram mantiveram o número, porque é por ele que mensagens de
-commit e conversas antigas se referem a eles.
-
 Aqui só entra TRABALHO A FAZER. Conferência não mora neste arquivo:
 "olhar se tal coisa ficou certa" e "confirmar na outra máquina" viram
 tarefa de quem estiver naquela máquina, na hora — o que precisa ser
@@ -15,11 +11,23 @@ compilado ou testado no Windows se resolve no Windows, e o que já foi
 corrigido aparece no git. Item que só pede um olhar vira ruído e empurra
 para baixo o que é para ser feito.
 
+Os números foram refeitos em 2026-09-19, do 1 em diante. Antes disso a
+numeração tinha buracos, porque os itens resolvidos saíam e os que
+ficavam mantinham o número — com a lista curta isso deixou de valer a
+pena. Mensagem de commit antiga que fale em "item 7d", "item 9" e afins
+se refere à numeração velha; o git conta o que era.
+
+1. Busca por atalho global — as pontas que ficaram
+2. Cursor remoto — conferir contra máscaras de verdade
+3. Capturas de tela do metainfo
+4. Tela cheia
+5. FreeRDP do Windows compilado com flag experimental
+
 Atualizado em 2026-09-19.
 
 ---
 
-## 3d. Busca por atalho global — o que ainda falta
+## 1. Busca por atalho global — as pontas que ficaram
 
 O atalho, a caixa e o serviço estão funcionando (ver README). Estas
 pontas continuam abertas:
@@ -43,7 +51,7 @@ pontas continuam abertas:
   Ctrl+Shift+F12**: com uma sessão remota em foco, a tecla vai para a
   máquina remota, não para o portal.
 
-## 3e. Cursor remoto: conferir contra cursores de verdade
+## 2. Cursor remoto: conferir contra máscaras de verdade
 
 A classificação de forma foi reescrita em 2026-09-18 (fim da "mão presa" e
 do "ocupado" que nunca aparecia) e é exercitada por silhuetas desenhadas à
@@ -54,21 +62,14 @@ rdpshim já imprime tamanho e hotspot de cada uma; falta despejar os bytes)
 e virar caso de teste. Sem isso, os limiares continuam calibrados por
 proporção, não por amostra.
 
-## 5. Capturas de tela do metainfo
+## 3. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 6. Assinatura do executável do Windows
-
-O instalador não é assinado, então o SmartScreen avisa em toda máquina
-nova. Para distribuição interna é aceitável (o aviso passa com "Mais
-informações"); para distribuir fora, não. Precisa de um certificado de
-code signing — custo e decisão sua, não técnica.
-
-## 8. Tela cheia
+## 4. Tela cheia
 
 Pedido em 2026-09-16: tela cheia estilo F11 do Chrome / cliente RDP da
 Microsoft / Remmina (a REFERÊNCIA de comportamento, não o atalho) — some a
@@ -103,10 +104,10 @@ Por onde entra:
   pedido, sem inventar campo novo;
 - se a saída acabar usando alguma tecla (Ctrl+F11 ou o que for decidido),
   ela só pode disparar quando `telaCheia` já está true — nunca competir
-  com o que a sessão remota também usa, mesmo cuidado que F12/Ctrl+W/
-  Ctrl+G já tiveram que ter (ver itens 1 e 3 deste arquivo).
+  com o que a sessão remota também usa, mesmo cuidado que F12, Ctrl+W e
+  Ctrl+G já tiveram que ter quando foram resolvidos (está no git).
 
-## 9. FreeRDP do Windows compilado com flag experimental
+## 5. FreeRDP do Windows compilado com flag experimental
 
 O pacote `freerdp` do MSYS2 (3.31.1-1, o mesmo que o instalador embarca) é
 compilado com `WITH_VAAPI_H264_ENCODING=ON`, e a própria libfreerdp avisa
