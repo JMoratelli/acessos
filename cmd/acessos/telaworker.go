@@ -120,6 +120,12 @@ type bombaTela struct {
 	// bits. stride é o passo de linha em bytes: o RDP alinha a mais que
 	// w*4, o VNC não — quem sabe disso é cada worker.
 	capturar func() (buf []byte, w, h, stride int)
+
+	// saida é o buffer do retângulo já convertido, REAPROVEITADO entre
+	// quadros. Só a goroutine de rodar() mexe nele, e ele só pode ser
+	// reusado porque EnviarQuadro dá Flush antes de voltar — quando ela
+	// retorna, nada mais aponta para estes bytes (ver telaproc.escrever).
+	saida []byte
 }
 
 func novaBomba(c *telaproc.Conn, capturar func() ([]byte, int, int, int)) *bombaTela {
@@ -215,7 +221,8 @@ func (b *bombaTela) enviarQuadro() bool {
 		X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0),
 		TotalW: int32(fw), TotalH: int32(fh),
 	}
-	if b.c.EnviarQuadro(q, recortarBGRXparaRGBA(buf, stride, x0, y0, x1-x0, y1-y0)) != nil {
+	b.saida = recortarBGRXparaRGBA(b.saida, buf, stride, x0, y0, x1-x0, y1-y0)
+	if b.c.EnviarQuadro(q, b.saida) != nil {
 		b.encerrar()
 	}
 	return true
@@ -237,8 +244,21 @@ func (b *bombaTela) enviarQuadro() bool {
 // Para quem mexer aqui: se este laço um dia gravar alfa != 255, o tipo tem
 // de voltar a ser NRGBA (ou os canais passam a ter de vir premultiplicados),
 // senão a cor sai ERRADA em vez de sair devagar.
-func recortarBGRXparaRGBA(buf []byte, stride, x, y, w, h int) []byte {
-	out := make([]byte, w*h*4)
+// dst é o buffer do quadro anterior, para reaproveitar: o laço grava todos
+// os w*h*4 bytes, então não vaza pixel do quadro passado, e o que se
+// economiza é o zeramento que o make faz (~0,4 ms para 8,3 MB em 1080p,
+// ~1,6 ms em 4K) mais um bloco de lixo por quadro — que é o que o vigia de
+// memória do filho mede. Passar nil aloca, como antes.
+//
+// A fatia devolvida tem len EXATO de w*h*4: quem recebe do outro lado
+// confere o tamanho contra a geometria do cabeçalho e recusa o quadro se
+// não bater.
+func recortarBGRXparaRGBA(dst, buf []byte, stride, x, y, w, h int) []byte {
+	n := w * h * 4
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	}
+	out := dst[:n]
 	for linha := 0; linha < h; linha++ {
 		src := buf[(y+linha)*stride+x*4:]
 		dst := out[linha*w*4:]

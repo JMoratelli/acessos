@@ -85,7 +85,7 @@ func TestRecortarBGRXparaRGBARespeitaStride(t *testing.T) {
 	buf := make([]byte, stride*2)
 	// pixel (1,1) em BGRX = B,G,R,X
 	copy(buf[stride+4:], []byte{0x11, 0x22, 0x33, 0xff})
-	out := recortarBGRXparaRGBA(buf, stride, 1, 1, 1, 1)
+	out := recortarBGRXparaRGBA(nil, buf, stride, 1, 1, 1, 1)
 	quer := []byte{0x33, 0x22, 0x11, 255} // R,G,B,A
 	if string(out) != string(quer) {
 		t.Fatalf("saiu %v, esperava %v", out, quer)
@@ -141,5 +141,53 @@ func TestEnviarQuadroRedanificaSeCapturaFalhaDepoisDeTomar(t *testing.T) {
 	}
 	if x != 5 || y != 5 || w != 10 || h != 10 {
 		t.Fatalf("retângulo devolvido (%d,%d %dx%d), esperava (5,5 10x10)", x, y, w, h)
+	}
+}
+
+// O buffer de saída é reaproveitado entre quadros. Duas coisas têm de
+// valer sempre: a fatia devolvida tem len EXATO (quem recebe confere o
+// tamanho contra a geometria do cabeçalho e recusa o quadro se não bater),
+// e um quadro menor não pode deixar aparecer pixel do quadro anterior.
+func TestRecortarReaproveitaOBufferSemVazarQuadroAnterior(t *testing.T) {
+	// framebuffer 4x2 em BGRX, todo 0xAA
+	const w, h = 4, 2
+	stride := w * 4
+	grande := make([]byte, stride*h)
+	for i := range grande {
+		grande[i] = 0xAA
+	}
+
+	primeiro := recortarBGRXparaRGBA(nil, grande, stride, 0, 0, w, h)
+	if len(primeiro) != w*h*4 {
+		t.Fatalf("len = %d, queria %d", len(primeiro), w*h*4)
+	}
+
+	// agora um recorte MENOR, reusando o buffer do anterior
+	pequeno := make([]byte, stride*h)
+	for i := range pequeno {
+		pequeno[i] = 0x11
+	}
+	segundo := recortarBGRXparaRGBA(primeiro, pequeno, stride, 0, 0, 1, 1)
+	if len(segundo) != 1*1*4 {
+		t.Fatalf("len do recorte menor = %d, queria 4 — o outro lado recusa o quadro", len(segundo))
+	}
+	if &segundo[0] != &primeiro[0] {
+		t.Error("o buffer não foi reaproveitado (alocou outro)")
+	}
+	// só os bytes do recorte novo podem ser lidos, e eles vêm do
+	// framebuffer NOVO — nada de 0xAA sobrando
+	for i, b := range segundo {
+		if b == 0xAA {
+			t.Fatalf("byte %d ainda é do quadro anterior", i)
+		}
+	}
+	if segundo[3] != 255 {
+		t.Errorf("alfa = %d, queria 255 (é o que permite o tipo RGBA)", segundo[3])
+	}
+
+	// e um recorte MAIOR que o buffer guardado cresce sozinho
+	maior := recortarBGRXparaRGBA(segundo, grande, stride, 0, 0, w, h)
+	if len(maior) != w*h*4 {
+		t.Fatalf("len ao crescer = %d, queria %d", len(maior), w*h*4)
 	}
 }

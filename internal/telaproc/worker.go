@@ -80,8 +80,17 @@ func LerResize(corpo []byte) (w, h int, ok bool) {
 // ------------------------------------------------------- eventos tipados
 
 // EnviarQuadro manda um retângulo da tela. pix é RGBA empacotado, W*H*4.
+//
+// O cabeçalho vai como pedaço SEPARADO, sem copiar os pixels: juntar os
+// dois numa fatia só custava uma alocação e uma cópia de tela cheia por
+// quadro, dentro do filho. No fio sai byte a byte a mesma mensagem.
+//
+// Quando esta função retorna, pix já foi escrito e drenado (escrever() dá
+// Flush), então quem chamou pode reaproveitá-lo no quadro seguinte.
 func (c *Conn) EnviarQuadro(q Quadro, pix []byte) error {
-	return c.Enviar(EvtQuadro, q.Codificar(pix))
+	var cab [tamCabQuadro]byte
+	q.CodificarCabecalho(cab[:])
+	return c.enviarPartes(EvtQuadro, cab[:], pix)
 }
 
 // EnviarCursor manda o cursor LOCAL já escolhido pelo filho (o valor de

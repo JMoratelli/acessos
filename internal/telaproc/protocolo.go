@@ -145,18 +145,27 @@ const tamCabQuadro = 24
 // caso em 4 GB, abaixo do teto de mensagem.
 const ladoMax = 32768
 
-// Codificar escreve o cabeçalho na frente de pix e devolve o corpo pronto.
+// Codificar escreve o cabeçalho na frente de pix e devolve o corpo pronto,
+// numa fatia só. O caminho quente NÃO usa isto — ver EnviarQuadro, que
+// manda cabeçalho e pixels como pedaços separados para não copiar a tela.
+// Fica para quem precisa do corpo inteiro na mão (testes, sobretudo).
 func (q Quadro) Codificar(pix []byte) []byte {
 	buf := make([]byte, tamCabQuadro+len(pix))
-	le := binary.LittleEndian
-	le.PutUint32(buf[0:], uint32(q.X))
-	le.PutUint32(buf[4:], uint32(q.Y))
-	le.PutUint32(buf[8:], uint32(q.W))
-	le.PutUint32(buf[12:], uint32(q.H))
-	le.PutUint32(buf[16:], uint32(q.TotalW))
-	le.PutUint32(buf[20:], uint32(q.TotalH))
+	q.CodificarCabecalho(buf)
 	copy(buf[tamCabQuadro:], pix)
 	return buf
+}
+
+// CodificarCabecalho escreve os 24 bytes do cabeçalho em dst, que precisa
+// ter pelo menos esse tamanho.
+func (q Quadro) CodificarCabecalho(dst []byte) {
+	le := binary.LittleEndian
+	le.PutUint32(dst[0:], uint32(q.X))
+	le.PutUint32(dst[4:], uint32(q.Y))
+	le.PutUint32(dst[8:], uint32(q.W))
+	le.PutUint32(dst[12:], uint32(q.H))
+	le.PutUint32(dst[16:], uint32(q.TotalW))
+	le.PutUint32(dst[20:], uint32(q.TotalH))
 }
 
 // DecodificarQuadro separa cabeçalho e pixels. Os pixels apontam PARA
@@ -229,12 +238,28 @@ func novaConn(c net.Conn) *Conn {
 
 // Enviar manda uma mensagem inteira. corpo pode ser nil.
 func (c *Conn) Enviar(t Tipo, corpo []byte) error {
-	if len(corpo) > tamMax {
-		return fmt.Errorf("mensagem %d grande demais (%d bytes)", t, len(corpo))
+	return c.enviarPartes(t, corpo)
+}
+
+// enviarPartes manda uma mensagem cujo corpo está em PEDAÇOS, sem juntá-los
+// antes. No fio sai exatamente a mesma coisa que Enviar com o corpo inteiro:
+// o comprimento do cabeçalho é a soma, e escrever() já empilha tudo no mesmo
+// bufio com um Flush só.
+//
+// Existe pelo quadro: juntar os 24 bytes do cabeçalho com os pixels custava
+// uma alocação e uma cópia da tela cheia por quadro — 8,3 MB em 1080p, 33 MB
+// em 4K — dentro do filho, no caminho quente.
+func (c *Conn) enviarPartes(t Tipo, partes ...[]byte) error {
+	total := 0
+	for _, p := range partes {
+		total += len(p)
+	}
+	if total > tamMax {
+		return fmt.Errorf("mensagem %d grande demais (%d bytes)", t, total)
 	}
 	var cab [5]byte
 	cab[0] = byte(t)
-	binary.LittleEndian.PutUint32(cab[1:], uint32(len(corpo)))
+	binary.LittleEndian.PutUint32(cab[1:], uint32(total))
 
 	c.escMu.Lock()
 	defer c.escMu.Unlock()
@@ -246,7 +271,7 @@ func (c *Conn) Enviar(t Tipo, corpo []byte) error {
 	// aqui derruba a conexão inteira em vez de ser devolvido e esquecido
 	// pelo chamador: a sessão cai e religa, que é um estado que o app
 	// inteiro já sabe tratar.
-	if err := c.escrever(cab[:], corpo); err != nil {
+	if err := c.escrever(cab[:], partes...); err != nil {
 		c.quebrou = true
 		_ = c.c.Close()
 		return err
@@ -256,7 +281,11 @@ func (c *Conn) Enviar(t Tipo, corpo []byte) error {
 
 var errQuebrado = errors.New("canal da sessão já foi rompido")
 
-func (c *Conn) escrever(cab, corpo []byte) error {
+// escrever empilha o cabeçalho e os pedaços do corpo no bufio e dá UM
+// Flush. O Flush antes de voltar é o que permite a quem chamou reaproveitar
+// o buffer dos pixels no quadro seguinte (ver recortarBGRXparaRGBA): quando
+// esta função retorna, nada mais aponta para eles.
+func (c *Conn) escrever(cab []byte, partes ...[]byte) error {
 	if err := c.c.SetWriteDeadline(time.Now().Add(prazoEscrita)); err != nil {
 		return err
 	}
@@ -264,8 +293,11 @@ func (c *Conn) escrever(cab, corpo []byte) error {
 	if _, err := c.w.Write(cab); err != nil {
 		return err
 	}
-	if len(corpo) > 0 {
-		if _, err := c.w.Write(corpo); err != nil {
+	for _, p := range partes {
+		if len(p) == 0 {
+			continue
+		}
+		if _, err := c.w.Write(p); err != nil {
 			return err
 		}
 	}
