@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.7.1" date="2026-09-20">
+      <description>
+        <p>Só Windows. Corrige a tela cheia da sessão destacada: a janela cobria o monitor inteiro, mas a imagem parava na área útil e sobrava a faixa da barra de tarefas. Não era o sistema se recusando a ceder a tela — era o app não ocupando o que já tinha.</p>
+        <p>No Linux nada muda, e por isso esta versão não é oferecida lá.</p>
+      </description>
+    </release>
     <release version="2.7.0" date="2026-09-20">
       <description>
         <p>A sessão RDP agora pode sair da tira de abas para uma janela própria, em tela cheia. O botão fica na barra de sessão, à direita. Na janela destacada a mesma barrinha fina continua mostrando o estado, o destino e a resolução, e ganha os botões de devolver a aba, alternar a tela cheia e os de janela — a barrinha é a barra de título dela.</p>
