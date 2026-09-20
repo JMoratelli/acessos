@@ -26,40 +26,48 @@ package grab
 #include <stdlib.h>
 #include "grab_wayland.h"
 
-extern void goTecla(uint32_t keysym, uint32_t keycode_x11, int pressionada);
-extern void goClipOferta(int fd_leitura);
+extern void goTecla(void *ctx, uint32_t keysym, uint32_t keycode_x11, int pressionada);
+extern void goClipOferta(void *ctx, int fd_leitura);
 */
 import "C"
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"unsafe"
+
+	"acessos-go/internal/cgoregistry"
 )
 
-// onKey e onClipboardText são globais de propósito: este app tem uma
-// janela/grab por vez.
+// Cada captura carrega os próprios callbacks, e o C devolve o ctx que
+// identifica qual delas disparou.
+//
+// ISTO JÁ FOI GLOBAL, e o comentário aqui dizia que era de propósito
+// porque "este app tem uma janela/grab por vez". Deixou de ser verdade
+// quando a sessão remota ganhou janela própria: com os callbacks em
+// variáveis de pacote, a segunda janela a chamar Start substituía os da
+// primeira EM SILÊNCIO, e o teclado da janela original parava de chegar.
+// Havia um aviso em stderr para o caso, o que é o contrário de resolver —
+// ninguém lê stderr num app de janela.
+//
+// O padrão é o mesmo de internal/rdp e internal/vnc: handle inteiro no
+// void* do C (o coletor de lixo não move um inteiro) e cgoregistry
+// fazendo a volta.
 //
 // keysym é o valor X11 já calculado pelo layout ativo (o que o cliente VNC
 // quer); keycodeX11 é o keycode cru evdev+8 (o que o cliente RDP quer — o
 // FreeRDP faz sua própria tradução pra scancode). keysym vem 0 para teclas
 // mortas/compostas; keycodeX11 continua válido nesse caso.
-var (
-	onKey           func(keysym, keycodeX11 uint32, pressed bool)
-	onClipboardText func(text string)
-
-	// handleAtivo existe só para acusar a violação da suposição acima:
-	// sem isto, um segundo Start antes do Stop do primeiro sobrescrevia
-	// onKey/onClipboardText em silêncio, e os eventos passavam a ir para
-	// o callback errado sem nada avisar.
-	handleAtivo *Handle
-)
+var registro = cgoregistry.New[Handle]()
 
 // Handle é uma sessão de captura ativa. Chame Stop ao perder foco ou
 // fechar a janela para devolver os atalhos ao compositor.
 type Handle struct {
-	g *C.Grab
+	g      *C.Grab
+	handle uintptr
+
+	onKey           func(keysym, keycodeX11 uint32, pressed bool)
+	onClipboardText func(text string)
 }
 
 // Start arma a captura para a janela cujos display/surface vêm de
@@ -80,20 +88,27 @@ func Start(display, surface unsafe.Pointer,
 	onKeyFn func(keysym, keycodeX11 uint32, pressed bool),
 	onClipboardFn func(text string),
 ) *Handle {
-	if handleAtivo != nil {
-		fmt.Fprintln(os.Stderr, "grab: Start chamado com uma captura ainda ativa — "+
-			"os callbacks dela serão substituídos; alguém não chamou Stop no Handle anterior")
-	}
-	onKey = onKeyFn
-	onClipboardText = onClipboardFn
-	g := C.grab_iniciar(display, surface, C.cb_tecla(C.goTecla), C.cb_clip_oferta(C.goClipOferta))
+	// Registrar ANTES de grab_iniciar: a partir dele já podem chegar
+	// teclas, e um callback que chegasse antes do registro não acharia o
+	// Handle e seria descartado calado.
+	h := &Handle{onKey: onKeyFn, onClipboardText: onClipboardFn}
+	h.handle = registro.Registrar(h)
+
+	ctx := unsafe.Pointer(h.handle) //nolint:govet // handle inteiro repassado como ponteiro opaco ao C
+	g := C.grab_iniciar(ctx, display, surface,
+		C.cb_tecla(C.goTecla), C.cb_clip_oferta(C.goClipOferta))
 	if g == nil {
+		registro.Remover(h.handle)
 		return nil
 	}
-	h := &Handle{g: g}
-	handleAtivo = h
+	h.g = g
 	return h
 }
+
+// deHandle devolve a captura do ctx, ou nil se ela já parou — um callback
+// em voo quando o Stop acontece é normal, e cair em nil aqui é o
+// tratamento certo para ele.
+func deHandle(ctx unsafe.Pointer) *Handle { return registro.De(uintptr(ctx)) }
 
 // Modificadores devolve quais modificadores estão ativos AGORA, como
 // máscara: 1=Ctrl, 2=Shift, 4=Alt, 8=Super.
@@ -169,26 +184,39 @@ func (h *Handle) Stop() {
 	}
 	C.grab_parar(h.g)
 	h.g = nil
-	if handleAtivo == h {
-		handleAtivo = nil
-	}
+	// Sai do registro junto: um handle que sobrevivesse à captura
+	// deixaria callbacks tardios achando um Handle já morto.
+	registro.Remover(h.handle)
 }
 
 //export goTecla
-func goTecla(keysym, keycodeX11 C.uint32_t, pressionada C.int) {
-	if onKey != nil {
-		onKey(uint32(keysym), uint32(keycodeX11), pressionada != 0)
+func goTecla(ctx unsafe.Pointer, keysym, keycodeX11 C.uint32_t, pressionada C.int) {
+	entregarTecla(ctx, uint32(keysym), uint32(keycodeX11), pressionada != 0)
+}
+
+// entregarTecla é o roteamento de verdade, separado de goTecla só porque
+// arquivo _test.go não pode importar "C" — sem esta divisão o caminho que
+// o defeito do singleton quebrava ficaria sem teste nenhum.
+func entregarTecla(ctx unsafe.Pointer, keysym, keycodeX11 uint32, pressionada bool) {
+	h := deHandle(ctx)
+	if h == nil || h.onKey == nil {
+		return
 	}
+	h.onKey(keysym, keycodeX11, pressionada)
 }
 
 //export goClipOferta
-func goClipOferta(fd C.int) {
+func goClipOferta(ctx unsafe.Pointer, fd C.int) {
+	// O fd é lido e fechado mesmo sem captura do outro lado: ele já veio
+	// aberto do C, e largá-lo aqui vazaria um descritor por oferta de
+	// clipboard — uma por cópia feita no sistema inteiro.
 	f := os.NewFile(uintptr(fd), "clipboard-wayland")
+	h := deHandle(ctx)
 	go func() {
 		defer f.Close()
 		data, err := io.ReadAll(f)
-		if err == nil && onClipboardText != nil {
-			onClipboardText(string(data))
+		if err == nil && h != nil && h.onClipboardText != nil {
+			h.onClipboardText(string(data))
 		}
 	}()
 }

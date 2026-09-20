@@ -27,14 +27,15 @@ typedef struct Grab Grab;
  * cru (evdev+8) que o RDP quer, para o FreeRDP traduzir pra scancode do
  * jeito dele. keysym pode vir 0 se a tecla for morta/composta — nesse caso
  * keycode_x11 ainda e valido. */
-typedef void (*cb_tecla)(uint32_t keysym, uint32_t keycode_x11, int pressionada);
+typedef void (*cb_tecla)(void *ctx, uint32_t keysym, uint32_t keycode_x11,
+                         int pressionada);
 
 /* Chamado quando o clipboard LOCAL (do sistema) muda para algo que sabemos
  * ler (texto). fd e o lado de LEITURA de um pipe ja armado (a requisicao
  * wl_data_offer_receive ja foi enviada) — o chamador (Go) deve ler ate EOF
  * numa goroutine propria e fechar o fd depois. NAO chamado se a nova
  * selecao nao tiver nenhum mime type de texto reconhecido. */
-typedef void (*cb_clip_oferta)(int fd_leitura);
+typedef void (*cb_clip_oferta)(void *ctx, int fd_leitura);
 
 /* display e surface sao os ponteiros crus que o Gio expoe via
  * app.WaylandViewEvent (*wl_display, *wl_surface). Devolve NULL se nem
@@ -46,7 +47,11 @@ typedef void (*cb_clip_oferta)(int fd_leitura);
 /* Estado atual dos modificadores: 1=Ctrl 2=Shift 4=Alt 8=Super. */
 int grab_modificadores(Grab *g);
 
-Grab *grab_iniciar(void *display, void *surface, cb_tecla ao_teclar,
+/* ctx e devolvido intacto em cada callback. Existe para o lado Go saber
+ * QUAL captura disparou: sem ele os callbacks tinham de cair em variaveis
+ * globais do pacote, e ai so cabia UMA janela com captura por processo —
+ * uma segunda janela roubava o teclado da primeira em silencio. */
+Grab *grab_iniciar(void *ctx, void *display, void *surface, cb_tecla ao_teclar,
                     cb_clip_oferta ao_clip);
 
 /* Liga (1) ou desliga (0) a inibicao dos atalhos do compositor. Nasce

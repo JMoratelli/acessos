@@ -82,6 +82,10 @@ static const char *MIME_ESCRITA[] = {
 #define MAX_MIMES_OFERTA 32
 
 struct Grab {
+    /* Devolvido intacto em cada callback, para o Go saber qual captura
+     * disparou — ver grab_wayland.h. */
+    void *ctx;
+
     struct wl_display *display;
     struct wl_surface *superficie;
     struct wl_registry *registry;
@@ -232,7 +236,7 @@ static void *rep_loop(void *arg) {
         if (!rep_esperar(g, geracao, atraso)) continue;
 
         while (rep_ainda_valida(g, geracao)) {
-            if (g->ao_teclar) g->ao_teclar(ks, kc, 1);
+            if (g->ao_teclar) g->ao_teclar(g->ctx, ks, kc, 1);
             if (!rep_esperar(g, geracao, intervalo)) break;
         }
     }
@@ -303,7 +307,7 @@ static void teclado_tecla(void *dados, struct wl_keyboard *kbd,
         else g->baixas[key >> 3] &= (uint8_t)~(1u << (key & 7));
     }
 
-    g->ao_teclar(keysym, (uint32_t)codigo, pressionada);
+    g->ao_teclar(g->ctx, keysym, (uint32_t)codigo, pressionada);
 }
 
 static void teclado_enter(void *dados, struct wl_keyboard *kbd, uint32_t serial,
@@ -329,7 +333,7 @@ static void teclado_leave(void *dados, struct wl_keyboard *kbd, uint32_t serial,
         for (int bit = 0; bit < 8; bit++) {
             if (!(g->baixas[byte] & (1u << bit))) continue;
             uint32_t key = (uint32_t)(byte * 8 + bit);
-            if (g->ao_teclar) g->ao_teclar(0, key + 8, 0);
+            if (g->ao_teclar) g->ao_teclar(g->ctx, 0, key + 8, 0);
         }
         g->baixas[byte] = 0;
     }
@@ -420,7 +424,7 @@ static void dispositivo_selecionou(void *dados, struct wl_data_device *dev,
     wl_display_flush(g->display); /* manda a requisicao sem esperar resposta */
     wl_data_offer_destroy(offer);
 
-    g->ao_clip(fds[0]); /* Go le fds[0] ate EOF numa goroutine e fecha */
+    g->ao_clip(g->ctx, fds[0]); /* Go le fds[0] ate EOF numa goroutine e fecha */
 }
 
 static const struct wl_data_device_listener ouvinte_dispositivo = {
@@ -573,13 +577,14 @@ void grab_parar(Grab *g) {
     free(g);
 }
 
-Grab *grab_iniciar(void *display, void *surface, cb_tecla ao_teclar,
+Grab *grab_iniciar(void *ctx, void *display, void *surface, cb_tecla ao_teclar,
                    cb_clip_oferta ao_clip) {
     Grab *g = (Grab *)calloc(1, sizeof(Grab));
     if (!g) return NULL;
 
     g->display = (struct wl_display *)display;
     g->superficie = (struct wl_surface *)surface;
+    g->ctx = ctx;
     g->ao_teclar = ao_teclar;
     g->ao_clip = ao_clip;
     g->xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
