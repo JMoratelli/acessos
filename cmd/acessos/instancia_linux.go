@@ -25,13 +25,36 @@ import (
 // ArgServico é o argumento que transforma este binário no serviço.
 const ArgServico = "-servico"
 
+// appIDProducao é o id do Flatpak de produção. Só existe para reconhecer
+// uma instalação PARALELA — ver dirRuntime.
+const appIDProducao = "org.jj.Acessos"
+
+// dirRuntime é onde mora o socket do serviço.
+//
+// O nome leva o FLATPAK_ID junto quando ele NÃO é o de produção, e o
+// motivo é concreto: o Flatpak isola XDG_CONFIG_HOME por app-id, mas NÃO
+// isola XDG_RUNTIME_DIR — dentro do sandbox ele é /run/user/$UID, o mesmo
+// para todos os ids. Sem distinguir aqui, um build de teste instalado ao
+// lado da produção encontra o socket DELA, se declara "a janela grande"
+// da instalação errada e passa a receber o atalho global dela. As duas
+// instalações viram uma só, e o sintoma não aponta para a causa.
+//
+// Produção fica com o caminho de sempre, de propósito. Mudá-lo deixaria o
+// serviço velho num socket que o app novo não procura mais, e a troca de
+// guarda por versão (ver ligarNoServico) não aconteceria justamente na
+// atualização em que ela é necessária — sobrariam dois serviços, cada um
+// achando que é o único.
 func dirRuntime() string {
+	nome := "acessos"
+	if id := os.Getenv("FLATPAK_ID"); id != "" && id != appIDProducao {
+		nome += "-" + id
+	}
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "acessos")
+		return filepath.Join(d, nome)
 	}
 	// Sem XDG_RUNTIME_DIR (sessão estranha, cron, contêiner): /tmp com o
 	// uid no nome, para dois usuários na mesma máquina não colidirem.
-	return filepath.Join(os.TempDir(), fmt.Sprintf("acessos-%d", os.Getuid()))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", nome, os.Getuid()))
 }
 
 func caminhoSocket() string { return filepath.Join(dirRuntime(), "servico.sock") }
