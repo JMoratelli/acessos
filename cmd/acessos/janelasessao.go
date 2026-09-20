@@ -44,6 +44,7 @@ import (
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -71,6 +72,19 @@ type janelaSessao struct {
 
 	btnTelaCheia widget.Clickable
 	btnReatar    widget.Clickable
+	btnMin       widget.Clickable
+	btnMax       widget.Clickable
+	btnFechar    widget.Clickable
+
+	// decoraSistema e maximizada vêm do ConfigEvent DESTA janela. Os
+	// globais equivalentes da janela principal não servem: são dela.
+	//
+	// decoraSistema existe porque o compositor pode recusar a decoração
+	// do cliente e responder SERVER_SIDE (o Gio nunca manda set_mode
+	// sozinho — é patch do fork). Quando recusa, a barra do KWin aparece
+	// por cima e os nossos botões de janela virariam uma segunda fileira.
+	decoraSistema bool
+	maximizada    bool
 
 	// tagConteudo é o alvo de ponteiro DESTA janela. Um por janela: o da
 	// principal é outro, e compartilhar faria o Gio entregar o evento de
@@ -123,10 +137,16 @@ func abrirJanelaSessao(t abaDestacavel, cheia bool,
 	j.w = new(app.Window)
 	j.w.Option(
 		app.Title("Acessos — "+t.Title()),
-		// Decoração do sistema: ao contrário da janela principal, aqui não
-		// desenhamos faixa de título nenhuma. A barrinha fina já diz o que
-		// precisa ser dito, e inventar uma segunda moldura só para esta
-		// janela criaria a segunda cópia do CSD para manter.
+		// Decoração PRÓPRIA, como a janela principal: a barrinha fina JÁ É
+		// a barra de título desta janela — diz o destino, o estado e a
+		// geometria. Deixar a do compositor por cima gastaria uma segunda
+		// faixa de altura repetindo o nome, que é exatamente o que o app
+		// evita na janela grande.
+		//
+		// Não é uma segunda cópia do CSD: os botões de janela saem dos
+		// mesmos helpers da barra de topo (botaoIcone/botaoFechar), e o
+		// arrasto é o mesmo ActionMove.
+		app.Decorated(false),
 		app.Size(unit.Dp(1024), unit.Dp(768)),
 	)
 	if cheia {
@@ -202,6 +222,8 @@ func (j *janelaSessao) laco() {
 			tratarEventoPlataforma(j.est, j.w, e, umaAba)
 
 		case app.ConfigEvent:
+			j.decoraSistema = e.Config.Decorated
+			j.maximizada = e.Config.Mode == app.Maximized
 			// O compositor também muda o modo por fora (atalho do
 			// próprio desktop, botão da moldura). Sem ler daqui, o
 			// ícone do botão passaria a mentir e um clique levaria a
@@ -289,6 +311,28 @@ func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 			j.w.Option(app.Windowed.Option())
 		}
 	}
+	// Botões de janela. Minimizar e maximizar passam pela ação agendada
+	// pelo mesmo motivo do foraDoQuadro da janela principal (ver
+	// acaojanela.go); fechar pode ir direto.
+	if j.btnMin.Clicked(gtx) {
+		j.acaoPendente = func() { j.w.Perform(system.ActionMinimize) }
+	}
+	if j.btnMax.Clicked(gtx) {
+		// Lê o estado que veio do ConfigEvent, não um toggle próprio:
+		// encostar a janela na borda aciona o snap do compositor sem
+		// passar por este botão, e um bool nosso ficaria dessincronizado.
+		if j.maximizada {
+			j.acaoPendente = func() { j.w.Perform(system.ActionUnmaximize) }
+		} else {
+			j.acaoPendente = func() { j.w.Perform(system.ActionMaximize) }
+		}
+	}
+	if j.btnFechar.Clicked(gtx) {
+		// Fechar devolve a aba, como o botão de reacoplar — ver o defer do
+		// laço. Direto, sem agendar: ActionClose é a exceção documentada
+		// em acaojanela.go.
+		j.w.Perform(system.ActionClose)
+	}
 	if j.btnReatar.Clicked(gtx) {
 		// Aqui a janela fecha por DECISÃO NOSSA, e é a única
 		// oportunidade de soltar o grab direito: o display ainda está
@@ -318,7 +362,22 @@ func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
 			if !ok {
 				return layout.Dimensions{}
 			}
-			return layoutBarraSessao(gtx, j.th, a,
+
+			// Arrastar a janela pela barrinha: aqui ela É a barra de
+			// título (decoração própria), e é daqui que o compositor
+			// recebe o pedido de mover.
+			//
+			// ANTES da barra, e não dentro de layoutBarraSessao: aquela
+			// função é compartilhada com a janela principal, onde a faixa
+			// fica abaixo da barra de título de verdade e virar área de
+			// arrasto seria mudança de comportamento que ninguém pediu.
+			// O que é desenhado DEPOIS recebe o clique primeiro, então os
+			// botões da barra continuam clicáveis.
+			h := gtx.Dp(barraSessaoAltura)
+			arrasto := clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, h)}.Push(gtx.Ops)
+			system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
+			arrasto.Pop()
+			extras := []layout.Widget{
 				func(gtx layout.Context) layout.Dimensions {
 					return botaoIcone(gtx, &j.btnReatar, icons.ActionExitToApp,
 						tema.Sec, tema.Texto)
@@ -330,7 +389,29 @@ func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
 					}
 					return botaoIcone(gtx, &j.btnTelaCheia, ic, tema.Sec, tema.Texto)
 				},
-			)
+			}
+			// Botões de janela só quando a decoração é NOSSA e fora da
+			// tela cheia: com a do sistema por cima eles seriam uma
+			// segunda fileira, e em tela cheia não há janela para
+			// minimizar ou maximizar.
+			if !j.decoraSistema && !j.telaCheia {
+				extras = append(extras,
+					func(gtx layout.Context) layout.Dimensions {
+						return botaoIcone(gtx, &j.btnMin, icons.ContentRemove,
+							tema.Sec, tema.Texto)
+					},
+					func(gtx layout.Context) layout.Dimensions {
+						ic := icons.ActionOpenInNew
+						if j.maximizada {
+							ic = icons.ActionFlipToFront
+						}
+						return botaoIcone(gtx, &j.btnMax, ic, tema.Sec, tema.Texto)
+					},
+					func(gtx layout.Context) layout.Dimensions {
+						return botaoFechar(gtx, &j.btnFechar)
+					})
+			}
+			return layoutBarraSessao(gtx, j.th, a, extras...)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Max

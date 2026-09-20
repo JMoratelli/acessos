@@ -196,3 +196,27 @@ crescer com o primeiro resultado).
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).
+
+Um patch novo, em `app/window.go` (`(*Window).Event`): quando o driver
+fecha a janela ele emite DOIS eventos — o `ViewEvent` zerado e, logo
+depois, o `DestroyEvent` — e processar o `DestroyEvent` zera `w.driver`.
+O cliente que consome o `ViewEvent` e volta ao laço entrava no `Event()`
+com `driver == nil` e ganhava uma JANELA NOVA (`w.init()`), em vez do
+`DestroyEvent` que já estava na fila.
+
+Essa janela nasce abandonada: na volta seguinte o cliente recebe o
+`DestroyEvent`, sai do laço, e ela fica na tela sem ninguém desenhando,
+com a própria conexão Wayland aberta — cada janela do Gio abre a sua
+(`newWLWindow` chama `newWLDisplay`). Some da lógica do app mas não da
+barra de tarefas, e fechá-la pelo compositor derruba o PROCESSO INTEIRO,
+porque não há mais laço atendendo os eventos dela.
+
+Aparecia a cada abre-e-fecha de janela secundária: no Acessos, uma
+"janela fantasma" por destacar/reacoplar a sessão remota, e o app morria
+com SIGABRT quando uma delas era fechada. Medido em `cmd/fantasma`, que
+conta os descritores do processo: cinco por ciclo (o socket do
+wl_display, o pipe de notificação e o memfd do tema de cursor).
+
+O patch entrega o evento pendente antes de recriar: com `driver == nil` e
+um `DestroyEvent` na fila, `Event()` devolve o que está na fila em vez de
+abrir janela nova.

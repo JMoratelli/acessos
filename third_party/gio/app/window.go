@@ -729,6 +729,29 @@ func (w *Window) processEvent(e event.Event) bool {
 // and shown the first time Event is called.
 func (w *Window) Event() event.Event {
 	if w.driver == nil {
+		// --- patch: evento pendente sai ANTES de recriar a janela ---
+		//
+		// O close() do driver emite DOIS eventos: o ViewEvent zerado e,
+		// em seguida, o DestroyEvent — e processar o DestroyEvent zera
+		// w.driver (ver processEvent). O cliente que consome o ViewEvent
+		// e volta ao laço caía aqui com driver nil e ganhava uma JANELA
+		// NOVA, em vez do DestroyEvent que já estava na fila.
+		//
+		// Essa janela nasce abandonada: na volta seguinte o cliente
+		// recebe o DestroyEvent, sai do laço, e ela fica na tela sem
+		// ninguém desenhando, com a própria conexão Wayland aberta (cada
+		// janela do Gio abre a sua). Some da lógica do app mas não da
+		// barra de tarefas; fechá-la pelo compositor derruba o processo,
+		// porque não há mais laço atendendo os eventos dela.
+		//
+		// Aparece a cada abre-e-fecha de janela secundária: no Acessos,
+		// uma por destacar/reacoplar a sessão remota.
+		// --- fim do patch ---
+		if w.coalesced.destroy != nil {
+			if e, ok := w.nextEvent(); ok {
+				return e
+			}
+		}
 		w.init()
 	}
 	if w.driver == nil {
