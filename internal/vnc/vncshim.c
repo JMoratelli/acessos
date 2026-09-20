@@ -385,10 +385,26 @@ static void hook_cuttext(rfbClient *cl, const char *texto, int tam) {
  *
  * useRemoteCursor (ver vs_criar) ja faz o servidor mandar isto em vez de
  * carimbar o ponteiro no framebuffer; so nao estava sendo usado pra nada.
- * cl->rcMask e 1 byte por pixel (0/255), width*height bytes — e so o que
- * o lado Go precisa pra tentar adivinhar a FORMA (seta / texto / ocupado).
- * cl->rcSource (as cores) nao interessa aqui: nao desenhamos o bitmap,
- * so aproximamos um pointer.Cursor local do Gio. */
+ * cl->rcMask tem width*height bytes, um por pixel — e so o que o lado Go
+ * precisa pra adivinhar a FORMA (seta / texto / ocupado). cl->rcSource
+ * (as cores) nao interessa aqui: nao desenhamos o bitmap, so aproximamos
+ * um pointer.Cursor local do Gio.
+ *
+ * CUIDADO COM O VALOR DE CADA BYTE: e 0 ou 1, NAO 0/255 (este comentario
+ * afirmava 0/255 e estava errado). Quem preenche e HandleCursorShape, em
+ * libvncclient/cursor.c, expandindo o bitmask de transparencia bit a bit
+ * com `>> b & 1` — entao o maximo e 1, em qualquer servidor VNC.
+ *
+ * O lado Go espera ALFA de verdade, que e o que o RDP entrega, e corta a
+ * silhueta em alfaOpaco=128 (cmd/acessos/cursorforma.go). Repassando o
+ * rcMask cru, TODO pixel ficava abaixo do corte: a silhueta saia vazia,
+ * medirForma devolvia falso e classificar caia em CursorDefault. Ou
+ * seja, o cursor remoto do VNC NUNCA aparecia — sempre a seta padrao, e
+ * sem erro nenhum no caminho pra denunciar. Achado em 2026-09-20
+ * capturando mascaras de um servidor de verdade (cmd/cursorcap).
+ *
+ * Por isso a expansao para 0/255 abaixo: quem consome os dois protocolos
+ * recebe a mesma coisa, que e o que classificar ja supunha. */
 static void hook_cursor(rfbClient *cl, int xhot, int yhot, int w, int h,
                         int bytesPerPixel) {
     (void)bytesPerPixel;
@@ -398,7 +414,21 @@ static void hook_cursor(rfbClient *cl, int xhot, int yhot, int w, int h,
                 w, h, xhot, yhot, (void *)cl->rcMask);
     if (!s || !s->ao_cursor) return;
     if (cl->rcMask && w > 0 && h > 0) {
-        s->ao_cursor(s->ctx, xhot, yhot, w, h, cl->rcMask);
+        /* Buffer proprio porque o rcMask e da libvncclient e sera
+         * reescrito no proximo cursor. Liberar logo depois da chamada e
+         * seguro: o lado Go COPIA antes de entregar (ver goAoCursor, em
+         * vnc.go) — mesma garantia de que o irmao RDP depende. */
+        size_t n = (size_t)w * (size_t)h;
+        uint8_t *alfa = (uint8_t *)malloc(n);
+        if (!alfa) {
+            /* Sem memoria pra copia, o cursor padrao e melhor do que
+             * mandar o formato errado adiante. */
+            s->ao_cursor(s->ctx, 0, 0, 0, 0, NULL);
+            return;
+        }
+        for (size_t i = 0; i < n; i++) alfa[i] = cl->rcMask[i] ? 255 : 0;
+        s->ao_cursor(s->ctx, xhot, yhot, w, h, alfa);
+        free(alfa);
     } else {
         /* Cursor sem máscara (o servidor escondeu o ponteiro, ou mandou
          * tamanho zero): avisar assim mesmo. Calar aqui deixava o cursor
