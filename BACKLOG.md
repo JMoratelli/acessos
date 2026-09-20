@@ -47,11 +47,49 @@ outra metade do porte exige. Já conferido no Linux, não precisa refazer:
   executável (item 4). O passo novo copia `ossl-modules/legacy.dll` do
   sysroot e o build FALHA se ele não estiver lá — de propósito.
 
-## 13. Conferir no Windows o que saiu na 2.6.2 pelo lado Linux
+## 11. Validar ao vivo as correções dos shims C
 
-Espelho do item 10, e pela mesma razão: esta metade da 2.6.2 foi feita e
-testada no LINUX (build e suíte verdes, `go vet` limpo), e o Windows não
-foi compilado daqui. Nada aqui é suspeita de defeito.
+As seis correções nos shims foram APLICADAS (ver git log), com build e
+suíte verdes — mas nenhuma delas pôde ser exercitada contra máquina de
+verdade daqui. É isto que falta, e cada uma tem um jeito específico de
+mostrar que funcionou:
+
+- **VNC, resize para cima.** Conectar num servidor e mudar a resolução da
+  máquina remota de algo pequeno (1024x768) para grande (1920x1080) com a
+  sessão aberta. Era o caminho do estouro de leitura; agora o trio
+  ponteiro+tamanho sai junto de `vs_capturar_quadro`. O que se quer ver é
+  a imagem acompanhar sem queda.
+- **VNC, colar texto grande com a tela em movimento.** Era o caminho que
+  dessincronizava o fluxo RFB e derrubava a sessão como "conexão
+  perdida". Copiar alguns KB de texto e colar na sessão enquanto algo se
+  mexe na tela remota.
+- **RDP, retângulo de 1px na borda.** O sintoma era pedaço de tela que
+  não atualizava. Difícil de provocar de propósito; vale rodar com
+  `RS_LOG=1` numa sessão de uso normal e conferir que não há região
+  parada.
+- **RDP, fechamento de canal.** A trava nova cobre o Display Control e o
+  clipboard. Exercitar redimensionando a janela várias vezes e copiando
+  texto nos dois sentidos.
+- **RDP, desmontagem.** `rs_destruir` agora desconecta sempre e libera o
+  contexto. Quem exercita é o `cmd/rdpview` (no app o filho sai por
+  `os.Exit`): abrir e fechar várias sessões seguidas e olhar a memória do
+  processo.
+- **Wayland, tecla presa.** Segurar Ctrl (ou Shift) dentro de uma sessão
+  RDP/SSH, trocar de janela com a tecla ainda em baixo, voltar e digitar.
+  Antes o modificador ficava preso do lado remoto.
+
+## 12. Conferir no Windows o que saiu pelo lado Linux
+
+Espelho do item 10, e pela mesma razão: tudo isto foi feito e testado no
+LINUX (build e suíte verdes, `go vet` limpo), e o Windows não foi
+compilado daqui. Nada aqui é suspeita de defeito.
+
+**Os dois shims mudaram** (ver item 11), e eles compilam no Windows
+também: o `vncshim.c` ganhou duas travas e uma função nova, e o
+`rdpshim.c` ganhou uma trava e mudou a desmontagem. As macros `MUTEX_*`
+já tinham os dois caminhos (CRITICAL_SECTION e pthread), e o vncshim
+passou a incluir `<windows.h>` no ramo `_WIN32` — é o primeiro lugar a
+olhar se o build lá reclamar.
 
 - **A tela remota passou a viajar como RGBA** em vez de NRGBA, do filho
   até o `paint` do Gio. É byte a byte igual enquanto o alfa for sempre
@@ -74,118 +112,6 @@ foi compilado daqui. Nada aqui é suspeita de defeito.
   arquivo tem linha ilegível (`os.CreateTemp`, apagado em seguida).
   Conferir no Windows, onde o known_hosts vive em
   `%USERPROFILE%\.ssh\known_hosts`.
-
-## 11. Correções nos shims C — achadas por varredura, pendentes de teste ao vivo
-
-Varredura adversarial dos shims em 2026-09-19 (cada achado passou por um
-refutador que leu o código da própria libfreerdp/libvncclient). Estas são
-as que SOBREVIVERAM e ainda não foram aplicadas, porque mexem em C e o
-critério do item 9 continua valendo: não mexer sem um teste ao vivo
-validando. As correções em Go que saíram da mesma varredura já foram
-aplicadas (ver git log).
-
-- **[VNC, a mais grave] `Framebuffer()` lê largura, altura e ponteiro em
-  três chamadas cgo separadas** (internal/vnc/vnc.go:168-170). A
-  libvncclient grava `client->width/height` ANTES de trocar o buffer em
-  `ResizeClientBuffer`, então existe uma janela em que o Go copia
-  (largura nova × altura nova × 4) de dentro do buffer VELHO — num
-  1024x768 que vira 1920x1080 são ~5 MB lidos além do fim da alocação.
-  É o mesmo defeito que o RDP já fechou com `fb_lock`, e o comentário de
-  `telaworker.go` afirma "sob trava" para os dois protocolos. Correção:
-  um `vs_capturar_quadro(Sessao*, int *w, int *h)` que leia os três numa
-  chamada só, sob um `fb_lock` novo tomado também por `hook_malloc_fb`
-  (vncshim.c:275-312) — as duas metades são necessárias, porque a chamada
-  única sozinha ainda corre com o `free(s->fb_velho)`.
-- **[VNC] Colar texto grande pode derrubar a sessão.** `SendClientCutText`
-  escreve cabeçalho e corpo em DUAS chamadas de `WriteToRFBServer`,
-  enquanto a goroutine de rede pode encaixar um `FramebufferUpdateRequest`
-  no meio — o servidor lê o pedido como se fosse texto e o fluxo
-  dessincroniza. Sintoma: queda ao colar texto grande com a tela em
-  movimento. Correção: um mutex no vncshim tomado por `vs_ponteiro`,
-  `vs_tecla`, `vs_enviar_texto` e `vs_processar` — e NUNCA por
-  `vs_esperar`, que bloqueia 200ms.
-- **[RDP] `s->disp`/`s->cliprdr` são testados e usados sem trava**
-  (rdpshim.c:864/888 e :846/855) enquanto a thread própria do drdynvc os
-  zera (:677-682). O refutador rebaixou o sintoma: o `DispClientContext`
-  não é liberado no fechamento do canal, e a queda recorrente NÃO vem
-  daqui. O que sobra são duas janelas estreitas e reais (redirecionamento
-  de broker; fechamento de canal DVC pelo servidor) em que
-  `SendMonitorLayout` cai num `channel_callback` já liberado dentro da
-  própria lib. Correção: um `canais_lock` próprio (não o `clip_lock`, para
-  não inverter ordem) em volta do par teste+uso e das escritas dos hooks.
-  **Não trocar o RLock por Lock no lado Go**: `poll()` segura o RLock
-  durante os 200ms de `rs_esperar` e isso engasgaria teclado e ponteiro.
-- **[RDP] Retângulo de 1px colado na borda apaga o dano do lote.**
-  `gdi_CRgnToRect` reprova `x=0,w=1` e `gdi_InvalidateRegion` responde
-  zerando a caixa com `null=TRUE`, então `hook_end_paint` (rdpshim.c:226)
-  sai calado e os pixels ficam no framebuffer sem ninguém do lado Go
-  saber. Há chamadores reais nos dois caminhos (line.c e o pipeline gfx,
-  que é o default aqui). Correção de uma linha: quando `invalid->null` for
-  verdadeiro mas `ninvalid > 0`, reportar a tela inteira em vez de
-  retornar calado.
-- **[RDP, só o `cmd/rdpview`] `rs_destruir` gateia toda a desmontagem em
-  `s->conectado`**, que `rs_processar` já zerou em qualquer queda: vazam o
-  framebuffer, os caches do gdi, um FD e a thread do drdynvc por
-  reconexão. E `freerdp_context_free` nunca é chamado — o comentário de
-  rdpshim.c:1177-1180 afirma o contrário do que o header da lib manda.
-  No `cmd/acessos` o caminho é inalcançável (o filho sai por `os.Exit`),
-  então é risco latente, não defeito em produção.
-- **[Wayland] `teclado_leave` não solta as teclas em baixo.** Perder o
-  foco com uma tecla pressionada nunca gera o "soltou": o modificador fica
-  presente do lado remoto — no RDP tudo vira atalho, no SSH passa a mandar
-  caracteres de controle. Correção: um bitmap de 256 bits marcado em
-  `teclado_tecla`, varrido e solto no `leave`, fechando com
-  `xkb_state_update_mask(..., 0,0,0,0,0,0)`.
-
-## 12. Desempenho — o que foi medido e ainda não aplicado
-
-Varredura de 2026-09-19, cada proposta conferida por um crítico que
-refez as contas. O que já foi aplicado saiu do backlog (ver git log): a
-tela passou a viajar como `*image.RGBA`, que é o único tipo que o paint
-do Gio aceita sem converter, e o cursor do SSH deixou de ter um ticker
-por sessão. O que sobrou:
-
-- **`Quadro.Codificar` copia o payload inteiro só para prefixar 24 bytes**
-  (telaproc/protocolo.go:144-156), uma vez por quadro remoto: 8,3 MB
-  alocados e copiados em 1080p, ~1,5 ms de latência serial dentro do
-  filho (~6 ms em 4K). Vale junto com o reuso do buffer de saída de
-  `recortarBGRXparaRGBA`, que hoje é alocado por quadro — as duas juntas
-  tiram a rotatividade do filho de três buffers de tela por quadro para
-  um. Atenção: o prefixo de tamanho e o teto `tamMax` passam a valer
-  sobre `24+len(pix)`, e o buffer reaproveitado precisa ser fatiado
-  exato, senão `DecodificarQuadro` recusa o quadro.
-- **Invalidate de aba invisível — NA ORDEM CERTA.** As goroutines de
-  sessão pedem quadro da janela inteira mesmo com a aba fora da tela, e o
-  guarda `ehAbaAtiva(t)` está calculado na linha de baixo. Mas
-  condicionar o Invalidate a ele HOJE trava a aba: `marcarAbaAtiva` roda
-  no TOPO do FrameEvent (main.go:655) e a troca de aba acontece DEPOIS,
-  dentro do mesmo quadro (tabbar.go:143-147) — a aba recém-aberta ficaria
-  com a imagem parada até alguém mexer no mouse, e o Gio silencia um
-  Invalidate emitido com quadro em voo. Primeiro mover `marcarAbaAtiva`
-  para depois do `bar.layout` (mexe também na arbitragem do clipboard),
-  DEPOIS condicionar. O custo atual é ~1 quadro por segundo por sessão
-  escondida.
-- **`filtrar()` monta uma fatia do inventário inteiro a cada quadro**
-  (dashtab.go:807) só para testar se ela está vazia — até 274 conexões,
-  ~90 KB por quadro enquanto se digita, e a lateral repete a varredura na
-  taxa de quadro da sessão ativa. Um `algumCasa(lista, termo) bool` que
-  retorne no primeiro casamento resolve a pior passada em ~6 linhas, no
-  estilo do `contarSelecao` que já existe ali.
-- **`vida.Checar` faz ICMP e TCP em série**: host morto custa 800 ms em
-  vez de 400. NÃO disparar os dois juntos — o TCP é reserva deliberada
-  (vida.go:33-35) e 264 conexões apontam para VNC 5900; servidor VNC em
-  modo pergunta abre prompt no lado remoto a cada batida. A versão que
-  vale é escalonada: o toque TCP só entra se o ICMP não respondeu em
-  ~60-80 ms.
-- **[NÃO é desempenho, é perda de dado] Detectar plataforma regrava o
-  .ini inteiro por máquina**, e cada gravação gera uma cópia de
-  histórico. Com `maxHistorico = 20`, detectar numa loja de 54 máquinas
-  APAGA as cópias de edição de verdade em `~/.config/acessos/historico`.
-  Sete dos oito grupos passam de 20, então acontece na prática. Correção
-  mínima: uma cópia de histórico por OPERAÇÃO em vez de por máquina
-  (~5 linhas em internal/conexoes). Depois, se quiser, o pool de sondas —
-  lembrando que gravar tudo só no fim faz fechar o app no meio perder o
-  que já foi detectado.
 
 ## 3d. Busca por atalho global — o que ainda falta
 
@@ -360,6 +286,10 @@ teste ao vivo (`ACESSOS_RDP_AOVIVO`) validando cada mudança:
   consumido de `dano`. Hoje é coberto por `dano.tudo()` no `OnResize`,
   mas a ordem entre os dois não é garantida.
 - **Duas cópias de tela inteira por quadro** (uma em C ao capturar, outra
-  ao recortar em Go) — em 4K é ~100MB de churn por quadro, contribuindo
+  ao recortar em Go) — em 4K é ~66MB de churn por quadro, contribuindo
   pro vigia de memória (`internal/telaproc/vigia.go`, teto de 768MiB)
-  matar a sessão sob carga, o que aparece como queda "sem motivo".
+  matar a sessão sob carga, o que aparece como queda "sem motivo". Eram
+  TRÊS: a do `Quadro.Codificar` saiu, e o buffer de saída da conversão
+  passou a ser reaproveitado entre quadros. Estas duas são mais caras de
+  tirar — a de C precisaria entregar o ponteiro sob trava para o Go, e a
+  do Go some junto com ela.

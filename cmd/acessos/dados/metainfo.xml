@@ -64,6 +64,19 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.6.3" date="2026-09-19">
+      <description>
+        <p>Corrige a detecção de plataforma apagando o histórico do inventário. Cada máquina detectada gravava o arquivo e guardava a sua própria cópia de segurança, e como só as 20 últimas são mantidas, detectar numa loja com mais de 20 máquinas descartava todas as cópias das edições de verdade — justamente o que serve para voltar atrás de um erro. Agora a operação inteira guarda uma cópia só, e duas gravações no mesmo segundo deixaram de se sobrescrever.</p>
+        <p>A detecção de plataforma também ficou muito mais rápida: as máquinas são sondadas oito por vez, em vez de uma de cada vez esperando até quatro segundos por cada. Numa loja com metade das máquinas desligada isso era minutos de espera.</p>
+        <p>Corrige quedas de sessão VNC ao colar um texto grande enquanto a tela remota está em movimento: a mensagem do clipboard podia ser partida ao meio por outra, e o servidor derrubava a conexão.</p>
+        <p>Corrige uma queda de sessão VNC ao mudar a resolução da máquina remota para uma maior com a sessão aberta.</p>
+        <p>Corrige pedaços da tela que podiam ficar sem atualizar em sessões RDP, quando a área alterada era uma linha de um pixel colada na borda.</p>
+        <p>Corrige tecla que ficava presa na máquina remota ao trocar de janela com ela pressionada: o Ctrl (ou o Shift) continuava valendo do outro lado, transformando o que se digitava em atalhos.</p>
+        <p>Sessões abertas em segundo plano deixam de forçar o redesenho da janela inteira. Uma aba SSH com saída contínua — um comando acompanhando um arquivo de log, por exemplo — mantinha a interface sendo redesenhada mesmo escondida atrás de outra aba.</p>
+        <p>Verificar se uma máquina está no ar ficou mais rápido quando ela está desligada: a checagem por porta agora começa junto, em vez de esperar a primeira terminar. São cerca de 470 ms em vez de 800 ms por máquina fora do ar, sem passar a bater na porta de quem responde normalmente.</p>
+        <p>Digitar na busca ficou mais leve com inventários grandes, e cada atualização de tela remota gasta menos memória — o que reduz as quedas de sessão por estouro do limite de memória sob carga.</p>
+      </description>
+    </release>
     <release version="2.6.2" date="2026-09-19">
       <description>
         <p>Corrige o login recusado em conexões RDP no Windows contra servidores que autenticam por NTLM — o caso normal ao conectar por endereço IP. Faltava um componente de criptografia no instalador, e a mesma falta impedia a sessão de se recuperar sozinha de uma queda passageira.</p>
