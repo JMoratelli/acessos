@@ -21,37 +21,21 @@ commit antiga que fale em "item 7d", "item 9", no "item 2" do cursor ou
 no "item 1" da busca, se refere à numeração de então; o git conta o que
 era.
 
-1. Levar o destacamento para VNC, SSH e SFTP
-2. Capturas de tela do metainfo
-3. Sessão remota em várias telas — parado, ver o aviso
+1. Capturas de tela do metainfo
+2. Sessão remota em várias telas — parado, ver o aviso
 
 Atualizado em 2026-09-20.
 
 ---
 
-## 1. Levar o destacamento para VNC, SSH e SFTP
-
-A sessão em janela própria (botão de tela cheia na barra de sessão) existe
-só para RDP. As outras abas não implementam `abaDestacavel` e, por isso,
-simplesmente não ganham o botão — sem erro e sem aviso.
-
-O que falta em cada uma é o mesmo que foi feito em rdptab.go: trocar o
-campo `w *app.Window` por `atomic.Pointer`, guardar também o
-`*material.Theme` da janela (o text.Shaper é cache sem trava — dois laços
-de quadro no mesmo Theme derrubam o processo, e foi o que aconteceu na
-primeira versão) e expor `TrocarJanela(w, th)`.
-
-Não foi feito junto de propósito: a janela destacada é código novo, e valia
-exercitá-la num protocolo antes de levá-la aos quatro.
-
-## 2. Capturas de tela do metainfo
+## 1. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 3. Sessão remota em várias telas
+## 2. Sessão remota em várias telas
 
 Ideia levantada em 2026-09-20: destacar a sessão RDP em janela própria e
 poder ESTENDÊ-LA por mais de um monitor. **Parado de propósito, e não por

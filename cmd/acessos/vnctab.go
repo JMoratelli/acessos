@@ -75,17 +75,30 @@ func computeVNCView(size image.Point, fw, fh int, modo int32) vncView {
 	}
 }
 
-// LACUNA CONHECIDA, e deliberada: vncTab NÃO implementa abaDestacavel, e
-// por isso a aba VNC não ganha o botão de tela cheia que a RDP tem (ver
-// janelasessao.go e o campo jan/tha em rdptab.go).
+// A ABA VNC NÃO SE DESTACA, e isso é DECISÃO, não pendência (2026-09-20).
 //
-// O que falta é mecânico — trocar o w fixo abaixo por ponteiro atômico,
-// idem o Theme, e expor TrocarJanela — mas não foi feito junto porque a
-// janela destacada é código novo e valia rodar num protocolo antes de
-// levá-la aos quatro. Está no BACKLOG.
+// vncTab não implementa abaDestacavel, então a barra de sessão dela não
+// ganha o botão de tela cheia que a RDP tem (ver janelasessao.go). Não
+// procure o que falta para "completar": nada falta.
 //
-// O CLAUDE.md nomeia rdptab.go/vnctab.go como par que sai de sincronia;
-// esta nota existe para a divergência ficar escrita, e não descoberta.
+// O porquê: o valor da tela cheia é sumir com a decoração para a tela
+// remota ocupar tudo, e isso paga numa sessão em que se TRABALHA DENTRO da
+// máquina — servidor, por RDP. O VNC aqui é PDV, onde se olha, corrige e
+// sai; a imersão não compra nada e cada protocolo a mais é superfície nova
+// para as pegadinhas de várias janelas que o CLAUDE.md lista, quatro das
+// quais derrubam o processo inteiro.
+//
+// SSH e SFTP ficam de fora pelo mesmo raciocínio, e com folga: terminal e
+// gerenciador de arquivos não ganham nada com decoração a menos.
+//
+// Se um dia mudar, o caminho é o mesmo de rdptab.go — w fixo vira
+// atomic.Pointer, o *material.Theme da janela viaja junto (o text.Shaper é
+// cache sem trava; dois laços de quadro no mesmo Theme derrubam o
+// processo) e expõe-se TrocarJanela(w, th).
+//
+// O CLAUDE.md nomeia rdptab.go/vnctab.go como par que sai de sincronia:
+// esta nota existe para a diferença ficar escrita como escolha, e não
+// descoberta como esquecimento.
 type vncTab struct {
 	w         *app.Window
 	title     string
