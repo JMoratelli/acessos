@@ -804,7 +804,7 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensions {
 	// Um nome cru ("fc52002-lj06") só vira destino quando a busca não
 	// achou nada — enquanto houver máquina casando, o texto é filtro.
-	cx, ok := alvoRascunho(termo, len(filtrar(d.arq.Conexoes, termo)) == 0)
+	cx, ok := alvoRascunho(termo, !algumCasa(d.arq.Conexoes, termo))
 	if !ok {
 		return layout.Dimensions{}
 	}
@@ -960,18 +960,46 @@ func filtrar(lista []conexoes.Conexao, termo string) []conexoes.Conexao {
 	}
 	var out []conexoes.Conexao
 	for _, cx := range lista {
-		if strings.Contains(strings.ToLower(cx.Nome), termo) ||
-			strings.Contains(strings.ToLower(cx.Host), termo) ||
-			strings.Contains(strings.ToLower(cx.GrupoStr()), termo) {
+		if casaComTermo(cx, termo) {
 			out = append(out, cx)
 		}
 	}
 	return out
 }
 
+// casaComTermo é o teste de UMA conexão, num lugar só — o filtro e o
+// "tem alguma?" abaixo têm de concordar sempre.
+func casaComTermo(cx conexoes.Conexao, termo string) bool {
+	return strings.Contains(strings.ToLower(cx.Nome), termo) ||
+		strings.Contains(strings.ToLower(cx.Host), termo) ||
+		strings.Contains(strings.ToLower(cx.GrupoStr()), termo)
+}
+
+// algumCasa responde "tem alguma?" sem montar a lista das que casam, e
+// para no primeiro achado.
+//
+// Quem só quer a resposta sim/não estava pagando a lista inteira A CADA
+// QUADRO: o cardRascunho montava uma fatia de até 274 conexões (~90 KB)
+// só para testar se ela estava vazia, enquanto a pessoa digita; e o
+// temDescendente fazia o mesmo por grupo, recursivamente, na taxa de
+// quadro — inclusive a da lateral, que redesenha junto com a sessão
+// RDP/VNC ativa. O comentário de baixo, sobre o "travadinho ao marcar
+// vários", conta o que montar fatia por quadro já custou aqui uma vez.
+func algumCasa(lista []conexoes.Conexao, termo string) bool {
+	if termo == "" {
+		return len(lista) > 0
+	}
+	for _, cx := range lista {
+		if casaComTermo(cx, termo) {
+			return true
+		}
+	}
+	return false
+}
+
 func temDescendente(g *conexoes.Grupo, termo string) bool {
 	for _, f := range g.Filhos {
-		if len(filtrar(f.Conexoes, termo)) > 0 || temDescendente(f, termo) {
+		if algumCasa(f.Conexoes, termo) || temDescendente(f, termo) {
 			return true
 		}
 	}

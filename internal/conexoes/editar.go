@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"acessos-go/internal/iniutil"
@@ -104,8 +105,50 @@ func Salvar(caminho, nome, novoNome string, campos map[string]string) error {
 	return salvarSecao(caminho, nome, novoNome, campos)
 }
 
+// Lote agrupa várias gravações numa OPERAÇÃO só, do ponto de vista do
+// histórico: a cópia do arquivo é guardada uma vez, na primeira gravação,
+// e as seguintes apenas escrevem.
+//
+// Existe por um defeito concreto. Detectar a plataforma de uma loja
+// gravava máquina por máquina, cada gravação guardando a sua cópia — numa
+// loja de 54 máquinas eram 54 cópias de uma vez, e como a rotação mantém
+// só as 20 últimas (maxHistorico), uma detecção APAGAVA todas as cópias de
+// edição de verdade. O histórico existe justamente para desfazer um erro
+// de edição em 274 conexões; enchê-lo de cópias idênticas o destrói.
+//
+// A gravação continua sendo INCREMENTAL, e isso é de propósito: juntar
+// tudo para escrever no fim faria fechar o app no meio perder o que já
+// tinha sido detectado. O que muda é só o histórico.
+//
+// Pode ser usado de várias goroutines: a trava também serializa a escrita
+// do arquivo, que é regravado inteiro a cada seção (sem ela, duas sondas
+// terminando juntas se sobrescreveriam).
+type Lote struct {
+	mu      sync.Mutex
+	caminho string
+	motivo  string
+	copiado bool
+}
+
+// NovoLote abre a operação. O motivo é o que vai para o índice do
+// histórico — uma linha para a operação inteira, não uma por máquina.
+func NovoLote(caminho, motivo string) *Lote {
+	return &Lote{caminho: caminho, motivo: motivo}
+}
+
+// Salvar grava uma seção, guardando a cópia do histórico só na primeira.
+func (l *Lote) Salvar(nome, novoNome string, campos map[string]string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.copiado {
+		guardarCopia(l.caminho, l.motivo)
+		l.copiado = true
+	}
+	return salvarSecao(l.caminho, nome, novoNome, campos)
+}
+
 // salvarSecao é o miolo do Salvar, sem o histórico — separado para o
-// SalvarGeral reusar a mesma edição linha a linha.
+// SalvarGeral e o Lote reusarem a mesma edição linha a linha.
 func salvarSecao(caminho, nome, novoNome string, campos map[string]string) error {
 	linhas, err := iniutil.LerLinhas(caminho)
 	if err != nil {
@@ -280,12 +323,30 @@ func guardarCopia(caminho, motivo string) {
 	}
 	carimbo := time.Now().Format("20060102-150405")
 	destino := filepath.Join(dir, "conexoes."+carimbo+".ini")
+	// O carimbo tem resolução de SEGUNDO, e duas gravações dentro do mesmo
+	// segundo geravam o mesmo nome: a segunda sobrescrevia a primeira em
+	// silêncio, o índice anotava as duas linhas e só existia um arquivo —
+	// ou seja, o histórico mentia justamente no caso de edição rápida
+	// seguida de outra. O desempate mantém as duas.
+	//
+	// Uma cópia desempatada ordena antes da irmã sem sufixo do MESMO
+	// segundo (o '0' vem antes do 'i' de ".ini"), o que só teria efeito se
+	// a rotação caísse exatamente entre as duas — e aí apagaria uma de
+	// duas cópias do mesmo instante, que é indiferente.
+	for i := 2; i < 100; i++ {
+		if _, err := os.Stat(destino); err != nil {
+			break
+		}
+		destino = filepath.Join(dir, fmt.Sprintf("conexoes.%s.%02d.ini", carimbo, i))
+	}
 	if err := os.WriteFile(destino, b, 0o600); err != nil {
 		return
 	}
+	// O índice anota o NOME do arquivo, e não só o carimbo: com o
+	// desempate acima, o carimbo sozinho deixaria de identificar a cópia.
 	if f, err := os.OpenFile(filepath.Join(dir, "index.txt"),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-		fmt.Fprintf(f, "%s  %s\n", carimbo, motivo)
+		fmt.Fprintf(f, "%s  %s\n", filepath.Base(destino), motivo)
 		f.Close()
 	}
 	rotacionar(dir)

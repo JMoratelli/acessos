@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -63,25 +64,62 @@ func (d *dlgPlataforma) rodar() {
 	d.mu.Unlock()
 
 	go func() {
-		for _, cx := range d.alvos {
-			s := executor.Sondar(cx.Host, 4*time.Second)
-			l := linhaSonda{nome: cx.Nome, host: cx.Host, banner: s.Banner, plataforma: s.Plataforma}
-			if s.Erro != nil {
-				l.erro = s.FaseFalha()
-			}
-			// Só grava o que dá para afirmar.
-			switch s.Plataforma {
-			case model.Windows:
-				gravarPreferencia(cx.Nome, "windows", "1")
-			case model.Linux:
-				gravarPreferencia(cx.Nome, "windows", "0")
-			}
-			d.mu.Lock()
-			d.linhas = append(d.linhas, l)
-			d.feitos++
-			d.mu.Unlock()
-			d.w.Invalidate()
+		// UMA cópia de histórico para a detecção inteira (ver
+		// conexoes.Lote), e não uma por máquina: numa loja de 54 máquinas
+		// eram 54 cópias de uma vez, e como a rotação guarda só as 20
+		// últimas, uma detecção APAGAVA todo o histórico de edições de
+		// verdade — que é justamente o que salva quem errou uma edição em
+		// 274 conexões. A gravação continua sendo máquina a máquina, de
+		// propósito: juntar tudo para escrever no fim faria fechar a
+		// janela no meio perder o que já tinha sido detectado.
+		var lote *conexoes.Lote
+		if caminhoINI != "" {
+			lote = conexoes.NovoLote(caminhoINI,
+				fmt.Sprintf("detectou a plataforma de %d máquina(s)", len(d.alvos)))
 		}
+
+		// As sondas vão em paralelo, com teto. Cada uma espera até 4s pelo
+		// banner, e em série uma loja com metade das máquinas desligada
+		// levava MINUTOS — tempo em que a janela fica aberta sem nada
+		// acontecer. O teto é baixo de propósito: são conexões TCP para o
+		// parque inteiro, e abrir todas de uma vez é o tipo de coisa que
+		// assusta firewall.
+		//
+		// Efeito colateral aceito: as linhas aparecem na ordem em que as
+		// respostas CHEGAM, não na ordem da lista. Cada uma traz o nome e
+		// o host, e as máquinas vivas responderem primeiro é melhor
+		// retorno do que esperar a fila.
+		const emParalelo = 8
+		vaga := make(chan struct{}, emParalelo)
+		var wg sync.WaitGroup
+		for _, cx := range d.alvos {
+			vaga <- struct{}{}
+			wg.Add(1)
+			go func(cx conexoes.Conexao) {
+				defer wg.Done()
+				defer func() { <-vaga }()
+
+				s := executor.Sondar(cx.Host, 4*time.Second)
+				l := linhaSonda{nome: cx.Nome, host: cx.Host, banner: s.Banner, plataforma: s.Plataforma}
+				if s.Erro != nil {
+					l.erro = s.FaseFalha()
+				}
+				// Só grava o que dá para afirmar.
+				switch s.Plataforma {
+				case model.Windows:
+					gravarPlataforma(lote, cx.Nome, "1")
+				case model.Linux:
+					gravarPlataforma(lote, cx.Nome, "0")
+				}
+				d.mu.Lock()
+				d.linhas = append(d.linhas, l)
+				d.feitos++
+				d.mu.Unlock()
+				d.w.Invalidate()
+			}(cx)
+		}
+		wg.Wait()
+
 		d.mu.Lock()
 		d.rodando = false
 		d.mu.Unlock()
@@ -90,6 +128,18 @@ func (d *dlgPlataforma) rodar() {
 		}
 		d.w.Invalidate()
 	}()
+}
+
+// gravarPlataforma escreve o windows = 0/1 pelo lote, que é quem guarda a
+// cópia do histórico uma vez só. Lote nil é o app ainda sem inventário
+// escolhido: detectar continua valendo, só não grava.
+func gravarPlataforma(lote *conexoes.Lote, nome, valor string) {
+	if lote == nil {
+		return
+	}
+	if err := lote.Salvar(nome, "", map[string]string{"windows": valor}); err != nil {
+		fmt.Fprintf(os.Stderr, "gravar windows de %s: %v\n", nome, err)
+	}
 }
 
 func (d *dlgPlataforma) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensions {
