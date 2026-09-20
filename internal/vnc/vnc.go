@@ -165,16 +165,22 @@ func (s *Session) Framebuffer() (buf []byte, w, h int) {
 	if s.s == nil {
 		return nil, 0, 0
 	}
-	w = int(C.vs_largura(s.s))
-	h = int(C.vs_altura(s.s))
-	ptr := C.vs_framebuffer(s.s)
-	if ptr == nil || w == 0 || h == 0 {
+	// UMA chamada para o trio (ponteiro, largura, altura): ler os três
+	// em chamadas separadas não era atômico, e a libvncclient grava o
+	// tamanho novo ANTES de trocar o buffer — dava para copiar o tamanho
+	// novo de dentro do buffer velho e ler além do fim da alocação. Ver
+	// vs_capturar_quadro, em vncshim.c.
+	var cw, ch C.int
+	ptr := C.vs_capturar_quadro(s.s, &cw, &ch)
+	if ptr == nil {
 		return nil, 0, 0
 	}
+	defer C.vs_liberar_quadro(ptr)
+
+	w, h = int(cw), int(ch)
 	n := w * h * 4
-	src := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n)
 	buf = make([]byte, n)
-	copy(buf, src)
+	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n))
 	return buf, w, h
 }
 

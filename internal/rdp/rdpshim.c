@@ -203,6 +203,25 @@ typedef struct {
      * Control. rs_capturar_quadro faz tudo (tamanho + cópia) com este lock
      * seguro, numa única chamada. */
     rdpshim_mutex_t fb_lock;
+
+    /* PROTEGE os ponteiros de canal (disp, cliprdr) e o disp_caps_ok.
+     *
+     * Eles sao escritos pelos hooks de conexao/desconexao de canal, que
+     * rodam na thread PROPRIA do drdynvc (o canal dinamico e assincrono
+     * por padrao), e lidos pela goroutine de comandos em rs_pedir_resize e
+     * rs_clipboard_definir_texto — que testavam "!= NULL" e usavam o
+     * ponteiro algumas linhas depois, sem trava nenhuma no meio. A janela e
+     * estreita mas real: com o canal fechando nesse intervalo, o
+     * SendMonitorLayout cai num channel_callback que a propria libfreerdp
+     * acabou de liberar (disp_on_close libera o callback e nao zera o
+     * ponteiro dentro dela). Acontece em redirecionamento de broker e no
+     * fechamento de canal DVC pelo servidor.
+     *
+     * Mutex PROPRIO, e nao o clip_lock: aquele ja e segurado por
+     * hook_clip_server_format_data_request enquanto responde, e reusa-lo
+     * aqui criaria duas ordens de aquisicao diferentes entre threads, que
+     * e a receita do abraco mortal. Aqui nunca se aninha um no outro. */
+    rdpshim_mutex_t canais_lock;
 } Sessao;
 
 static Sessao *sessao_de(freerdp *inst) {
@@ -223,7 +242,25 @@ static BOOL hook_end_paint(rdpContext *context) {
     rdpGdi *gdi = context->gdi;
     Sessao *s = sessao_de(context->instance);
     if (!s) return TRUE;
-    if (gdi->primary->hdc->hwnd->invalid->null) return TRUE;
+    if (gdi->primary->hdc->hwnd->invalid->null) {
+        /* Caixa NULA nao quer dizer "nao desenhou nada".
+         *
+         * gdi_InvalidateRegion zera a caixa acumulada (null = TRUE) quando
+         * gdi_CRgnToRect reprova o retangulo do lote — e ele reprova um
+         * retangulo de 1px colado na borda (x=0,w=1). Ha chamadores reais
+         * nos dois caminhos: uma linha vertical em x=0 e o pipeline
+         * grafico, que e o default aqui. Nesse caso os pixels JA foram
+         * pintados no framebuffer e o lado Go nunca ficava sabendo — a
+         * tela ficava com um pedaco velho ate algo mais sujar a regiao.
+         *
+         * ninvalid > 0 diz que houve retangulo no lote. Em vez de
+         * reimplementar a uniao de cinvalid[] (o que o xf_client faz),
+         * reporta a tela inteira: o caso e raro, e um quadro cheio a mais
+         * custa menos que um pedaco de tela que nunca atualiza. */
+        if (gdi->primary->hdc->hwnd->ninvalid > 0 && s->ao_atualizar)
+            s->ao_atualizar(s->pyctx, 0, 0, gdi->width, gdi->height);
+        return TRUE;
+    }
     int x = gdi->primary->hdc->hwnd->invalid->x;
     int y = gdi->primary->hdc->hwnd->invalid->y;
     int w = gdi->primary->hdc->hwnd->invalid->w;
@@ -616,10 +653,13 @@ static UINT hook_disp_caps(DispClientContext *ctx, UINT32 max_monitores,
                            UINT32 fator_a, UINT32 fator_b) {
     Sessao *s = (Sessao *)ctx->custom;
     if (s) {
+        MUTEX_LOCK(&s->canais_lock);
         s->disp_max_monitores = max_monitores;
         s->disp_fator_a = fator_a;
         s->disp_fator_b = fator_b;
         s->disp_caps_ok = 1;
+        MUTEX_UNLOCK(&s->canais_lock);
+        /* o aviso sai FORA da trava: ele atravessa para o Go */
         if (s->ao_disp_pronto) s->ao_disp_pronto(s->pyctx);
     }
     return CHANNEL_RC_OK;
@@ -634,8 +674,10 @@ static void hook_canal_conectou(void *context,
         DispClientContext *disp = (DispClientContext *)e->pInterface;
         disp->custom = s;
         disp->DisplayControlCaps = hook_disp_caps;
+        MUTEX_LOCK(&s->canais_lock);
         s->disp = disp;
         s->disp_caps_ok = 0;
+        MUTEX_UNLOCK(&s->canais_lock);
         return;
     }
 
@@ -647,7 +689,9 @@ static void hook_canal_conectou(void *context,
         cliprdr->ServerFormatListResponse = hook_clip_server_format_list_response;
         cliprdr->ServerFormatDataRequest = hook_clip_server_format_data_request;
         cliprdr->ServerFormatDataResponse = hook_clip_server_format_data_response;
+        MUTEX_LOCK(&s->canais_lock);
         s->cliprdr = cliprdr;
+        MUTEX_UNLOCK(&s->canais_lock);
         return;
     }
 
@@ -674,12 +718,16 @@ static void hook_canal_desconectou(void *context,
     Sessao *s = (Sessao *)rc->sessao;
 
     if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
+        MUTEX_LOCK(&s->canais_lock);
         s->disp = NULL;
         s->disp_caps_ok = 0;
+        MUTEX_UNLOCK(&s->canais_lock);
         return;
     }
     if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
+        MUTEX_LOCK(&s->canais_lock);
         s->cliprdr = NULL;
+        MUTEX_UNLOCK(&s->canais_lock);
         return;
     }
     if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
@@ -773,6 +821,7 @@ Sessao *rs_criar(void *pyctx,
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
     MUTEX_INIT(&s->clip_lock);
+    MUTEX_INIT(&s->canais_lock);
     MUTEX_INIT(&s->fb_lock);
 
     /* Registra o provedor de addins ESTATICOS (compilados dentro da propria
@@ -788,6 +837,8 @@ Sessao *rs_criar(void *pyctx,
     freerdp *inst = freerdp_new();
     if (!inst) {
         MUTEX_DESTROY(&s->clip_lock);
+    MUTEX_DESTROY(&s->canais_lock);
+        MUTEX_DESTROY(&s->canais_lock);
         MUTEX_DESTROY(&s->fb_lock);
         free(s);
         return NULL;
@@ -807,6 +858,7 @@ Sessao *rs_criar(void *pyctx,
     if (!freerdp_context_new(inst)) {
         freerdp_free(inst);
         MUTEX_DESTROY(&s->clip_lock);
+        MUTEX_DESTROY(&s->canais_lock);
         MUTEX_DESTROY(&s->fb_lock);
         free(s);
         return NULL;
@@ -843,16 +895,23 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam) {
     s->clip_local_utf16_bytes = bytes;
     MUTEX_UNLOCK(&s->clip_lock);
 
-    if (s->cliprdr && utf16) {
-        CLIPRDR_FORMAT fmt;
-        memset(&fmt, 0, sizeof(fmt));
-        fmt.formatId = CF_UNICODETEXT;
-        CLIPRDR_FORMAT_LIST fl;
-        memset(&fl, 0, sizeof(fl));
-        fl.common.msgType = CB_FORMAT_LIST;
-        fl.numFormats = 1;
-        fl.formats = &fmt;
-        s->cliprdr->ClientFormatList(s->cliprdr, &fl);
+    /* canais_lock, e nao o clip_lock que acabou de ser solto: o teste e o
+     * uso do s->cliprdr precisam ser a mesma seccao critica, e o clip_lock
+     * nunca protegeu esse ponteiro (o hook de desconexao nao o toma). */
+    if (utf16) {
+        MUTEX_LOCK(&s->canais_lock);
+        if (s->cliprdr) {
+            CLIPRDR_FORMAT fmt;
+            memset(&fmt, 0, sizeof(fmt));
+            fmt.formatId = CF_UNICODETEXT;
+            CLIPRDR_FORMAT_LIST fl;
+            memset(&fl, 0, sizeof(fl));
+            fl.common.msgType = CB_FORMAT_LIST;
+            fl.numFormats = 1;
+            fl.formats = &fmt;
+            s->cliprdr->ClientFormatList(s->cliprdr, &fl);
+        }
+        MUTEX_UNLOCK(&s->canais_lock);
     }
 }
 
@@ -861,7 +920,16 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam) {
  * Devolve 1 se o pedido foi enviado, 0 se ainda nao da (canal nao
  * conectado, caps nao chegaram, ou area maior que o permitido). */
 int rs_pedir_resize(Sessao *s, int largura, int altura) {
-    if (!s || !s->disp || !s->disp_caps_ok) return 0;
+    if (!s) return 0;
+
+    /* A trava cobre o TESTE e o USO. Testar "s->disp != NULL" e chamar
+     * SendMonitorLayout algumas linhas depois deixava uma janela em que o
+     * canal fechava no meio — ver canais_lock na Sessao. */
+    MUTEX_LOCK(&s->canais_lock);
+    if (!s->disp || !s->disp_caps_ok) {
+        MUTEX_UNLOCK(&s->canais_lock);
+        return 0;
+    }
 
     uint32_t lw = (uint32_t)largura, lh = (uint32_t)altura;
     if (lw < DISPLAY_CONTROL_MIN_MONITOR_WIDTH) lw = DISPLAY_CONTROL_MIN_MONITOR_WIDTH;
@@ -873,6 +941,7 @@ int rs_pedir_resize(Sessao *s, int largura, int altura) {
     /* limite de area que o servidor aceita, informado no DisplayControlCaps */
     if ((uint64_t)lw * lh >
         (uint64_t)s->disp_max_monitores * s->disp_fator_a * s->disp_fator_b) {
+        MUTEX_UNLOCK(&s->canais_lock);
         return 0;
     }
 
@@ -885,7 +954,9 @@ int rs_pedir_resize(Sessao *s, int largura, int altura) {
     layout.DesktopScaleFactor = 100;
     layout.DeviceScaleFactor = 100;
 
-    return s->disp->SendMonitorLayout(s->disp, 1, &layout) == CHANNEL_RC_OK;
+    int ok = s->disp->SendMonitorLayout(s->disp, 1, &layout) == CHANNEL_RC_OK;
+    MUTEX_UNLOCK(&s->canais_lock);
+    return ok;
 }
 
 void rs_definir_credenciais(Sessao *s, const char *usuario, const char *senha,
@@ -1173,11 +1244,28 @@ void rs_tecla(Sessao *s, uint32_t keycode_x11, int pressionada) {
 void rs_destruir(Sessao *s) {
     if (!s) return;
     if (s->inst) {
-        if (s->conectado) freerdp_disconnect(s->inst);
-        /* freerdp_free ja libera o contexto por dentro (mesmo padrao do
-         * gtk-frdp em idle_close: so freerdp_free, sem context_free
-         * separado). Chamar os dois seria liberar duas vezes o mesmo
-         * bloco. */
+        /* SEM a guarda do s->conectado, que era o defeito: rs_processar
+         * zera esse campo em QUALQUER queda, entao depois de uma queda a
+         * desmontagem inteira era pulada — e com ela o gdi_free, o
+         * fechamento dos canais e o do socket. Vazavam o framebuffer
+         * inteiro, os caches do gdi, um FD e a thread do drdynvc a cada
+         * reconexao. freerdp_disconnect e seguro com a conexao ja morta:
+         * rdp_client_disconnect confere rdp/settings/context,
+         * freerdp_channels_disconnect devolve 0 se ja nao ha canais, e
+         * gdi_free trata gdi NULL. */
+        freerdp_disconnect(s->inst);
+        /* freerdp_free NAO libera o contexto: na 3.31.1 ele e literalmente
+         * free(instance) (libfreerdp/core/freerdp.c). Quem libera o
+         * rdpContext — rdp, settings, transport/TLS, canais, codecs,
+         * graphics — e freerdp_context_free, e ele tem de vir ANTES. O
+         * comentario que estava aqui afirmava o contrario e cada par
+         * criar/destruir vazava o contexto inteiro.
+         *
+         * Nao ha risco de liberar duas vezes: freerdp_context_free zera
+         * instance->context no fim e sai cedo se ja for NULL — que e
+         * exatamente o caso do caminho de erro de rs_criar, onde a propria
+         * freerdp_context_new_ex ja liberou o contexto. */
+        freerdp_context_free(s->inst);
         freerdp_free(s->inst);
     }
     free(s->host);

@@ -98,6 +98,20 @@ struct Grab {
     uint32_t ultimo_serial; /* de um key press real — exigido por set_selection */
     EstadoRepeticao rep;
 
+    /* Quais teclas estao EM BAIXO agora, por keycode evdev (0..255).
+     *
+     * Perder o foco com uma tecla pressionada nunca gerava o "soltou": o
+     * compositor manda o `leave` e o release seguinte vai para quem ganhou
+     * o foco, nunca para nos. Do lado remoto o modificador fica preso — no
+     * RDP tudo o que se digita depois vira atalho, e no SSH e pior, porque
+     * a aba guarda o proprio estado e passa a mandar caracteres de
+     * controle. Sai do buraco sozinho so quando a pessoa aperta e solta a
+     * mesma tecla de novo, o que ninguem adivinha.
+     *
+     * So a thread de dispatch mexe nisto (teclado_tecla e teclado_leave
+     * rodam nela), entao nao precisa de trava. */
+    uint8_t baixas[32];
+
     /* ---- clipboard (wl_data_device) ---- */
     struct wl_data_device_manager *data_mgr;
     struct wl_data_device *data_dev;
@@ -282,6 +296,13 @@ static void teclado_tecla(void *dados, struct wl_keyboard *kbd,
         pthread_mutex_unlock(&g->rep.m);
     }
 
+    /* registra a tecla como em baixo ANTES de avisar: se o consumidor
+     * demorar, o leave que chegar depois ja sabe que ela existe. */
+    if (key < 256) {
+        if (pressionada) g->baixas[key >> 3] |= (uint8_t)(1u << (key & 7));
+        else g->baixas[key >> 3] &= (uint8_t)~(1u << (key & 7));
+    }
+
     g->ao_teclar(keysym, (uint32_t)codigo, pressionada);
 }
 
@@ -296,6 +317,27 @@ static void teclado_leave(void *dados, struct wl_keyboard *kbd, uint32_t serial,
     g->rep.ativo = 0;
     g->rep.geracao++;
     pthread_mutex_unlock(&g->rep.m);
+
+    /* SOLTA o que ficou em baixo. Sem isto o modificador fica preso do
+     * lado remoto — ver o campo `baixas` na struct. O release e mandado
+     * com keysym 0 de proposito: o keysym depende do estado dos
+     * modificadores, que e justamente o que estamos desfazendo, e quem usa
+     * keysym (VNC) trata 0 como "sem simbolo"; quem usa keycode (RDP)
+     * recebe o codigo certo, que e o que importa para o "soltou". */
+    for (int byte = 0; byte < (int)sizeof(g->baixas); byte++) {
+        if (!g->baixas[byte]) continue;
+        for (int bit = 0; bit < 8; bit++) {
+            if (!(g->baixas[byte] & (1u << bit))) continue;
+            uint32_t key = (uint32_t)(byte * 8 + bit);
+            if (g->ao_teclar) g->ao_teclar(0, key + 8, 0);
+        }
+        g->baixas[byte] = 0;
+    }
+
+    /* e zera os modificadores do nosso lado tambem, senao o proximo
+     * keysym calculado sairia como se o Ctrl ainda estivesse em baixo. */
+    if (g->xkb_state)
+        xkb_state_update_mask(g->xkb_state, 0, 0, 0, 0, 0, 0);
 }
 static void teclado_repeat_info(void *dados, struct wl_keyboard *kbd,
                                 int32_t taxa, int32_t atraso) {

@@ -25,6 +25,24 @@
 
 #include <rfb/rfbclient.h>
 #include <stdlib.h>
+/* ---- travas: CRITICAL_SECTION (Windows) ou pthread (resto), atras das
+ * MESMAS quatro macros que o rdpshim usa — o resto do arquivo chama so
+ * MUTEX_*, nunca a API nativa direto. */
+#ifdef _WIN32
+#include <windows.h>
+typedef CRITICAL_SECTION vncshim_mutex_t;
+#define MUTEX_INIT(m)    InitializeCriticalSection(m)
+#define MUTEX_LOCK(m)    EnterCriticalSection(m)
+#define MUTEX_UNLOCK(m)  LeaveCriticalSection(m)
+#define MUTEX_DESTROY(m) DeleteCriticalSection(m)
+#else
+#include <pthread.h>
+typedef pthread_mutex_t vncshim_mutex_t;
+#define MUTEX_INIT(m)    pthread_mutex_init(m, NULL)
+#define MUTEX_LOCK(m)    pthread_mutex_lock(m)
+#define MUTEX_UNLOCK(m)  pthread_mutex_unlock(m)
+#define MUTEX_DESTROY(m) pthread_mutex_destroy(m)
+#endif
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -57,6 +75,41 @@ typedef struct {
      * framebuffer antigo na hora, porque a superficie Cairo do lado Python
      * ainda aponta para ele. */
     uint8_t *fb_velho;
+
+    /* ---- o framebuffer, do jeito que NOS o conhecemos ----
+     *
+     * fb/fb_w/fb_h sao gravados juntos, sob fb_lock, por hook_malloc_fb. A
+     * leitura tem de ser pelos TRES, e nao por cl->width/cl->height/
+     * cl->frameBuffer: a libvncclient grava o tamanho novo em cl ANTES de
+     * chamar MallocFrameBuffer (ResizeClientBuffer), entao existe uma
+     * janela em que o tamanho ja e o novo e o ponteiro ainda e o buffer
+     * velho. Quem lesse os campos da lib em chamadas separadas copiava
+     * (largura NOVA x altura NOVA x 4) de dentro do buffer ANTIGO — num
+     * 1024x768 que vira 1920x1080 sao ~5 MB lidos alem do fim da
+     * alocacao, que e alocacao grande (mmap) e vira SIGSEGV. E o mesmo
+     * defeito que o rdpshim fechou com o fb_lock dele; aqui o buffer e
+     * nosso, entao guardamos o par ponteiro+tamanho e acabou a duvida.
+     *
+     * fb aponta para o MESMO bloco que cl->frameBuffer; quem libera
+     * continua sendo o rodizio do fb_velho. */
+    uint8_t *fb;
+    int fb_w, fb_h;
+    vncshim_mutex_t fb_lock;
+
+    /* Serializa as ESCRITAS no socket RFB. A goroutine de comandos
+     * (ponteiro, tecla, clipboard) e a de rede (vs_processar, que responde
+     * pedidos e manda FramebufferUpdateRequest) escreviam no mesmo socket
+     * sem trava nenhuma. Ponteiro e tecla sao um write() unico de 6 a 8
+     * bytes e passavam ilesos, mas SendClientCutText escreve cabecalho e
+     * corpo em DUAS chamadas: colar um texto grande deixava a mensagem
+     * aberta enquanto a outra thread encaixava um pedido no meio dela, o
+     * servidor lia o pedido como se fosse texto e a sessao caia como
+     * "conexao perdida".
+     *
+     * vs_esperar NAO toma esta trava, de proposito: ele fica ate 200ms
+     * parado no select, e segurar a escrita por esse tempo engasgaria
+     * teclado e ponteiro. */
+    vncshim_mutex_t escrita_lock;
 
     /* ---- diagnostico da falha (espelha o que o rdpshim ja fazia) ----
      *
@@ -290,23 +343,35 @@ static rfbBool hook_malloc_fb(rfbClient *cl) {
      * Python ja trocou de superficie ha muito tempo — ou na destruicao.
      * Um buffer extra de memoria e barato perto de um heap corrompido.
      */
-    if (s) {
-        free(s->fb_velho);            /* este ja ninguem usa */
-        s->fb_velho = cl->frameBuffer;
-    }
     /* 4 bytes por pixel: casa com cairo FORMAT_RGB24, que tambem usa 32
      * bits por pixel (um byte ignorado). Assim o Cairo aponta direto para
-     * esta memoria, sem conversao por quadro. */
-    cl->frameBuffer = (uint8_t *)calloc((size_t)w * h, 4);
-    if (!cl->frameBuffer) return FALSE;
+     * esta memoria, sem conversao por quadro.
+     *
+     * Alocado ANTES de tomar a trava: calloc de alguns MB nao precisa
+     * segurar quem esta copiando o quadro. */
+    uint8_t *novo = (uint8_t *)calloc((size_t)w * h, 4);
+    if (!novo) return FALSE;
 
     /* "if (s)" aqui tambem: o resto da funcao ja tratava s como podendo
-     * ser NULL (tres linhas acima e logo abaixo), menos esta atribuicao —
-     * bastava o clientData nao estar no lugar para virar escrita em
-     * ponteiro nulo dentro da thread de rede. */
+     * ser NULL, menos as atribuicoes — bastava o clientData nao estar no
+     * lugar para virar escrita em ponteiro nulo dentro da thread de rede. */
     if (s) {
+        MUTEX_LOCK(&s->fb_lock);
+        free(s->fb_velho);            /* este ja ninguem usa */
+        s->fb_velho = cl->frameBuffer;
+        cl->frameBuffer = novo;
+        /* o trio anda JUNTO: ponteiro e tamanho trocam sob a mesma trava */
+        s->fb = novo;
+        s->fb_w = w;
+        s->fb_h = h;
         s->tem_sujo = 0;              /* area suja do buffer antigo nao vale */
+        MUTEX_UNLOCK(&s->fb_lock);
+        /* o aviso sai FORA da trava: ele atravessa para o Go, e o Go
+         * responde capturando quadro — com a trava na mao, isso seria
+         * abraco mortal. */
         if (s->ao_redimensionar) s->ao_redimensionar(s->ctx, w, h);
+    } else {
+        cl->frameBuffer = novo;
     }
     return TRUE;
 }
@@ -351,6 +416,8 @@ Sessao *vs_criar(void *ctx,
                  cb_cursor ao_cursor) {
     Sessao *s = (Sessao *)calloc(1, sizeof(Sessao));
     if (!s) return NULL;
+    MUTEX_INIT(&s->fb_lock);
+    MUTEX_INIT(&s->escrita_lock);
 
     /* Desvia os dois canais da lib para os nossos buffers por thread. Sao
      * variaveis GLOBAIS da libvncclient, entao bastaria uma vez — mas
@@ -535,43 +602,93 @@ int vs_esperar(Sessao *s, int usecs) {
     }
 }
 
-/* Processa uma mensagem. Devolve 1 se ok, 0 se a conexao caiu. */
+/* Processa uma mensagem. Devolve 1 se ok, 0 se a conexao caiu.
+ *
+ * Toma a escrita_lock porque tratar uma mensagem ESCREVE no socket (a lib
+ * responde pedidos e manda o FramebufferUpdateRequest do proximo lote), e
+ * isso corria com as escritas da goroutine de comandos. */
 int vs_processar(Sessao *s) {
     if (!s || !s->cl || s->morto) return 0;
-    if (!HandleRFBServerMessage(s->cl)) { s->morto = 1; return 0; }
+    MUTEX_LOCK(&s->escrita_lock);
+    rfbBool ok = s->morto ? FALSE : HandleRFBServerMessage(s->cl);
+    MUTEX_UNLOCK(&s->escrita_lock);
+    if (!ok) { s->morto = 1; return 0; }
     return 1;
 }
 
-uint8_t *vs_framebuffer(Sessao *s) {
-    return (s && s->cl) ? s->cl->frameBuffer : NULL;
+/* Devolve uma COPIA do framebuffer inteiro (w*h*4 bytes) que o chamador
+ * libera com vs_liberar_quadro, ou NULL se ainda nao ha framebuffer.
+ *
+ * SUBSTITUI ler vs_largura/vs_altura/vs_framebuffer em sequencia: as tres
+ * chamadas nao sao atomicas entre si, e a libvncclient grava o tamanho novo
+ * ANTES de trocar o buffer, entao existe uma janela em que o tamanho ja e o
+ * novo e o ponteiro ainda e o velho — copiar com o par errado le alem do
+ * fim da alocacao. Aqui o trio sai sob a mesma trava, e vem do que NOS
+ * alocamos (ver os campos fb/fb_w/fb_h). Mesmo desenho do
+ * rs_capturar_quadro, no rdpshim. */
+uint8_t *vs_capturar_quadro(Sessao *s, int *w_out, int *h_out) {
+    if (!s) return NULL;
+
+    MUTEX_LOCK(&s->fb_lock);
+    uint8_t *fb = s->fb;
+    int w = s->fb_w, h = s->fb_h;
+    uint8_t *copia = NULL;
+    if (fb && w > 0 && h > 0) {
+        size_t n = (size_t)w * (size_t)h * 4;
+        copia = (uint8_t *)malloc(n);
+        if (copia) memcpy(copia, fb, n);
+    }
+    MUTEX_UNLOCK(&s->fb_lock);
+
+    if (!copia) return NULL;
+    if (w_out) *w_out = w;
+    if (h_out) *h_out = h;
+    return copia;
 }
 
-int vs_largura(Sessao *s) { return (s && s->cl) ? s->cl->width : 0; }
-int vs_altura(Sessao *s)  { return (s && s->cl) ? s->cl->height : 0; }
+void vs_liberar_quadro(uint8_t *quadro) {
+    free(quadro);
+}
+
 int vs_morto(Sessao *s)   { return (!s || s->morto || !s->cl) ? 1 : 0; }
 
+/* As tres escritas abaixo sao serializadas entre si E contra o
+ * vs_processar: ver escrita_lock na Sessao. */
 void vs_ponteiro(Sessao *s, int x, int y, int botoes) {
-    if (s && s->cl && !s->morto) SendPointerEvent(s->cl, x, y, botoes);
+    if (!s || !s->cl || s->morto) return;
+    MUTEX_LOCK(&s->escrita_lock);
+    if (!s->morto) SendPointerEvent(s->cl, x, y, botoes);
+    MUTEX_UNLOCK(&s->escrita_lock);
 }
 
 void vs_tecla(Sessao *s, uint32_t keysym, int pressionada) {
-    if (s && s->cl && !s->morto)
-        SendKeyEvent(s->cl, keysym, pressionada ? TRUE : FALSE);
+    if (!s || !s->cl || s->morto) return;
+    MUTEX_LOCK(&s->escrita_lock);
+    if (!s->morto) SendKeyEvent(s->cl, keysym, pressionada ? TRUE : FALSE);
+    MUTEX_UNLOCK(&s->escrita_lock);
 }
 
 void vs_enviar_texto(Sessao *s, const char *texto, int tam) {
-    if (s && s->cl && !s->morto)
-        SendClientCutText(s->cl, (char *)texto, tam);
+    if (!s || !s->cl || s->morto) return;
+    MUTEX_LOCK(&s->escrita_lock);
+    if (!s->morto) SendClientCutText(s->cl, (char *)texto, tam);
+    MUTEX_UNLOCK(&s->escrita_lock);
 }
 
 void vs_destruir(Sessao *s) {
     if (!s) return;
+    MUTEX_LOCK(&s->fb_lock);
+    s->fb = NULL;                 /* ninguem captura mais a partir daqui */
+    s->fb_w = s->fb_h = 0;
     if (s->cl) {
         free(s->cl->frameBuffer);
         s->cl->frameBuffer = NULL;
         rfbClientCleanup(s->cl);
         s->cl = NULL;
     }
+    MUTEX_UNLOCK(&s->fb_lock);
+    MUTEX_DESTROY(&s->fb_lock);
+    MUTEX_DESTROY(&s->escrita_lock);
     free(s->fb_velho);
     free(s->senha);
     free(s->usuario);

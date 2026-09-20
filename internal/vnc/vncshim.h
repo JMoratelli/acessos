@@ -36,9 +36,12 @@ const char *vs_erro_msg(Sessao *s);
 int vs_esperar(Sessao *s, int usecs);
 int vs_processar(Sessao *s);
 
-uint8_t *vs_framebuffer(Sessao *s);
-int vs_largura(Sessao *s);
-int vs_altura(Sessao *s);
+/* Captura o framebuffer inteiro numa chamada so — ponteiro e tamanho
+ * consistentes entre si. O chamador libera com vs_liberar_quadro.
+ * Substituiu vs_framebuffer/vs_largura/vs_altura, que nao eram atomicas
+ * entre si: ver o comentario em vncshim.c. */
+uint8_t *vs_capturar_quadro(Sessao *s, int *w_out, int *h_out);
+void vs_liberar_quadro(uint8_t *quadro);
 int vs_morto(Sessao *s);
 
 void vs_ponteiro(Sessao *s, int x, int y, int botoes);
