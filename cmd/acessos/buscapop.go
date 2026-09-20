@@ -41,21 +41,21 @@ package main
 // do Painel. Quem limita o desenho é a margem em volta — é ela que deixa
 // a sombra aparecer e os cantos arredondados recortarem o fundo.
 //
-// NO WINDOWS NÃO: lá a janela é o cartão, sólido e de canto reto (ver
-// medidasDaBusca). Duas pegadinhas, as duas medidas nesta máquina:
+// ISSO VALE NOS DOIS SISTEMAS, mas no Windows custou um patch a mais no
+// fork do Gio (o décimo terceiro; ver third_party/gio/PATCH.md). O que
+// acontecia lá, medido nesta máquina: o Gio pede
+// `DwmExtendFrameIntoClientArea(-1,-1,-1,-1)` em toda janela sem
+// decoração, para ela ganhar a sombra do sistema, e isso põe a MOLDURA
+// do Windows ATRÁS do conteúdo — botões de maximizar e fechar inclusive.
+// Onde o app pinta opaco ela some; onde não pinta, que é exatamente a
+// margem transparente daqui, ela aparece. Era daí que vinham os "botões
+// do sistema" na caixa de busca, e é por isso que a janela principal,
+// que pinta cada pixel, nunca mostrou nada disso.
 //
-//   - `app.Translucent` só existe no Wayland (ver third_party/gio/
-//     PATCH.md). No Windows o quadro é limpo com PRETO TRANSPARENTE e a
-//     swapchain D3D11 não compõe alfa com o que está atrás, então pixel
-//     não pintado não fica transparente — sai PRETO (medido aqui);
-//   - pior, o Gio pede `DwmExtendFrameIntoClientArea(-1,-1,-1,-1)` em
-//     toda janela sem decoração, para ela ganhar a sombra do sistema.
-//     Isso põe a MOLDURA do Windows ATRÁS do conteúdo — inclusive os
-//     botões de maximizar e fechar, no canto de cima à direita. Onde o
-//     app pinta opaco ela some; onde não pinta (a margem transparente),
-//     ela aparece. Era daí que vinham os "botões do sistema" na caixa
-//     de busca, e é por isso que a janela principal, que pinta cada
-//     pixel, nunca mostrou nada disso.
+// Agora `app.Translucent` também vale no Windows: o driver troca a
+// moldura estendida por um DwmEnableBlurBehindWindow de região vazia, que
+// é o pedido de "respeite o alfa desta janela". Nada aqui precisa saber
+// em qual sistema está.
 //
 // A caixa também nasce CENTRALIZADA (system.ActionCenter, ver o laço):
 // sem isso o Windows a punha no canto da cascata, em cima e à esquerda.
@@ -64,9 +64,7 @@ package main
 
 import (
 	"fmt"
-	"image/color"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -110,36 +108,10 @@ const (
 	// Respiro entre o campo e a primeira linha da lista (o mesmo Spacer
 	// que `lista` insere) — entra na conta da altura da janela.
 	buscaRespiroLista = unit.Dp(10)
+	// Altura da JANELA fechada: o cartão mais as duas margens. É ela que
+	// vai no app.Size.
+	buscaAlt = buscaCartaoAlt + 2*buscaMargem
 )
-
-// buscaSolida: no Windows não há alfa por pixel nesta janela, e o que
-// não for pintado mostra a moldura do sistema — ver o cabeçalho.
-const buscaSolida = runtime.GOOS == "windows"
-
-// As medidas de fato usadas. buscaAlt é a altura da JANELA fechada (o
-// cartão mais as duas margens), e é ela que vai no app.Size.
-var buscaMargemJanela, buscaRaioJanela, buscaAlt = medidasDaBusca()
-
-func medidasDaBusca() (margem, raio, alt unit.Dp) {
-	margem, raio = buscaMargem, buscaRaio
-	if buscaSolida {
-		// Janela = cartão: sem margem para a moldura do sistema
-		// aparecer, e sem raio porque os quatro cantos de fora do
-		// arredondado seriam exatamente isso — buracos não pintados.
-		margem, raio = 0, 0
-	}
-	return margem, raio, buscaCartaoAlt + 2*margem
-}
-
-// fundoDaBusca é o vidro do cartão — sólido onde a translucidez não
-// existe, senão o desktop não atravessa: o que aparece por baixo do alfa
-// é a moldura do Windows.
-func fundoDaBusca() color.NRGBA {
-	if buscaSolida {
-		return tema.Cartao
-	}
-	return tema.BuscaVidro
-}
 
 // buscaPrazoFoco: quanto se espera pelo foco antes de desistir. Medido em
 // janela solta, o KWin dá o foco em ~60ms; três segundos é folga de
@@ -589,16 +561,12 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		}
 	}
 
-	return layout.UniformInset(buscaMargemJanela).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.UniformInset(buscaMargem).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
-				// Sem margem não há onde a sombra cair: ela sairia por
-				// baixo do próprio cartão, pintando a borda de escuro.
-				if buscaMargemJanela > 0 {
-					sombra(gtx, size, buscaRaioJanela)
-				}
+				sombra(gtx, size, buscaRaio)
 				// Vidro, não sólido: é o mesmo tratamento dos cards, e
 				// aqui ele tem função — a caixa aparece POR CIMA do que
 				// a pessoa estava olhando, e deixar o fundo atravessar
@@ -609,7 +577,7 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 				// não aguentam o mesmo valor: sobre um desktop qualquer,
 				// o cartão escuro pode ser bem mais fino que o claro sem
 				// o texto perder legibilidade.
-				superficie(gtx, size, fundoDaBusca(), tema.Borda2, buscaRaioJanela)
+				superficie(gtx, size, tema.BuscaVidro, tema.Borda2, buscaRaio)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {

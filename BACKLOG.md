@@ -12,6 +12,49 @@ Atualizado em 2026-09-19.
 
 ---
 
+## 10. Conferir no Linux o que foi feito na rodada do Windows
+
+A rodada de 2026-09-19 inteira foi feita e testada na máquina Windows —
+lá dá para compilar nativo (MSYS2 ucrt64 tem gcc, freerdp3 e
+libvncclient). O lado Linux NÃO foi compilado: falta cross-toolchain
+para o cgo. Nada aqui é suspeita de defeito; é a conferência que a outra
+metade do porte exige.
+
+- **`go mod vendor` ANTES de compilar.** `third_party/gio` mudou (patch
+  décimo terceiro: `app.Translucent` no Windows). Sem isso o build local
+  usa a cópia velha em `vendor/gioui.org` e falha com método inexistente
+  — é a armadilha que o CLAUDE.md descreve e que já mordeu mais de uma
+  vez.
+- **`go build ./...` e `go test ./...`.** Os testes do `cmd/acessos`
+  mudaram de forma: `memoriaDe` saiu do arquivo de teste ao vivo para
+  `memoriaproc_posix_test.go` (o irmão Windows é
+  `memoriaproc_win_test.go`), e os três testes ao vivo (RDP, VNC, SSH)
+  deixaram de ser `//go:build linux`. Rodar os ao vivo lá também, com
+  `ACESSOS_RDP_AOVIVO`/`ACESSOS_VNC_AOVIVO`/`ACESSOS_SSH_AOVIVO`, para
+  confirmar que a troca de `syscall.Kill` por `os.Process.Kill` não
+  mudou nada no Linux.
+- **Olhar a caixa do atalho global.** Ela ficou 14dp mais alta
+  (`buscaCartaoAlt` foi de 76 para 90): o rodapé "Enter conecta · Esc
+  fecha · mais N — refine o termo" NUNCA coube, nos dois sistemas, e
+  agora cabe. Conferir que no KWin o cartão continua certo e que a linha
+  aparece.
+- **X11 ganhou comportamento novo.** A caixa agora pede
+  `system.ActionCenter` depois do primeiro quadro. No Wayland a ação é
+  ignorada (quem posiciona é o compositor), mas no X11 o Gio a
+  implementa de verdade — conferir que ela não briga com o
+  posicionamento do gerenciador de janelas.
+- **Gerar o instalador do Windows a partir daí**
+  (`scripts/build-windows.sh --instalador`) para fechar duas pontas que
+  só um instalador novo confirma: o provider legacy do OpenSSL (item 9)
+  e o ícone do executável (item 4). O passo novo copia
+  `ossl-modules/legacy.dll` do sysroot e o build FALHA se ele não
+  estiver lá — de propósito.
+- **O `grab` continua só testável no Linux.** Teclado e clipboard por
+  Wayland (`internal/grab`) não têm equivalente no Windows, que passa
+  pelo próprio Gio (`entrada_outros.go`). Nada foi mexido ali nesta
+  rodada; fica anotado porque é a metade que a máquina Windows não
+  alcança.
+
 ## 3d. Busca por atalho global — o que ainda falta
 
 O atalho, a caixa e o serviço estão funcionando (ver README). Estas
@@ -35,36 +78,6 @@ pontas continuam abertas:
   sozinho depois de uns segundos. **Vale notar que isto também engole o
   Ctrl+Shift+F12**: com uma sessão remota em foco, a tecla vai para a
   máquina remota, não para o portal.
-- **No Windows a caixa é OPACA e de canto reto.** No Linux ela é o que
-  foi desenhado: cartão de vidro, cantos arredondados, sombra, o desktop
-  atravessando por trás. No Windows não — e não é limitação da máquina
-  virtual nem do Windows 10. São duas coisas somadas: `app.Translucent`
-  só tem implementação no Wayland (ver third_party/gio/PATCH.md, nono
-  patch), e a swapchain do Gio é criada com o
-  `IDXGIFactory::CreateSwapChain` antigo, modelo bitblt, amarrada direto
-  no HWND (`DXGI_SWAP_EFFECT_DISCARD`, em
-  third_party/gio/internal/d3d11/d3d11_windows.go) — o DWM compõe esse
-  tipo de swapchain como OPACO e ignora o alfa do backbuffer. Por isso
-  a janela hoje pinta cada pixel (ver buscapop.go): pixel não pintado
-  ali aparecia preto, ou mostrava a moldura do sistema.
-
-  Dois caminhos, em ordem de custo:
-
-  - **cantos arredondados só**: `SetWindowRgn` com
-    `CreateRoundRectRgn` no HWND da caixa, refeito a cada mudança de
-    tamanho. Recorta a janela de verdade, não mexe em nada do
-    desenho e não depende de versão do Windows. Não traz a
-    transparência nem a sombra;
-  - **transparência de verdade**: swapchain de composição —
-    `IDXGIFactory2::CreateSwapChainForComposition` com
-    `DXGI_ALPHA_MODE_PREMULTIPLIED` e modelo flip, pendurada numa
-    visual do DirectComposition (`DCompositionCreateDevice`,
-    `IDCompositionTarget` do HWND). É o que Chromium e WPF fazem. Dá
-    transparência, cantos e sombra de uma vez, mas é patch grande no
-    fork do Gio e mexe no caminho de resize que acabou de ser
-    endurecido (oitavo patch) — e o contexto D3D11 é o MESMO da janela
-    principal, então um erro aqui aparece no app inteiro. Fazer só com
-    tempo de testar nas duas telas e nos dois temas.
 
 ## 3e. Cursor remoto: conferir contra cursores de verdade
 

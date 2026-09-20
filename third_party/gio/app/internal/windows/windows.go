@@ -53,6 +53,19 @@ type Margins struct {
 	CyBottomHeight int32
 }
 
+// patch acessos: DWM_BLURBEHIND, para janela com alfa por pixel.
+type BlurBehind struct {
+	DwFlags                uint32
+	FEnable                int32
+	HRgnBlur               syscall.Handle
+	FTransitionOnMaximized int32
+}
+
+const (
+	DWM_BB_ENABLE     = 0x1
+	DWM_BB_BLURREGION = 0x2
+)
+
 type Msg struct {
 	Hwnd     syscall.Handle
 	Message  uint32
@@ -487,6 +500,9 @@ var (
 
 	gdi32          = syscall.NewLazySystemDLL("gdi32")
 	_GetDeviceCaps = gdi32.NewProc("GetDeviceCaps")
+	// patch acessos: região para o DwmEnableBlurBehindWindow.
+	_CreateRectRgn = gdi32.NewProc("CreateRectRgn")
+	_DeleteObject  = gdi32.NewProc("DeleteObject")
 
 	imm32                    = syscall.NewLazySystemDLL("imm32")
 	_ImmGetContext           = imm32.NewProc("ImmGetContext")
@@ -498,6 +514,8 @@ var (
 
 	dwmapi                        = syscall.NewLazySystemDLL("dwmapi")
 	_DwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
+	// patch acessos
+	_DwmEnableBlurBehindWindow = dwmapi.NewProc("DwmEnableBlurBehindWindow")
 )
 
 func AdjustWindowRectEx(r *Rect, dwStyle uint32, bMenu int, dwExStyle uint32) {
@@ -583,6 +601,28 @@ func DwmExtendFrameIntoClientArea(hwnd syscall.Handle, margins Margins) error {
 		return fmt.Errorf("DwmExtendFrameIntoClientArea: %#x", r)
 	}
 	return nil
+}
+
+// patch acessos: DwmEnableBlurBehindWindow com região VAZIA é o jeito
+// documentado de pedir ao DWM que respeite o alfa por pixel da janela sem
+// borrar nada atrás. Ver o comentário em os_windows.go (Configure).
+//
+// A região é do chamador: o DWM copia o que precisa, e quem criou apaga.
+func DwmEnableBlurBehindWindow(hwnd syscall.Handle, bb *BlurBehind) error {
+	r, _, _ := _DwmEnableBlurBehindWindow.Call(uintptr(hwnd), uintptr(unsafe.Pointer(bb)))
+	if r != 0 {
+		return fmt.Errorf("DwmEnableBlurBehindWindow: %#x", r)
+	}
+	return nil
+}
+
+func CreateRectRgn(x1, y1, x2, y2 int32) syscall.Handle {
+	r, _, _ := _CreateRectRgn.Call(uintptr(x1), uintptr(y1), uintptr(x2), uintptr(y2))
+	return syscall.Handle(r)
+}
+
+func DeleteObject(h syscall.Handle) {
+	_DeleteObject.Call(uintptr(h))
 }
 
 func EmptyClipboard() error {

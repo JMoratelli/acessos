@@ -37,9 +37,17 @@
   - **Pixel não pintado numa janela sem decoração mostra a MOLDURA do
     Windows**, botões de fechar/maximizar inclusive: o Gio pede
     `DwmExtendFrameIntoClientArea(-1,-1,-1,-1)` para ter a sombra do
-    sistema, e isso põe o frame do DWM atrás do conteúdo. Não há alfa por
-    pixel (o `app.Translucent` é só Wayland). Ver o cabeçalho de
-    `cmd/acessos/buscapop.go`.
+    sistema, e isso põe o frame do DWM atrás do conteúdo. Resolvido para
+    quem pede `app.Translucent` (décimo terceiro patch do fork: blur
+    behind com região vazia, que liga o alfa por pixel), mas quem
+    desenhar com alfa numa janela SEM essa opção continua vendo a
+    moldura. Ver o cabeçalho de `cmd/acessos/buscapop.go`.
+  - **DLL carregada em tempo de execução não é achada pelo coletor do
+    instalador.** O `scripts/dlls-windows.py` percorre a tabela de
+    importação do PE; o que o programa carrega pelo nome depois de subir
+    (provider do OpenSSL, plugin, addin) não está lá e fica de fora sem
+    ninguém perceber — o app abre e só falha na hora de usar. Foi assim
+    que o `ossl-modules/legacy.dll` faltou e o FreeRDP ficou sem NTLM.
   - **Janela minimizada não tem quadro.** Qualquer fila drenada de dentro
     do `FrameEvent` fica parada enquanto ela estiver minimizada — foi o
     que fazia escolher máquina no atalho global não abrir nada. Drenar no

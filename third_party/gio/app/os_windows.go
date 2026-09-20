@@ -847,6 +847,10 @@ func (w *window) Configure(options []Option) {
 	w.config.Decorated = cnf.Decorated
 	w.config.MinSize = cnf.MinSize
 	w.config.MaxSize = cnf.MaxSize
+	// patch acessos: campo novo, e aqui a Config é copiada campo a campo
+	// — sem esta linha o Translucent chega em cnf mas nunca em w.config,
+	// e some no Configure seguinte (mesma armadilha anotada no Wayland).
+	w.config.Translucent = cnf.Translucent
 	windows.SetWindowText(w.hwnd, cnf.Title)
 
 	style := windows.GetWindowLong(w.hwnd, windows.GWL_STYLE)
@@ -895,6 +899,43 @@ func (w *window) Configure(options []Option) {
 			windows.AdjustWindowRectEx(&r, uint32(style), 0, dwExStyle)
 			width = r.Right - r.Left
 			height = r.Bottom - r.Top
+		} else if cnf.Translucent {
+			// patch acessos: janela com ALFA POR PIXEL.
+			//
+			// O caminho de baixo (moldura estendida "folha de vidro")
+			// não serve aqui: ele põe a moldura do DWM ATRÁS do
+			// conteúdo, e onde o app desenha com alfa — a margem em
+			// volta de um cartão flutuante, por exemplo — o que aparece
+			// é a moldura, botões de janela inclusive. Medido no
+			// Windows 10 com a caixa de busca do atalho global.
+			//
+			// DwmEnableBlurBehindWindow com região de blur VAZIA
+			// (CreateRectRgn(0,0,-1,-1)) é o pedido documentado de
+			// "respeite o alfa desta janela, sem borrar nada atrás". A
+			// swapchain continua sendo a de sempre, amarrada no HWND: o
+			// DWM passa a compor o backbuffer com alfa em vez de tratá-lo
+			// como opaco. Com isso, pixel não pintado fica de fato
+			// transparente e canto arredondado recorta o fundo — o mesmo
+			// que o Wayland dá com app.Translucent.
+			//
+			// As margens vão a ZERO junto: a moldura estendida e o alfa
+			// por pixel não convivem (a primeira ganha, e volta o
+			// branco com os botões). Perde-se a sombra do sistema, que
+			// uma janela translúcida não quer de qualquer forma — quem
+			// desenha a dela é o app.
+			//
+			// Reaplicado a cada Configure de propósito: o
+			// SetWindowPos/SetWindowLong abaixo refaz a moldura, e sem
+			// repetir aqui o vidro branco volta no primeiro resize.
+			windows.DwmExtendFrameIntoClientArea(w.hwnd, windows.Margins{})
+			rgn := windows.CreateRectRgn(0, 0, -1, -1)
+			bb := windows.BlurBehind{
+				DwFlags:  windows.DWM_BB_ENABLE | windows.DWM_BB_BLURREGION,
+				FEnable:  1,
+				HRgnBlur: rgn,
+			}
+			windows.DwmEnableBlurBehindWindow(w.hwnd, &bb)
+			windows.DeleteObject(rgn)
 		} else {
 			// Enable drop shadows when we draw decorations.
 			windows.DwmExtendFrameIntoClientArea(w.hwnd, windows.Margins{-1, -1, -1, -1})

@@ -160,6 +160,39 @@ driver em paralelo com o desenho), e a espera não pode ficar nela (a
 resposta chega pelo próprio laço). Quem chama agora pede de dentro do
 laço e espera o canal numa goroutine. Ver `cmd/acessos/buscapop.go`.
 
+Um décimo terceiro patch, em `app/os_windows.go` (`Configure`),
+`app/internal/windows/windows.go` e `app/window.go`: **`app.Translucent`
+passa a valer no WINDOWS também.**
+
+O nono patch implementou a opção só no Wayland, e no Windows ela era
+aceita e ignorada — a caixa de busca (`cmd/acessos/buscapop.go`), que é
+um cartão de vidro com sombra e cantos arredondados flutuando sobre o
+desktop, saía como um retângulo opaco com a MOLDURA DO SISTEMA em volta,
+botões de maximizar e fechar inclusive. A causa é sutil: para dar sombra
+de sistema a uma janela sem decoração, o Gio chama
+`DwmExtendFrameIntoClientArea(-1,-1,-1,-1)`, e essa "folha de vidro" põe
+a moldura do DWM ATRÁS do conteúdo. Onde o app pinta opaco ela some; onde
+o app pinta com alfa — a margem em volta do cartão — ela aparece. Foi por
+isso que a janela principal, que pinta cada pixel, nunca mostrou nada
+disso.
+
+O patch, quando `Translucent` está ligado, troca essa chamada por
+`DwmEnableBlurBehindWindow` com região de blur VAZIA
+(`CreateRectRgn(0,0,-1,-1)`), que é o pedido documentado de "respeite o
+alfa por pixel desta janela, sem borrar nada atrás", e zera as margens da
+moldura estendida (as duas coisas não convivem: a moldura ganha, e o
+branco com os botões volta). A swapchain continua a mesma, amarrada no
+HWND — não é preciso DirectComposition. Perde-se a sombra do sistema, que
+uma janela translúcida não quer de qualquer forma, porque desenha a dela.
+
+Dois detalhes que custam se forem esquecidos: o `Translucent` precisou
+ser copiado à mão para `w.config` dentro do `Configure` (ali a Config é
+copiada campo a campo, mesma armadilha do Wayland), e a chamada TEM de
+ser refeita a cada `Configure` — o `SetWindowPos`/`SetWindowLong` logo
+abaixo refaz a moldura, e sem repetir o vidro branco volta no primeiro
+redimensionamento (visto na prática: a caixa nascia certa e estragava ao
+crescer com o primeiro resultado).
+
 Ligado ao build pelo `replace gioui.org => ./third_party/gio` no `go.mod`.
 Ao subir a versão do Gio: recopiar do module cache e reaplicar este trecho
 (procure por "patch acessos" no arquivo).

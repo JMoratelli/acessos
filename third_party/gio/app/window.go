@@ -987,7 +987,11 @@ func Decorated(enabled bool) Option {
 // impossible and leaves uncomposited garbage wherever the app draws
 // transparent pixels.
 //
-// Translucent windows are supported on Wayland.
+// Translucent windows are supported on Wayland and on Windows. On
+// Windows it also implies giving up the system drop shadow of an
+// undecorated window: the two cannot coexist (see the Configure of
+// os_windows.go), and an app that draws its own translucent card draws
+// its own shadow anyway.
 func Translucent(enabled bool) Option {
 	return func(_ unit.Metric, cnf *Config) {
 		cnf.Translucent = enabled
