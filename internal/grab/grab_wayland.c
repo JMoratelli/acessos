@@ -594,7 +594,27 @@ void grab_soltar_wayland(Grab *g) {
     pthread_mutex_unlock(&g->clip_m);
     if (g->data_dev) wl_proxy_destroy((struct wl_proxy *)g->data_dev);
     if (g->data_mgr) wl_proxy_destroy((struct wl_proxy *)g->data_mgr);
-    if (g->keyboard) wl_keyboard_release(g->keyboard);
+    /* release SO existe da versao 3 em diante do wl_keyboard; abaixo
+     * disso o pedido e um opcode que o compositor nao conhece, ele
+     * responde com ERRO DE PROTOCOLO e derruba a conexao inteira:
+     *
+     *   wl_display#1: error 1: invalid version for wl_keyboard#25.release
+     *                 (1, need at least 3)
+     *
+     * E o nosso caso: o seat e vinculado com versao 1 la em cima
+     * (wl_registry_bind com 1), entao o teclado tambem nasce v1. Isto so
+     * apareceu quando o Stop passou a ser chamado de verdade — pela
+     * janela de sessao que fecha —, porque antes ninguem desmontava nada.
+     *
+     * Aqui a conexao ja estava indo embora de qualquer jeito, mas erro de
+     * protocolo e fatal para ela e nao ha por que provoca-lo. */
+    if (g->keyboard) {
+        if (wl_proxy_get_version((struct wl_proxy *)g->keyboard) >= 3) {
+            wl_keyboard_release(g->keyboard);
+        } else {
+            wl_proxy_destroy((struct wl_proxy *)g->keyboard);
+        }
+    }
     if (g->seat) wl_proxy_destroy((struct wl_proxy *)g->seat);
     if (g->registry) wl_proxy_destroy((struct wl_proxy *)g->registry);
     g->data_dev = NULL;

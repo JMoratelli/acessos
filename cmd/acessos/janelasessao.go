@@ -86,6 +86,17 @@ type janelaSessao struct {
 	decoraSistema bool
 	maximizada    bool
 
+	// encerrar distingue FECHAR de DEVOLVER, que são as duas saídas desta
+	// janela e não podem significar a mesma coisa:
+	//
+	//	⧉  devolve a aba para a tira. A sessão continua viva.
+	//	✕  ENCERRA a sessão, como o X da aba na tira sempre fez.
+	//
+	// Os dois fechariam a janela; sem esta marca, o ✕ virava um segundo
+	// botão de devolver e o operador ficava sem como encerrar uma sessão
+	// destacada a não ser reacoplando antes.
+	encerrar bool
+
 	// tagConteudo é o alvo de ponteiro DESTA janela. Um por janela: o da
 	// principal é outro, e compartilhar faria o Gio entregar o evento de
 	// uma para a outra.
@@ -193,9 +204,17 @@ func (j *janelaSessao) laco() {
 		// ainda vivo — ver tratarBotoes.
 		j.est.grab.Load().Liberar()
 
-		// Devolver acontece SEMPRE: fechamento normal, X do compositor
-		// ou pânico contido. A janela é um visor, não a dona da sessão,
-		// e a sessão continua viva no processo-filho dela.
+		if j.encerrar {
+			// Pedido explícito de encerrar (o ✕). A aba NÃO volta: some
+			// das duas janelas, e o processo-filho da sessão recebe o
+			// stop. É o que o X sempre significou na tira.
+			j.t.Close()
+			return
+		}
+		// Devolver é o padrão: fechamento pelo ⧉, X do compositor quando
+		// ele desenha a moldura, ou pânico contido. A janela é um visor,
+		// não a dona da sessão, e a sessão continua viva no
+		// processo-filho dela.
 		if j.aoDevolver != nil {
 			j.aoDevolver(j.t)
 		}
@@ -328,9 +347,20 @@ func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 		}
 	}
 	if j.btnFechar.Clicked(gtx) {
-		// Fechar devolve a aba, como o botão de reacoplar — ver o defer do
-		// laço. Direto, sem agendar: ActionClose é a exceção documentada
-		// em acaojanela.go.
+		// ENCERRA a sessão, não devolve. Mesmo peso do X da aba na tira,
+		// e sem confirmação pelo mesmo motivo: lá também não há, e uma
+		// janela que pede confirmação onde a tira não pede seria a
+		// inconsistência pior.
+		//
+		// A captura é solta aqui, com o display ainda vivo, como no
+		// caminho de devolver — depois do fechamento só resta Liberar.
+		j.encerrar = true
+		g := j.est.grab.Load()
+		g.Inibir(false)
+		g.Stop()
+		j.est.grab.Store(nil)
+		// Direto, sem agendar: ActionClose é a exceção documentada em
+		// acaojanela.go.
 		j.w.Perform(system.ActionClose)
 	}
 	if j.btnReatar.Clicked(gtx) {
@@ -390,26 +420,42 @@ func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
 					return botaoIcone(gtx, &j.btnTelaCheia, ic, tema.Sec, tema.Texto)
 				},
 			}
-			// Botões de janela só quando a decoração é NOSSA e fora da
-			// tela cheia: com a do sistema por cima eles seriam uma
-			// segunda fileira, e em tela cheia não há janela para
-			// minimizar ou maximizar.
-			if !j.decoraSistema && !j.telaCheia {
-				extras = append(extras,
-					func(gtx layout.Context) layout.Dimensions {
-						return botaoIcone(gtx, &j.btnMin, icons.ContentRemove,
-							tema.Sec, tema.Texto)
-					},
-					func(gtx layout.Context) layout.Dimensions {
-						ic := icons.ActionOpenInNew
-						if j.maximizada {
-							ic = icons.ActionFlipToFront
-						}
-						return botaoIcone(gtx, &j.btnMax, ic, tema.Sec, tema.Texto)
-					},
-					func(gtx layout.Context) layout.Dimensions {
+			// Botões de JANELA, num grupo só e colados entre si — é o
+			// canto direito que todo mundo procura para minimizar ou
+			// fechar, e espalhá-los entre os controles da sessão faria
+			// procurar.
+			//
+			// Valem também em TELA CHEIA: ali não há moldura nenhuma, e
+			// sem eles não há como minimizar nem fechar sem antes sair
+			// da tela cheia. O de maximizar é o único que fica de fora,
+			// porque em tela cheia não significa nada — quem cuida do
+			// tamanho ali é o ⛶ ao lado.
+			//
+			// Some quando o compositor recusa a decoração do cliente e
+			// desenha a dele: aí estes seriam uma segunda fileira.
+			if !j.decoraSistema {
+				extras = append(extras, func(gtx layout.Context) layout.Dimensions {
+					filhos := []layout.FlexChild{
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return botaoIcone(gtx, &j.btnMin, icons.ContentRemove,
+								tema.Sec, tema.Texto)
+						}),
+					}
+					if !j.telaCheia {
+						filhos = append(filhos, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							ic := icons.ActionOpenInNew
+							if j.maximizada {
+								ic = icons.ActionFlipToFront
+							}
+							return botaoIcone(gtx, &j.btnMax, ic, tema.Sec, tema.Texto)
+						}))
+					}
+					filhos = append(filhos, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return botaoFechar(gtx, &j.btnFechar)
-					})
+					}))
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.
+						Layout(gtx, filhos...)
+				})
 			}
 			return layoutBarraSessao(gtx, j.th, a, extras...)
 		}),
