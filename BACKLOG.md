@@ -21,7 +21,6 @@ se refere à numeração velha; o git conta o que era.
 2. Cursor remoto — conferir contra máscaras de verdade
 3. Capturas de tela do metainfo
 4. Tela cheia
-5. FreeRDP do Windows compilado com flag experimental
 
 Atualizado em 2026-09-19.
 
@@ -106,16 +105,3 @@ Por onde entra:
   ela só pode disparar quando `telaCheia` já está true — nunca competir
   com o que a sessão remota também usa, mesmo cuidado que F12, Ctrl+W e
   Ctrl+G já tiveram que ter quando foram resolvidos (está no git).
-
-## 5. FreeRDP do Windows compilado com flag experimental
-
-O pacote `freerdp` do MSYS2 (3.31.1-1, o mesmo que o instalador embarca) é
-compilado com `WITH_VAAPI_H264_ENCODING=ON`, e a própria libfreerdp avisa
-a cada conexão que "[experimental] build options might crash the
-application". VA-API é coisa de Linux e o caminho não deve nem ser
-exercitado por um cliente no Windows, mas é a única diferença de BUILD
-conhecida entre o FreeRDP do Windows e o do Flatpak — e queda "sem
-motivo" no Windows é justamente o que se estava caçando.
-
-O trabalho é: ver se uma versão mais nova do pacote sai sem a flag e, se
-não sair, compilar o FreeRDP do zero para o sysroot do instalador.
