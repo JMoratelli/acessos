@@ -16,7 +16,6 @@ import (
 
 	"acessos-go/internal/chaveiro"
 	"acessos-go/internal/conexoes"
-	"acessos-go/internal/grab"
 
 	"gioui.org/app"
 	"gioui.org/io/event"
@@ -394,12 +393,6 @@ func newTab(w *app.Window, spec map[string]string) (Tab, error) {
 	}
 }
 
-// currentGrab é a captura Wayland ativa (teclado + clipboard + atalhos) —
-// uma só pra janela inteira, compartilhada por todas as abas. Os callbacks
-// de teclado/clipboard são roteados pra aba ATIVA no momento (ver
-// runApp/activeTab), não pra uma sessão fixa.
-var currentGrab atomic.Pointer[grab.Handle]
-
 var contentTag = new(int)
 
 // filtroInicial preenche o campo de filtro na abertura (flag -filtro).
@@ -615,6 +608,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 
 	activeTab := func() Tab { return bar.active() }
 
+	// O que era global quando havia uma janela só: captura, inibição e a
+	// marca de aba à vista. Ver janela.go.
+	est := novoEstadoJanela(w)
+	defer esquecerJanela(w)
+
 	for {
 		// Trabalho vindo de outras janelas (a caixa de busca) e do socket
 		// (segunda invocação do app) roda AQUI, e não mais no começo do
@@ -649,7 +647,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 		default:
 			// Entrada específica de plataforma (no Linux, o grab de
 			// teclado/clipboard por Wayland) — ver entrada_*.go.
-			tratarEventoPlataforma(w, e, activeTab)
+			tratarEventoPlataforma(est, w, e, activeTab)
 			// O explorer de arquivos (botão "procurar…" dos Ajustes)
 			// precisa do handle nativo da janela para abrir o diálogo
 			// já ancorado nela — ele mesmo ignora o que não reconhece.
@@ -667,13 +665,13 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 		case app.FrameEvent:
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
-			atualizarInibicao(activeTab())
+			est.atualizarInibicao(activeTab())
 			gtx := app.NewContext(&ops, e)
 			// Teclado e clipboard fora do Linux (Windows) passam pelo
 			// próprio Gio, não pelo grab — ver entrada_outros.go. No
 			// Linux estas duas só repassam pro caminho de sempre.
 			tratarTecladoFrame(w, gtx, activeTab)
-			tratarClipboardFrame(gtx, activeTab)
+			tratarClipboardFrame(est, gtx, activeTab)
 			// A escala da interface entra AQUI, antes de qualquer layout:
 			// tudo o que é medido em Dp ou Sp no quadro já nasce no
 			// tamanho escolhido, sem cada widget precisar saber disso.
@@ -862,7 +860,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			//
 			// Continua valendo o de sempre: quem publica no clipboard do
 			// sistema é ESTE laço, nunca as goroutines das sessões.
-			marcarAbaAtiva(activeTab())
+			marcarAbaAtiva(w, activeTab())
 		}
 	}
 }
@@ -890,31 +888,6 @@ func querTeclado(t Tab) bool {
 		return true
 	}
 	return false
-}
-
-// inibicaoLigada guarda o estado já aplicado, pra não refazer o pedido a
-// cada frame.
-var inibicaoLigada bool
-
-// atualizarInibicao liga a captura dos atalhos do compositor só enquanto
-// uma TELA remota está em foco. O SSH recebe o teclado cru (precisa de
-// Ctrl+C, setas, Tab) mas NÃO inibe: num terminal ninguém espera perder o
-// Alt+Tab do próprio desktop.
-func atualizarInibicao(t Tab) {
-	quer := false
-	if _, ok := t.(telaRemota); ok {
-		quer = true
-	}
-	if temDialogo() || focoEmCampo.Load() {
-		// diálogo aberto ou campo de texto em foco devolve os atalhos ao
-		// compositor: o foco está aqui, não na máquina remota.
-		quer = false
-	}
-	if quer == inibicaoLigada {
-		return
-	}
-	inibicaoLigada = quer
-	currentGrab.Load().Inibir(quer)
 }
 
 // Posição da área de conteúdo na janela, atualizada a cada quadro. O menu

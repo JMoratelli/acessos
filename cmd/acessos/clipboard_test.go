@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gioui.org/app"
 	"sync"
 	"testing"
 )
@@ -32,8 +33,10 @@ func TestPublicarClipboardConcorrente(t *testing.T) {
 
 // Sessão em segundo plano não rouba o clipboard de quem está na tela.
 func TestSoAbaAtivaPublica(t *testing.T) {
+	limparAbasAtivas(t)
+	w := new(app.Window)
 	a, b := &abaFalsa{}, &abaFalsa{}
-	marcarAbaAtiva(a)
+	marcarAbaAtiva(w, a)
 	if !ehAbaAtiva(a) {
 		t.Fatal("a aba marcada deveria ser a ativa")
 	}

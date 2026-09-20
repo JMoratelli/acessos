@@ -19,7 +19,8 @@ import (
 // Modifiers confiável (diferente do Wayland) e clipboard.ReadCmd/WriteCmd já
 // resolvem sozinhos contra a API do Windows. tratarTecladoFrame e
 // tratarClipboardFrame são a ponte que faltava — ver BACKLOG.md, itens 1 e 2.
-func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) {}
+func tratarEventoPlataforma(est *estadoJanela, w *app.Window, e event.Event, activeTab func() Tab) {
+}
 
 // tagTecladoOutros é o alvo do foco de teclado que reivindicamos quando a
 // aba ativa é uma sessão remota — ver tratarTecladoFrame.
@@ -137,7 +138,7 @@ var clipboardLidoOutros clipboardSync
 // (entregarClipboard, que no Windows não fazia nada — currentGrab é
 // sempre nil). O motor dos dois lados (VNC/RDP) já manda e recebe texto
 // pelos próprios canais; só faltava esta ponte (BACKLOG.md, item 2).
-func tratarClipboardFrame(gtx layout.Context, activeTab func() Tab) {
+func tratarClipboardFrame(est *estadoJanela, gtx layout.Context, activeTab func() Tab) {
 	gtx.Execute(clipboard.ReadCmd{Tag: tagClipboardOutros})
 	for {
 		e, ok := gtx.Event(transfer.TargetFilter{Target: tagClipboardOutros, Type: "application/text"})

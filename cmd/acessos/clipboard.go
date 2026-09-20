@@ -61,10 +61,12 @@ func publicarClipboard(w *app.Window, texto string) {
 	}
 }
 
-// entregarClipboard roda no laço de quadro, e só ali.
-func entregarClipboard() {
+// entregarClipboard roda no laço de quadro, e só ali. Recebe o estado da
+// janela porque a captura é DELA: publicar pela captura de outra janela
+// mandaria o texto por uma superfície que não é a que está em foco.
+func entregarClipboard(e *estadoJanela) {
 	if p := clipPendente.Swap(nil); p != nil {
-		currentGrab.Load().SetClipboardText(*p)
+		e.grab.Load().SetClipboardText(*p)
 	}
 }
 
@@ -97,15 +99,5 @@ func clipboardSistema() string {
 
 // ---- aba ativa ----
 //
-// Marcada a cada quadro pelo laço principal. Serve para as sessões em
-// segundo plano não disputarem o clipboard do sistema: VNC e RDP mandam o
-// clipboard do servidor assim que o canal abre, e sem este filtro a
-// última aba a conectar roubava o que o operador tinha acabado de copiar.
-var abaAtivaRef atomic.Pointer[Tab]
-
-func marcarAbaAtiva(t Tab) { abaAtivaRef.Store(&t) }
-
-func ehAbaAtiva(t Tab) bool {
-	p := abaAtivaRef.Load()
-	return p != nil && *p == t
-}
+// A marca de aba à vista mora em janela.go: virou um mapa por janela
+// quando a sessão remota passou a poder sair para janela própria.

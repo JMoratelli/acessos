@@ -65,7 +65,7 @@ func (n *invalidador) disparar(w *app.Window) {
 // marcado, e aí o pedido tem de passar, sob pena de a primeira imagem
 // nunca aparecer.
 func abaVisivel(t Tab) bool {
-	return abaAtivaRef.Load() == nil || ehAbaAtiva(t)
+	return nenhumaAbaMarcada() || ehAbaAtiva(t)
 }
 
 func invalidarSeVisivel(w *app.Window, t Tab) {

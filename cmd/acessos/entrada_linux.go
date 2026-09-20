@@ -15,7 +15,7 @@ import (
 // tratarEventoPlataforma cuida do que só existe no Linux/Wayland: o grab
 // de teclado, clipboard e inibição de atalhos do compositor, armado a
 // partir dos ponteiros crus que o Gio expõe em app.WaylandViewEvent.
-func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) {
+func tratarEventoPlataforma(est *estadoJanela, w *app.Window, e event.Event, activeTab func() Tab) {
 	ev, ok := e.(app.WaylandViewEvent)
 	if !ok {
 		return
@@ -36,7 +36,7 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 	// clipboard; só o inibidor de atalhos, que é amarrado à
 	// superfície original, poderia ficar desatualizado — trade-off
 	// aceitável perto de derrubar o processo inteiro.
-	if ev.Valid() && currentGrab.Load() == nil {
+	if ev.Valid() && est.grab.Load() == nil {
 		// Sobe antes do grab: a partir do grab.Start abaixo já podem
 		// chegar teclas, e elas precisam de alguém drenando a fila.
 		iniciarFilaTeclas()
@@ -63,7 +63,7 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// release do Ctrl e do Shift não chega — contando,
 				// eles ficariam presos e o F12 sozinho nunca mais
 				// funcionaria.
-				if keysym == f12 && pressed && currentGrab.Load().Modificadores() == 0 {
+				if keysym == f12 && pressed && est.grab.Load().Modificadores() == 0 {
 					pendingToggleSidebar.Store(true)
 					w.Invalidate()
 					return
@@ -132,7 +132,7 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// não só na que por acaso estava em foco quando o Wayland
 				// avisou que o clipboard mudou (ver clipboard.go).
 				registrarClipboardSistema(text)
-				// abaAtivaRef, e NÃO activeTab(): este callback roda numa
+				// abaAtivaDe(w), e NÃO activeTab(): este callback roda numa
 				// goroutine solta (ver grab.go), e activeTab() lê o índice
 				// e a fatia de abas da barra sem trava, enquanto o laço de
 				// quadro reescreve os dois ao abrir e fechar aba. É corrida
@@ -146,14 +146,14 @@ func tratarEventoPlataforma(w *app.Window, e event.Event, activeTab func() Tab) 
 				// (tratarClipboardFrame recebe o gtx), ou seja na própria
 				// goroutine que mexe na barra — ler activeTab() ali é
 				// seguro. Conferir que continua assim antes de propagar.
-				if p := abaAtivaRef.Load(); p != nil {
-					if h, ok := (*p).(clipboardReceiver); ok {
+				if t := abaAtivaDe(w); t != nil {
+					if h, ok := t.(clipboardReceiver); ok {
 						h.OnLocalClipboard(text)
 					}
 				}
 			},
 		)
-		currentGrab.Store(gh)
+		est.grab.Store(gh)
 		if gh != nil {
 			fmt.Println("teclado + clipboard via wayland direto + captura de atalhos do compositor ativa")
 		} else {
@@ -171,6 +171,6 @@ func tratarTecladoFrame(w *app.Window, gtx layout.Context, activeTab func() Tab)
 // clipboard.go. Fora do Linux (entrada_outros.go) é diferente: lá não há
 // grab nenhum publicando, então a entrega usa clipboard.WriteCmd do
 // próprio Gio.
-func tratarClipboardFrame(gtx layout.Context, activeTab func() Tab) {
-	entregarClipboard()
+func tratarClipboardFrame(est *estadoJanela, gtx layout.Context, activeTab func() Tab) {
+	entregarClipboard(est)
 }
