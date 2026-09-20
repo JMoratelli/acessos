@@ -49,11 +49,6 @@ metade do porte exige.
   e o ícone do executável (item 4). O passo novo copia
   `ossl-modules/legacy.dll` do sysroot e o build FALHA se ele não
   estiver lá — de propósito.
-- **O `grab` continua só testável no Linux.** Teclado e clipboard por
-  Wayland (`internal/grab`) não têm equivalente no Windows, que passa
-  pelo próprio Gio (`entrada_outros.go`). Nada foi mexido ali nesta
-  rodada; fica anotado porque é a metade que a máquina Windows não
-  alcança.
 
 ## 3d. Busca por atalho global — o que ainda falta
 
