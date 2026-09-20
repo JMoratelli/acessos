@@ -315,7 +315,9 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.fh.Store(q.TotalH)
 			publicarTela(&t.tela, acum)
 			t.splash.concluir()
-			t.w.Invalidate()
+			// Só se a aba estiver à vista: quadro para aba escondida
+			// redesenha a janela inteira sem mostrar nada de novo.
+			invalidarSeVisivel(t.w, t)
 			// O crédito do quadro SEGUINTE só sai agora: é o que impede o
 			// filho de encher a fila do socket mais rápido do que isto
 			// aqui consome. E sai devagar quando a aba não está à vista —

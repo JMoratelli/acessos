@@ -657,9 +657,6 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
 			atualizarInibicao(activeTab())
-			// quem publica no clipboard do sistema é ESTE laço, nunca as
-			// goroutines das sessões — ver clipboard.go
-			marcarAbaAtiva(activeTab())
 			gtx := app.NewContext(&ops, e)
 			// Teclado e clipboard fora do Linux (Windows) passam pelo
 			// próprio Gio, não pelo grab — ver entrada_outros.go. No
@@ -836,6 +833,25 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			recorte.Pop()
 
 			e.Frame(gtx.Ops)
+
+			// A marca da aba ativa é gravada no FIM do quadro, e não no
+			// começo, porque a TROCA de aba acontece durante ele: o
+			// clique é lido dentro de bar.layout (tabbar.go, b.idx = i) e
+			// o conteúdo já desenha a aba nova. Marcando no começo, o
+			// quadro inteiro em que a pessoa troca de aba ficava
+			// apontando para a ANTERIOR.
+			//
+			// Isso não era visível enquanto a marca só arbitrava o
+			// clipboard (ver clipboard.go), mas passou a ser: quem decide
+			// pedir quadro por ela — invalidarSeVisivel — travaria a aba
+			// recém-aberta, porque sem quadro a marca nunca se corrigiria
+			// e sem marca certa não sai quadro. Aqui ela reflete o que
+			// acabou de ser DESENHADO, que é a definição certa de "aba
+			// à vista".
+			//
+			// Continua valendo o de sempre: quem publica no clipboard do
+			// sistema é ESTE laço, nunca as goroutines das sessões.
+			marcarAbaAtiva(activeTab())
 		}
 	}
 }

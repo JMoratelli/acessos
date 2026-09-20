@@ -51,3 +51,25 @@ func (n *invalidador) disparar(w *app.Window) {
 		}
 	}()
 }
+
+// invalidarSeVisivel pede um quadro só quando a aba está à vista.
+//
+// As goroutines de sessão pediam quadro da JANELA INTEIRA a cada
+// atualização, mesmo com a aba escondida atrás de outra — e só a aba ativa
+// recebe Layout, então esse quadro redesenhava a interface para não mostrar
+// nada de novo. Com várias sessões abertas em segundo plano, a janela
+// ficava sendo redesenhada continuamente sem ninguém olhando.
+//
+// A marca da aba ativa é gravada no fim de cada quadro (ver main.go). A
+// salvaguarda do nil é o arranque: antes do primeiro quadro ninguém foi
+// marcado, e aí o pedido tem de passar, sob pena de a primeira imagem
+// nunca aparecer.
+func abaVisivel(t Tab) bool {
+	return abaAtivaRef.Load() == nil || ehAbaAtiva(t)
+}
+
+func invalidarSeVisivel(w *app.Window, t Tab) {
+	if abaVisivel(t) {
+		w.Invalidate()
+	}
+}

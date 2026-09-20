@@ -507,7 +507,12 @@ type leitorAvisado struct {
 
 func (l leitorAvisado) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
-	if n > 0 {
+	// Só pede quadro com a aba à vista. O terminal continua sendo
+	// alimentado do mesmo jeito — quem consome os bytes é o vt10x, numa
+	// goroutine própria —, então nada se perde: o que deixa de acontecer
+	// é a janela inteira redesenhar por causa de um `tail -f` rodando numa
+	// aba que ninguém está olhando.
+	if n > 0 && abaVisivel(l.t) {
 		l.t.invalidar()
 	}
 	return n, err
