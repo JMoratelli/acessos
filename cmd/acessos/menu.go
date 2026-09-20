@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gioui.org/app"
 	"image"
 
 	"gioui.org/io/event"
@@ -23,15 +24,24 @@ type itemMenu struct {
 }
 
 type menuContexto struct {
+	// dono é a janela que abriu o menu; só ela o desenha.
+	dono  *app.Window
 	pos   image.Point
 	itens []*itemMenu
 }
 
 var menuAtual *menuContexto
 
-func abrirMenu(pos image.Point, itens []*itemMenu) { menuAtual = &menuContexto{pos: pos, itens: itens} }
-func fecharMenu()                                  { menuAtual = nil }
-func temMenu() bool                                { return menuAtual != nil }
+// abrirMenu guarda QUEM abriu. Com a sessão em janela própria existem duas
+// janelas desenhando, e um menu sem dono aparecia na principal, na posição
+// que o ponteiro tinha lá — enquanto o clique tinha sido na destacada.
+// Resultado: o menu de teclas especiais, que é o principal motivo de a
+// barrinha existir em tela cheia, não aparecia onde foi pedido.
+func abrirMenu(dono *app.Window, pos image.Point, itens []*itemMenu) {
+	menuAtual = &menuContexto{dono: dono, pos: pos, itens: itens}
+}
+func fecharMenu()   { menuAtual = nil }
+func temMenu() bool { return menuAtual != nil }
 
 var tagMenuFora = new(int)
 
@@ -39,9 +49,9 @@ const menuLargura = unit.Dp(190)
 
 // layoutMenu desenha o menu ancorado na posição do clique. Clique fora
 // fecha — menu que só fecha escolhendo algo prende quem abriu por engano.
-func layoutMenu(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func layoutMenu(gtx layout.Context, th *material.Theme, janela *app.Window) layout.Dimensions {
 	m := menuAtual
-	if m == nil {
+	if m == nil || m.dono != janela {
 		return layout.Dimensions{}
 	}
 	tela := gtx.Constraints.Max

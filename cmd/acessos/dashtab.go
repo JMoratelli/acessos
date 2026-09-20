@@ -1212,7 +1212,7 @@ func (d *dashTab) aoNovaGrupo(caminhoGrupo string) {
 	if d.aoNova == nil {
 		return
 	}
-	abrirMenu(d.ultimaPos.Add(offsetConteudo), []*itemMenu{
+	abrirMenu(janelaPrincipal, d.ultimaPos.Add(offsetConteudo), []*itemMenu{
 		{rotulo: "Nova conexão aqui…", acao: func() { d.aoNova(caminhoGrupo) }},
 	})
 }

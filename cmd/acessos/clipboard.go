@@ -45,7 +45,19 @@ func (c *clipboardSync) checkAndSet(text string) bool {
 // Então qualquer lugar que queira publicar apenas ENFILEIRA aqui; quem
 // entrega é o laço de quadro. Só o último texto interessa: publicar dois
 // clipboards no mesmo quadro deixaria valer o último de qualquer forma.
-var clipPendente atomic.Pointer[string]
+// clipPendente guarda o texto E a janela por onde ele deve sair.
+//
+// Era só o texto, e com uma janela isso bastava. Com duas, quem desenhasse
+// primeiro consumia a fila e publicava pela PRÓPRIA captura — o texto
+// copiado dentro da sessão destacada saía pela superfície da janela
+// principal, que não é a que está em foco. Ou seja: copiar dentro da tela
+// cheia às vezes simplesmente não valia.
+type clipParaJanela struct {
+	w     *app.Window
+	texto string
+}
+
+var clipPendente atomic.Pointer[clipParaJanela]
 
 // publicarClipboard pode ser chamada de QUALQUER goroutine.
 func publicarClipboard(w *app.Window, texto string) {
@@ -54,8 +66,7 @@ func publicarClipboard(w *app.Window, texto string) {
 	// acabou de publicar (depende do compositor), e sem isto colar logo
 	// em seguida — mesmo na mesma aba — podia devolver o texto antigo.
 	registrarClipboardSistema(texto)
-	t := texto
-	clipPendente.Store(&t)
+	clipPendente.Store(&clipParaJanela{w: w, texto: texto})
 	if w != nil {
 		w.Invalidate()
 	}
@@ -65,8 +76,16 @@ func publicarClipboard(w *app.Window, texto string) {
 // janela porque a captura é DELA: publicar pela captura de outra janela
 // mandaria o texto por uma superfície que não é a que está em foco.
 func entregarClipboard(e *estadoJanela) {
-	if p := clipPendente.Swap(nil); p != nil {
-		e.grab.Load().SetClipboardText(*p)
+	p := clipPendente.Load()
+	if p == nil || p.w != e.w {
+		// Não é para esta janela: deixa na fila para a dona consumir.
+		return
+	}
+	// CompareAndSwap, não Swap: duas janelas chegam aqui e só a dona pode
+	// tirar da fila, sem correr o risco de tirar um valor novo que outra
+	// acabou de pôr.
+	if clipPendente.CompareAndSwap(p, nil) {
+		e.grab.Load().SetClipboardText(p.texto)
 	}
 }
 

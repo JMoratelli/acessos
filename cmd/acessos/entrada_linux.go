@@ -63,7 +63,8 @@ func tratarEventoPlataforma(est *estadoJanela, w *app.Window, e event.Event, act
 				// release do Ctrl e do Shift não chega — contando,
 				// eles ficariam presos e o F12 sozinho nunca mais
 				// funcionaria.
-				if keysym == f12 && pressed && est.grab.Load().Modificadores() == 0 {
+				if est.principal && keysym == f12 && pressed &&
+					est.grab.Load().Modificadores() == 0 {
 					pendingToggleSidebar.Store(true)
 					w.Invalidate()
 					return
@@ -89,7 +90,7 @@ func tratarEventoPlataforma(est *estadoJanela, w *app.Window, e event.Event, act
 				// "abortar" no readline e "Get Help" no nano. Um
 				// terminal de verdade nunca rouba essas duas pra
 				// si; a aba continua fechando pelo X dela.
-				if !remoto && ctrlDown.Load() && pressed {
+				if est.principal && !remoto && ctrlDown.Load() && pressed {
 					switch keysym {
 					case 'w', 'W':
 						pendingCloseActive.Store(true)

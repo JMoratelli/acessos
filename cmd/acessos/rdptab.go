@@ -18,6 +18,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
+	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -68,7 +69,15 @@ type rdpTab struct {
 	// é destacada para janela própria e quando volta para a tira.
 	// Atômica porque as goroutines de rede e de quadro leem daqui, e a
 	// troca acontece no laço da janela principal.
-	jan               atomic.Pointer[app.Window]
+	jan atomic.Pointer[app.Window]
+	// tha é o material.Theme da janela que desenha esta aba agora.
+	//
+	// Viaja JUNTO com a janela, e não é zelo: o text.Shaper de um Theme é
+	// um cache sem trava, e duas goroutines de quadro no mesmo shaper dão
+	// panic de mapa — que não devolve erro, derruba o processo inteiro com
+	// todas as sessões junto. É o mesmo motivo do temaBusca (tema.go), e
+	// aqui a porta era o splash, que desenhava com o temaApp global.
+	tha               atomic.Pointer[material.Theme]
 	title             string
 	host              string
 	port              int
@@ -141,10 +150,24 @@ var rotulosModoRDP = []string{"Encaixar", "1:1", "Dinâmico"}
 // janela errada simplesmente não repinta nada.
 func (t *rdpTab) janela() *app.Window { return t.jan.Load() }
 
-// TrocarJanela reaponta a aba. Chamado ao destacar a sessão e ao devolvê-la
-// à tira — ver janelasessao.go. A sessão NÃO é tocada: quem muda é só quem
-// desenha, e o processo-filho que hospeda o RDP nem fica sabendo.
-func (t *rdpTab) TrocarJanela(w *app.Window) { t.jan.Store(w) }
+// temaDaJanela devolve o Theme da janela atual, caindo no do app enquanto
+// a aba vive na janela principal.
+func (t *rdpTab) temaDaJanela() *material.Theme {
+	if th := t.tha.Load(); th != nil {
+		return th
+	}
+	return temaApp
+}
+
+// TrocarJanela reaponta a aba: janela E tema, que andam juntos porque o
+// Theme é por janela de topo (ver tha). Chamado ao destacar a sessão e ao
+// devolvê-la à tira — ver janelasessao.go. A sessão NÃO é tocada: quem
+// muda é só quem desenha, e o processo-filho que hospeda o RDP nem fica
+// sabendo.
+func (t *rdpTab) TrocarJanela(w *app.Window, th *material.Theme) {
+	t.jan.Store(w)
+	t.tha.Store(th)
+}
 
 func newRDPTab(w *app.Window, spec map[string]string) *rdpTab {
 	host := spec["host"]
@@ -157,7 +180,7 @@ func newRDPTab(w *app.Window, spec map[string]string) *rdpTab {
 		religar: make(chan struct{}, 1),
 	}
 	t.jan.Store(w)
-	t.splash = novoSplash(w)
+	t.splash = novoSplash(t.janela)
 	t.auto.Store(true)
 	t.clipOn.Store(true)
 	t.modo.Store(modoDinamico)
@@ -197,7 +220,7 @@ func (t *rdpTab) manageSession(user, pass, domain string) {
 		title:   t.title,
 		stop:    t.stop,
 		religar: t.religar,
-		w:       t.janela(),
+		janela:  t.janela,
 		caiu:    &t.caiu,
 		auto:    &t.auto,
 		rodar:   func() fimSessao { return t.rodarSessao(user, pass, domain) },
@@ -380,13 +403,23 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			// vivo para a aba continuar desenhando enquanto se pergunta.
 			go func() {
 				resp := make(chan int, 1)
-				pedirConfiancaCertificado(t.janela(), rdp.Certificado{
+				// A janela PRINCIPAL, mesmo com a aba destacada: o
+				// modal é desenhado só lá. Pedir na destacada deixava
+				// o diálogo invisível e a sessão parada esperando uma
+				// resposta que ninguém tinha como dar.
+				pedirConfiancaCertificado(janelaPrincipal, rdp.Certificado{
 					Host: c.Host, Porta: c.Porta,
 					NomeComum: c.NomeComum, Assunto: c.Assunto,
 					Emissor: c.Emissor, Digital: c.Digital,
 					DigitalAnterior: c.DigitalAnterior, Mudou: c.Mudou,
 				}, func(d int) { resp <- d })
-				t.janela().Invalidate()
+				// A PRINCIPAL, que é quem desenha o modal — e trazida à
+				// frente, porque com a sessão em tela cheia por cima ela
+				// pode estar atrás e o pedido passaria despercebido.
+				janelaPrincipal.Invalidate()
+				foraDoQuadro(func() {
+					janelaPrincipal.Perform(system.ActionRaise)
+				})
 				select {
 				case d := <-resp:
 					_ = proc.CertResposta(d)
@@ -466,7 +499,7 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 		tr.Pop()
 	} else {
 		ic, corSelo, _ := t.Selo()
-		desenharSplash(gtx, temaApp, t.splash,
+		desenharSplash(gtx, t.temaDaJanela(), t.splash,
 			fmt.Sprintf("%s:%d", t.host, t.port), ic, corSelo,
 			&t.btnSplash, t.Reconectar)
 	}
@@ -570,7 +603,7 @@ func (t *rdpTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 		}
 	}
 	if t.btnTeclas.Clicked(gtx) {
-		menuTeclas(ultimaPosPonteiro(), false, func(ks uint32, pressionada bool) {
+		menuTeclas(t.janela(), ultimaPosPonteiro(), false, func(ks uint32, pressionada bool) {
 			kc, ok := keycodeDoKeysym[ks]
 			if !ok {
 				return

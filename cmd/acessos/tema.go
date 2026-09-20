@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"os"
+	"sync"
 	"sync/atomic"
 
 	"gio.tools/icons"
@@ -612,9 +613,35 @@ func sombra(gtx layout.Context, size image.Point, raioDp unit.Dp) {
 
 // icone desenha um ícone vetorial Material. Ícone de verdade, não glifo de
 // fonte: a fonte não tem emoji e desenha "tofu" (□).
+// iconeMu serializa a RASTERIZAÇÃO dos ícones entre as janelas.
+//
+// Os ícones do gio.tools/icons são *widget.Icon de PACOTE — um objeto
+// global por ícone, compartilhado pelo app inteiro. Dentro dele há um
+// cache sem trava (src, op, imgSize, imgColor, em widget/icon.go): quando
+// o tamanho ou a cor pedidos diferem do que está guardado, o Layout
+// rasteriza e ESCREVE nesses campos.
+//
+// Com uma janela só isso nunca importou. Com a sessão em janela própria
+// passam a existir duas goroutines de quadro desenhando os MESMOS objetos
+// — o ícone de reconectar da barrinha, o emblema do splash, o de tela
+// cheia — e duas escritas concorrentes num paint.ImageOp (struct de várias
+// palavras, com ponteiro) rasgam o valor: textura errada, e corrida de
+// dados de verdade sob -race.
+//
+// É a mesma armadilha do text.Shaper, resolvida de outro jeito: o Theme dá
+// para ter um por janela (ver tha, em rdptab.go), o ícone global não —
+// então serializa-se aqui. Custa quase nada: depois da primeira vez o
+// cache acerta e o Layout só lê.
+//
+// ESTE É O ÚNICO ic.Layout do app, de propósito. Desenhar ícone por fora
+// daqui recria o problema sem passar pela trava.
+var iconeMu sync.Mutex
+
 func icone(gtx layout.Context, ic *widget.Icon, cor color.NRGBA, tam unit.Dp) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	gtx.Constraints.Max = image.Pt(gtx.Dp(tam), gtx.Dp(tam))
+	iconeMu.Lock()
+	defer iconeMu.Unlock()
 	return ic.Layout(gtx, cor)
 }
 

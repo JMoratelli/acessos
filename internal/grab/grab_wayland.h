@@ -70,6 +70,14 @@ void grab_clip_definir(Grab *g, const char *utf8, int tam);
  * continuamente para suas janelas — o wl_display_dispatch_pending que ELE
  * ja chama entrega tambem para os nossos listeners. Chamar dispatch por
  * conta propria aqui correria com a leitura do Gio no mesmo socket. */
+/* Desmonte em tres pedacos — o porque esta no .c, junto da implementacao.
+ * Em resumo: cada janela do Gio tem a PROPRIA conexao Wayland, e ela ja
+ * caiu quando o DestroyEvent chega ao laco. Quem fecha por decisao propria
+ * chama grab_parar; quem so descobriu depois chama repeticao+liberar e
+ * PULA o soltar_wayland, senao destroi proxy em display liberado. */
+void grab_parar_repeticao(Grab *g);
+void grab_soltar_wayland(Grab *g);
+void grab_liberar(Grab *g);
 void grab_parar(Grab *g);
 
 #endif

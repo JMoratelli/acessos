@@ -232,7 +232,7 @@ func newSSHTab(w *app.Window, spec map[string]string) (Tab, error) {
 		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
-	t.splash = novoSplash(w)
+	t.splash = novoSplash(func() *app.Window { return w })
 	t.auto.Store(true)
 	t.nomeConexao = spec["rotulo"]
 	if spec["auto"] == "0" {
@@ -286,7 +286,7 @@ func (t *sshTab) laco() {
 		title:      t.titulo,
 		stop:       t.stop,
 		religar:    t.religar,
-		w:          t.w,
+		janela:     func() *app.Window { return t.w },
 		caiu:       &t.caiu,
 		auto:       &t.auto,
 		rodar:      t.sessao,

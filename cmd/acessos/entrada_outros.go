@@ -165,14 +165,19 @@ func tratarClipboardFrame(est *estadoJanela, gtx layout.Context, activeTab func(
 		}
 	}
 
-	if p := clipPendente.Swap(nil); p != nil {
+	// Só o que é DESTA janela, e tirado com CompareAndSwap — mesma regra
+	// do lado Linux (ver entregarClipboard, em clipboard.go): com a sessão
+	// em janela própria há duas goroutines de quadro passando por aqui, e
+	// quem não é a dona não pode consumir a fila da outra.
+	if p := clipPendente.Load(); p != nil && p.w == est.w &&
+		clipPendente.CompareAndSwap(p, nil) {
 		// Pré-marca como já conhecido: sem isto, o próximo ReadCmd lia de
 		// volta o que acabamos de escrever e ecoava pro remoto nesse
 		// instante como se fosse uma cópia local nova.
-		clipboardLidoOutros.checkAndSet(*p)
+		clipboardLidoOutros.checkAndSet(p.texto)
 		gtx.Execute(clipboard.WriteCmd{
 			Type: "application/text",
-			Data: io.NopCloser(strings.NewReader(*p)),
+			Data: io.NopCloser(strings.NewReader(p.texto)),
 		})
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gioui.org/app"
 	"image"
 
 	"gioui.org/layout"
@@ -76,7 +77,7 @@ func enviarCombinacao(c combinacao, tecla func(keysym uint32, pressionada bool))
 
 // menuTeclas monta o menu de combinações ancorado no ponteiro. bloqueado
 // desabilita tudo (sessão em somente-leitura não envia tecla nenhuma).
-func menuTeclas(pos image.Point, bloqueado bool, tecla func(uint32, bool)) {
+func menuTeclas(dono *app.Window, pos image.Point, bloqueado bool, tecla func(uint32, bool)) {
 	var itens []*itemMenu
 	for _, c := range combinacoes {
 		c := c
@@ -88,7 +89,7 @@ func menuTeclas(pos image.Point, bloqueado bool, tecla func(uint32, bool)) {
 		}
 		itens = append(itens, &itemMenu{rotulo: rot, acao: acao})
 	}
-	abrirMenu(pos, itens)
+	abrirMenu(dono, pos, itens)
 }
 
 // botaoTeclas é o botão de teclas especiais da barra de sessão. Só a

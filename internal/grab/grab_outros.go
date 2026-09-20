@@ -25,3 +25,9 @@ func (h *Handle) Inibir(bool)             {}
 func (h *Handle) Modificadores() int      { return 0 }
 func (h *Handle) SetClipboardText(string) {}
 func (h *Handle) Stop()                   {}
+
+// Liberar existe para a assinatura bater com a do Linux. Lá ela solta só o
+// que NÃO fala Wayland, para quem descobriu tarde demais que a conexão da
+// janela já caiu (ver o cabeçalho de grab.go); aqui não há captura
+// nenhuma, então não há o que soltar.
+func (h *Handle) Liberar() {}

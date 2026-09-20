@@ -472,7 +472,7 @@ func (d *dlgConexao) escolherDoChaveiro(protocolo int) {
 	}
 	// na posição do ponteiro, não num ponto fixo: antes o menu nascia no
 	// canto da janela, longe do botão que o abriu.
-	abrirMenu(ultimaPosPonteiro(), itens)
+	abrirMenu(janelaPrincipal, ultimaPosPonteiro(), itens)
 }
 
 func indiceEm(v string, opcoes ...string) int {

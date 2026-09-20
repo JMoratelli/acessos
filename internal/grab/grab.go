@@ -117,7 +117,12 @@ func Start(display, surface unsafe.Pointer,
 		registro.Remover(h.handle)
 		return nil
 	}
+	// Sob a trava: o handle já está no registro desde antes do
+	// grab_iniciar, então um callback do Wayland pode estar lendo h.g
+	// neste instante — e todos os acessores o leem sob RLock.
+	h.mu.Lock()
 	h.g = g
+	h.mu.Unlock()
 	return h
 }
 
@@ -213,29 +218,59 @@ func (h *Handle) SetClipboardText(text string) {
 	C.grab_clip_definir(h.g, cText, C.int(len(text)))
 }
 
-// Stop libera a captura. Idempotente; seguro chamar em um Handle nil.
+// Stop libera a captura por inteiro. SÓ pode ser chamado com a conexão
+// Wayland da janela AINDA VIVA — ou seja, por quem decidiu fechar a
+// janela, antes de pedir o fechamento. Quem só descobriu depois (o X do
+// compositor, que já derrubou a conexão) chama Liberar.
 //
-// Tira do registro ANTES de liberar o C: a partir daí nenhum callback novo
-// acha este Handle, e os que já estavam em voo terminam no ponteiro antigo
-// — que a trava abaixo segura até eles saírem.
+// Idempotente; seguro num Handle nil.
+func (h *Handle) Stop() { h.desmontar(true) }
+
+// Liberar solta só o que NÃO fala Wayland: a thread de repetição, o xkb e
+// a memória da struct.
 //
-// CUIDADO DE QUEM CHAMA, que a trava não resolve: não chame com o
-// wl_display do Gio já em desmonte. Chamar ali derrubava o processo, e é
-// por isso que o app só solta a captura ao fechar uma janela que ele
-// mesmo controla, nunca de dentro do caminho de destruição do Gio.
-func (h *Handle) Stop() {
+// Existe porque cada janela do Gio tem a PRÓPRIA conexão Wayland
+// (newWLWindow → newWLDisplay, em third_party/gio/app/os_wayland.go) e o
+// close() dela enfileira DestroyEvent e EM SEGUIDA desconecta, antes de o
+// laço do cliente ler o evento. Destruir wl_proxy a partir dali é
+// use-after-free num display já liberado, e derruba o processo inteiro —
+// não só a janela que fechou.
+//
+// A inibição de atalhos não fica presa: o compositor solta o que era do
+// cliente quando a conexão cai.
+func (h *Handle) Liberar() { h.desmontar(false) }
+
+func (h *Handle) desmontar(soltarWayland bool) {
 	if h == nil {
 		return
 	}
+	// Fora do registro primeiro: daqui em diante nenhum callback NOVO
+	// acha este Handle.
 	registro.Remover(h.handle)
 
+	// Tira o ponteiro de circulação SOB A TRAVA e trabalha na cópia local
+	// FORA dela. É o que evita dois problemas de uma vez:
+	//
+	//   - os acessores (Modificadores, Inibir, SetClipboardText) veem
+	//     h.g == nil e voltam cedo, sem tocar no que está sendo liberado;
+	//   - o pthread_join lá dentro espera a thread de repetição, que chama
+	//     o callback de tecla, que no app pede Modificadores() e tomaria o
+	//     RLock. Com a trava de escrita na mão aqui, o join esperaria por
+	//     uma thread que espera pela trava. Impasse — e com a janela
+	//     destacada fechando com uma tecla segurada, ele acontece.
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.g == nil {
+	g := h.g
+	h.g = nil
+	h.mu.Unlock()
+	if g == nil {
 		return
 	}
-	C.grab_parar(h.g)
-	h.g = nil
+
+	C.grab_parar_repeticao(g)
+	if soltarWayland {
+		C.grab_soltar_wayland(g)
+	}
+	C.grab_liberar(g)
 }
 
 //export goTecla

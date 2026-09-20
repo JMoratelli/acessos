@@ -29,7 +29,12 @@ import (
 // foi longa demais ou a tentativa terminou em erro — em vez de deixar
 // girando pra sempre sem dar ao operador nenhum jeito de agir.
 type splash struct {
-	w *app.Window
+	// janela é lida a CADA uso, não guardada: a aba pode ter sido
+	// destacada para outra janela depois que o splash nasceu, e um
+	// ponteiro fixo aqui pedia quadro para a janela antiga — o cartão de
+	// reconexão congelava na primeira imagem enquanto a janela errada era
+	// acordada à toa.
+	janela func() *app.Window
 	// disparo é o mesmo invalidador de invalidar.go: chamar w.Invalidate()
 	// cru direto da goroutine do ticker (ver animar) caía na mesma guarda
 	// mayInvalidate do Gio documentada ali — o pedido podia morrer calado
@@ -54,7 +59,7 @@ type splash struct {
 // literal de struct em vez do construtor (ver sftpDeTeste em
 // sftpsel_test.go) nunca chamam novoSplash.
 
-func novoSplash(w *app.Window) *splash { return &splash{w: w} }
+func novoSplash(janela func() *app.Window) *splash { return &splash{janela: janela} }
 
 // iniciar reseta os PASSOS para o começo de uma tentativa nova e garante
 // que o cartão esteja visível. É seguro chamar de novo a cada tentativa,
@@ -71,7 +76,7 @@ func (s *splash) iniciar(passos []string) {
 	s.erro = ""
 	s.proximaEm = time.Time{}
 	s.mu.Unlock()
-	s.disparo.disparar(s.w)
+	s.disparo.disparar(s.janela())
 	s.animar()
 }
 
@@ -88,7 +93,7 @@ func (s *splash) avancar(i int) {
 		s.desde = time.Now()
 	}
 	s.mu.Unlock()
-	s.disparo.disparar(s.w)
+	s.disparo.disparar(s.janela())
 }
 
 // concluir esconde o cartão: a sessão está viva. Barato de chamar de
@@ -103,7 +108,7 @@ func (s *splash) concluir() {
 	s.atual = len(s.passos)
 	s.mu.Unlock()
 	if !jaEscondido {
-		s.disparo.disparar(s.w)
+		s.disparo.disparar(s.janela())
 	}
 }
 
@@ -123,7 +128,7 @@ func (s *splash) setErro(msg string) {
 	s.visivel = true
 	s.erro = msg
 	s.mu.Unlock()
-	s.disparo.disparar(s.w)
+	s.disparo.disparar(s.janela())
 	s.animar()
 }
 
@@ -139,7 +144,7 @@ func (s *splash) aguardar(proximaEm time.Time) {
 	s.visivel = true
 	s.proximaEm = proximaEm
 	s.mu.Unlock()
-	s.disparo.disparar(s.w)
+	s.disparo.disparar(s.janela())
 	s.animar()
 }
 
@@ -183,7 +188,7 @@ func (s *splash) animar() {
 			if !s.foto().visivel {
 				return
 			}
-			s.disparo.disparar(s.w)
+			s.disparo.disparar(s.janela())
 		}
 	}()
 }

@@ -127,6 +127,10 @@ func main() {
 	filtroInicial = *filtro
 
 	w := new(app.Window)
+	// A janela do app, para quem precisa dela sem tê-la em mão: menus de
+	// contexto abertos de dentro de diálogos, e o pedido de confiança de
+	// certificado, que é desenhado só aqui (ver certificadodlg.go).
+	janelaPrincipal = w
 	// Decoração PRÓPRIA: a barra do sistema gastaria uma faixa inteira de
 	// altura só com o nome da janela. Aqui a mesma faixa leva identidade,
 	// menu e botões de janela (ver topbar.go).
@@ -221,7 +225,7 @@ func main() {
 		// é a aba, com o motor portado do Mass SSH Executer.
 		// Botão direito no card: editar, duplicar e remover a conexão.
 		painel.aoMenuCard = func(cx conexoes.Conexao, pos image.Point) {
-			abrirMenu(pos.Add(offsetConteudo), []*itemMenu{
+			abrirMenu(janelaPrincipal, pos.Add(offsetConteudo), []*itemMenu{
 				{rotulo: "Editar…", acao: func() {
 					editarConexao(w, *ini, cx, recarregarIni)
 				}},
@@ -375,6 +379,12 @@ func main() {
 		for _, t := range bar.tabs {
 			t.Close()
 		}
+		// As destacadas não estão mais na tira: sem isto a sessão em
+		// janela própria nunca receberia Close, e o processo-filho dela
+		// ficaria órfão.
+		for _, t := range abasForaDaTira() {
+			t.Close()
+		}
 		os.Exit(0)
 	}()
 
@@ -475,12 +485,12 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 						})
 				}},
 			)
-			abrirMenu(pos, itens)
+			abrirMenu(janelaPrincipal, pos, itens)
 			w.Invalidate()
 		}
 		// Menu do GRUPO: abrir tudo em lote, por protocolo.
 		sb.aoMenuGrupo = func(g *conexoes.Grupo, pos image.Point) {
-			abrirMenu(pos, []*itemMenu{
+			abrirMenu(janelaPrincipal, pos, []*itemMenu{
 				{rotulo: fmt.Sprintf("Abrir grupo (%d máquinas)…", g.Total()), acao: func() {
 					abrirGrupo(w, painel, g)
 				}},
@@ -631,7 +641,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 	// máquina achando que não havia nenhuma.
 	devolverAba := func(t abaDestacavel, chave string) {
 		naJanelaPrincipalInsistindo(w, func() {
-			t.TrocarJanela(w)
+			t.TrocarJanela(w, th)
 			bar.appendCom(t, chave)
 			w.Invalidate()
 		})
@@ -649,7 +659,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 		if !ok {
 			return
 		}
-		abrirJanelaSessao(th, aba.(abaDestacavel), true,
+		abrirJanelaSessao(aba.(abaDestacavel), true,
 			func(v abaDestacavel) { devolverAba(v, chave) })
 	}
 
@@ -857,7 +867,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			// do chaveiro nascia longe do botão que o abriu.
 			layoutModal(gtx, th)
 			rastrearPonteiroGlobal(gtx)
-			layoutMenu(gtx, th)
+			layoutMenu(gtx, th, w)
 			layoutTrocarHost(gtx, th)
 
 			regua(gtx, sb.largura(gtx))

@@ -75,6 +75,17 @@ func computeVNCView(size image.Point, fw, fh int, modo int32) vncView {
 	}
 }
 
+// LACUNA CONHECIDA, e deliberada: vncTab NÃO implementa abaDestacavel, e
+// por isso a aba VNC não ganha o botão de tela cheia que a RDP tem (ver
+// janelasessao.go e o campo jan/tha em rdptab.go).
+//
+// O que falta é mecânico — trocar o w fixo abaixo por ponteiro atômico,
+// idem o Theme, e expor TrocarJanela — mas não foi feito junto porque a
+// janela destacada é código novo e valia rodar num protocolo antes de
+// levá-la aos quatro. Está no BACKLOG.
+//
+// O CLAUDE.md nomeia rdptab.go/vnctab.go como par que sai de sincronia;
+// esta nota existe para a divergência ficar escrita, e não descoberta.
 type vncTab struct {
 	w         *app.Window
 	title     string
@@ -146,7 +157,7 @@ func newVNCTab(w *app.Window, spec map[string]string) *vncTab {
 		stop:    make(chan struct{}),
 		religar: make(chan struct{}, 1),
 	}
-	t.splash = novoSplash(w)
+	t.splash = novoSplash(func() *app.Window { return w })
 	t.auto.Store(true)
 	t.clipOn.Store(true)
 	t.nomeConexao = spec["rotulo"]
@@ -188,7 +199,7 @@ func (t *vncTab) manageSession(user, pass string) {
 		title:           t.title,
 		stop:            t.stop,
 		religar:         t.religar,
-		w:               t.w,
+		janela:          func() *app.Window { return t.w },
 		caiu:            &t.caiu,
 		auto:            &t.auto,
 		rodar:           func() fimSessao { return t.rodarSessao(user, pass) },
@@ -491,7 +502,7 @@ func (t *vncTab) ControlesSessao(gtx layout.Context, th *material.Theme) layout.
 		}
 	}
 	if t.btnTeclas.Clicked(gtx) {
-		menuTeclas(ultimaPosPonteiro(), t.ronly.Load(), func(ks uint32, pressionada bool) {
+		menuTeclas(t.w, ultimaPosPonteiro(), t.ronly.Load(), func(ks uint32, pressionada bool) {
 			if p := t.proc.Load(); p != nil {
 				_ = p.Tecla(ks, pressionada)
 			}

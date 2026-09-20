@@ -172,9 +172,13 @@ type sessaoRemotaCfg struct {
 	title   string
 	stop    <-chan struct{}
 	religar <-chan struct{}
-	w       *app.Window
-	caiu    *atomic.Bool
-	auto    *atomic.Bool
+	// janela é lida a cada transição, não guardada: a aba pode ter sido
+	// destacada depois que esta goroutine subiu, e um ponteiro fixo fazia
+	// cada "caiu"/"religando"/"reconectada" repintar a janela ERRADA,
+	// deixando a que está na frente com o quadro velho.
+	janela func() *app.Window
+	caiu   *atomic.Bool
+	auto   *atomic.Bool
 
 	// rodar sobe uma tentativa de sessão e bloqueia até ela terminar.
 	rodar func() fimSessao
@@ -216,7 +220,7 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 		if cfg.aoTerminar != nil {
 			cfg.aoTerminar()
 		}
-		cfg.w.Invalidate()
+		cfg.janela().Invalidate()
 
 		switch fim {
 		case fimParar:
@@ -226,7 +230,7 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 			continue
 		case fimFalhou:
 			cfg.caiu.Store(true)
-			cfg.w.Invalidate()
+			cfg.janela().Invalidate()
 			select {
 			case <-cfg.religar:
 				attempt = 0
@@ -237,7 +241,7 @@ func gerenciarSessaoRemota(cfg sessaoRemotaCfg) {
 		}
 
 		cfg.caiu.Store(true)
-		cfg.w.Invalidate()
+		cfg.janela().Invalidate()
 		if !cfg.auto.Load() {
 			// Reconexão automática desligada: fica parada até alguém
 			// clicar em Reconectar.

@@ -33,7 +33,10 @@ package main
 // volta dela.
 
 import (
+	"fmt"
 	"image"
+	"os"
+	"runtime/debug"
 
 	"gio.tools/icons"
 
@@ -51,7 +54,11 @@ import (
 // antiga, e a destacada nunca repintaria.
 type abaDestacavel interface {
 	Tab
-	TrocarJanela(w *app.Window)
+	// TrocarJanela leva janela E tema juntos: o text.Shaper de um Theme é
+	// cache sem trava, e a aba desenhada na goroutine desta janela com o
+	// Theme da outra dá panic de mapa — que derruba o processo inteiro.
+	// Ver tema.go (temaBusca) e o campo tha em rdptab.go.
+	TrocarJanela(w *app.Window, th *material.Theme)
 }
 
 type janelaSessao struct {
@@ -70,6 +77,29 @@ type janelaSessao struct {
 	// uma para a outra.
 	tagConteudo *int
 
+	// acaoPendente é a ação de JANELA pedida durante o quadro, executada
+	// no topo da volta seguinte do laço — fora de qualquer quadro.
+	//
+	// Vale aqui a mesma regra de acaojanela.go, e pelo mesmo motivo: no
+	// Windows, w.Option() de dentro do layout entra em Configure() →
+	// ShowWindow, que despacha WM_WINDOWPOSCHANGED reentrantemente e cai
+	// num FlushEvents que vê `delivering == true` e não entrega nada. A
+	// janela fica parada na última imagem, com o botão preso.
+	//
+	// A fila de lá NÃO serve: ela é global e drenada pelo laço da janela
+	// PRINCIPAL, e no Wayland/X11 o Window.Run executa f() na goroutine de
+	// quem chama — a ação sairia na goroutine errada, mexendo nesta janela
+	// em paralelo com o desenho dela. É exatamente a corrida que aquele
+	// arquivo conta ter sido introduzida uma vez e removida.
+	//
+	// Campo simples, sem trava: quem escreve é o quadro e quem lê é o topo
+	// do laço, a mesma goroutine.
+	// morta marca que esta janela está em fechamento depois de um pânico:
+	// não desenha mais nada, só fecha o quadro e deixa o laço terminar.
+	morta bool
+
+	acaoPendente func()
+
 	// aoDevolver recoloca a aba na tira. Roda na goroutine da JANELA
 	// PRINCIPAL (enfileirado), nunca aqui: mexer na tira de abas de fora
 	// do laço dela é corrida de dados com o desenho.
@@ -81,11 +111,11 @@ type janelaSessao struct {
 //
 // aoDevolver é chamado uma vez, quando a aba tem de voltar: pelo botão, ou
 // porque a janela foi fechada.
-func abrirJanelaSessao(th *material.Theme, t abaDestacavel, cheia bool,
+func abrirJanelaSessao(t abaDestacavel, cheia bool,
 	aoDevolver func(abaDestacavel)) {
 
 	j := &janelaSessao{
-		th: th, t: t, telaCheia: cheia,
+		t: t, telaCheia: cheia,
 		tagConteudo: new(int),
 		aoDevolver:  aoDevolver,
 	}
@@ -103,37 +133,49 @@ func abrirJanelaSessao(th *material.Theme, t abaDestacavel, cheia bool,
 		j.w.Option(app.Fullscreen.Option())
 	}
 
-	// A aba passa a pedir quadro AQUI. Antes de qualquer evento: a
-	// goroutine de rede da sessão pode pedir redesenho no mesmo
-	// instante, e apontar para a janela velha perderia o primeiro quadro.
-	t.TrocarJanela(j.w)
-
-	j.est = novoEstadoJanela(j.w)
+	j.est = novoEstadoJanelaSessao(j.w)
+	marcarDestacada(t)
 	go j.laco()
 }
 
 func (j *janelaSessao) laco() {
+	// Theme PRÓPRIO desta janela, montado aqui dentro.
+	//
+	// Aqui e não em abrirJanelaSessao por dois motivos: shaperDoApp()
+	// reparseia as seis fontes embutidas (fontes.go) e travaria o quadro
+	// da janela principal, que é quem chama aquela função; e porque o
+	// Theme tem de nascer na goroutine que vai usá-lo.
+	j.th = material.NewTheme()
+	j.th.Shaper = shaperDoApp()
+
+	// Só agora a aba passa a desenhar aqui — com a janela E o tema desta
+	// goroutine. Antes disso ela ainda aponta para a janela principal, o
+	// que é o certo: um pedido de redesenho que chegue no meio cai lá,
+	// onde ainda há quem o atenda.
+	j.t.TrocarJanela(j.w, j.th)
+
 	var ops op.Ops
 	defer func() {
 		esquecerJanela(j.w)
+		desmarcarDestacada(j.t)
 
-		// Devolve os atalhos ao compositor ANTES de soltar a captura. É
-		// a parte que o operador sente: com a inibição presa, o Alt+Tab
-		// dele continuaria sumindo depois que esta janela fechou. Fazer
-		// isto primeiro garante que aconteça mesmo se o Stop abaixo der
-		// problema.
-		g := j.est.grab.Load()
-		g.Inibir(false)
+		// SÓ Liberar, nunca Stop: cada janela do Gio tem a PRÓPRIA
+		// conexão Wayland (newWLWindow → newWLDisplay, em
+		// third_party/gio/app/os_wayland.go), e o close() dela enfileira
+		// o DestroyEvent e EM SEGUIDA chama wl_display_disconnect —
+		// antes de este laço ler o evento. Destruir wl_proxy a partir
+		// daqui é use-after-free num display liberado, e derruba o
+		// processo inteiro, com todas as outras sessões junto.
+		//
+		// A inibição de atalhos não fica presa: o compositor solta o que
+		// era do cliente quando a conexão cai. Quem fecha por decisão
+		// PRÓPRIA (o botão de devolver) solta antes, com o display
+		// ainda vivo — ver tratarBotoes.
+		j.est.grab.Load().Liberar()
 
-		// Este é o PRIMEIRO lugar do app que chama Stop de verdade — até
-		// aqui ninguém chamava, porque fazê-lo contra o wl_display da
-		// janela principal, em desmonte, derrubava o processo. Aqui é
-		// outro caso: a janela que morre é secundária e o display segue
-		// vivo com a principal. Vale conferir em uso.
-		g.Stop()
-		// Devolver é o último passo, e acontece SEMPRE — inclusive
-		// quando a janela foi fechada pelo botão do compositor. Ver o
-		// cabeçalho: a janela é um visor, não a dona da sessão.
+		// Devolver acontece SEMPRE: fechamento normal, X do compositor
+		// ou pânico contido. A janela é um visor, não a dona da sessão,
+		// e a sessão continua viva no processo-filho dela.
 		if j.aoDevolver != nil {
 			j.aoDevolver(j.t)
 		}
@@ -141,6 +183,12 @@ func (j *janelaSessao) laco() {
 
 	umaAba := func() Tab { return j.t }
 	for {
+		// Fora de qualquer quadro: o FrameEvent anterior já retornou por
+		// completo e o próximo ainda não começou.
+		if f := j.acaoPendente; f != nil {
+			j.acaoPendente = nil
+			f()
+		}
 		e := j.w.Event()
 		switch e := e.(type) {
 		case app.DestroyEvent:
@@ -161,40 +209,100 @@ func (j *janelaSessao) laco() {
 			j.telaCheia = e.Config.Mode == app.Fullscreen
 
 		case app.FrameEvent:
-			j.est.atualizarInibicao(j.t)
-			gtx := app.NewContext(&ops, e)
-			tratarTecladoFrame(j.w, gtx, umaAba)
-			tratarClipboardFrame(j.est, gtx, umaAba)
-			gtx.Metric = escalaFonte(gtx.Metric)
-
-			j.tratarBotoes(gtx)
-			j.desenhar(gtx)
-
-			e.Frame(gtx.Ops)
-			// No fim do quadro, como na janela principal: a marca é de
-			// quem acabou de ser DESENHADO.
-			marcarAbaAtiva(j.w, j.t)
+			if !j.quadro(e, &ops) {
+				// Pânico contido: para de desenhar e pede o fechamento.
+				// O laço CONTINUA rodando — é ele que despacha o close
+				// (no Wayland, Perform só marca closing; quem fecha de
+				// fato é o dispatch, alcançado por j.w.Event() abaixo).
+				// Sair daqui na hora deixaria a janela na tela, pintada e
+				// congelada, com a aba já devolvida à outra — a mesma
+				// sessão em dois lugares, um deles morto.
+				j.morta = true
+				j.w.Perform(system.ActionClose)
+			}
 		}
 	}
 }
 
+// quadro desenha um quadro e devolve falso se ele entrou em pânico.
+//
+// PÂNICO NESTA JANELA NÃO PODE LEVAR O APP JUNTO. É a mesma garantia que a
+// sessão já tem no nível do processo (internal/telaproc: segfault na
+// libfreerdp mata só o filho), trazida para o nível da goroutine — a
+// janela destacada é código novo desenhando numa goroutine própria.
+//
+// O QUE ISTO NÃO PEGA: erro FATAL do runtime não é pânico e não se
+// recupera. "concurrent map read and map write" é o exemplo, e foi o que
+// derrubou o app na primeira versão desta janela, por compartilhar o
+// text.Shaper do Theme. Contra esse não há rede — só não cometer. Ver o
+// campo tha em rdptab.go.
+func (j *janelaSessao) quadro(e app.FrameEvent, ops *op.Ops) (ok bool) {
+	if j.morta {
+		// Já em fechamento: não desenha mais, mas o quadro precisa ser
+		// fechado, senão o Gio fica esperando por ele.
+		gtx := app.NewContext(ops, e)
+		e.Frame(gtx.Ops)
+		return true
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr,
+				"janela de sessão: pânico contido, fechando e devolvendo a aba: %v\n%s\n",
+				r, debug.Stack())
+			ok = false
+		}
+	}()
+
+	j.est.atualizarInibicao(j.t)
+	gtx := app.NewContext(ops, e)
+	tratarTecladoFrame(j.w, gtx, umaAbaDe(j))
+	tratarClipboardFrame(j.est, gtx, umaAbaDe(j))
+	gtx.Metric = escalaFonte(gtx.Metric)
+
+	j.tratarBotoes(gtx)
+	j.desenhar(gtx)
+
+	e.Frame(gtx.Ops)
+	// No fim do quadro, como na janela principal: a marca é de quem
+	// acabou de ser DESENHADO.
+	marcarAbaAtiva(j.w, j.t)
+	return true
+}
+
+func umaAbaDe(j *janelaSessao) func() Tab { return func() Tab { return j.t } }
+
 func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 	if j.btnTelaCheia.Clicked(gtx) {
-		j.telaCheia = !j.telaCheia
-		if j.telaCheia {
-			j.w.Option(app.Fullscreen.Option())
-		} else {
-			// Sair da tela cheia NÃO devolve a aba: a janela continua
-			// solta, separada do app. Devolver é o outro botão, de
-			// propósito — são duas decisões diferentes e misturá-las
-			// tiraria de quem está trabalhando a opção de ver a sessão
-			// em janela normal ao lado do painel.
+		// Sair da tela cheia NÃO devolve a aba: a janela continua solta,
+		// separada do app. Devolver é o outro botão, de propósito — são
+		// duas decisões diferentes, e misturá-las tiraria de quem está
+		// trabalhando a opção de ver a sessão em janela normal ao lado do
+		// painel.
+		quer := !j.telaCheia
+		j.telaCheia = quer
+		// AGENDADA, não executada: ver acaoPendente.
+		j.acaoPendente = func() {
+			if quer {
+				j.w.Option(app.Fullscreen.Option())
+				return
+			}
 			j.w.Option(app.Windowed.Option())
 		}
 	}
 	if j.btnReatar.Clicked(gtx) {
-		// Fechar a janela basta: o defer do laço devolve a aba.
-		j.w.Perform(system.ActionClose)
+		// Aqui a janela fecha por DECISÃO NOSSA, e é a única
+		// oportunidade de soltar o grab direito: o display ainda está
+		// vivo. Depois do fechamento ele já foi desconectado, e aí só
+		// resta Liberar (ver o defer do laço).
+		//
+		// Agendado para fora do quadro pela regra de acaojanela.go.
+		j.acaoPendente = func() {
+			g := j.est.grab.Load()
+			g.Inibir(false)
+			g.Stop()
+			j.est.grab.Store(nil)
+			j.w.Perform(system.ActionClose)
+		}
 	}
 }
 
@@ -226,7 +334,18 @@ func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Max
-			return rotearPonteiroEDesenhar(gtx, j.t, j.tagConteudo, size)
+			d := rotearPonteiroEDesenhar(gtx, j.t, j.tagConteudo, size)
+
+			// Rastreio do ponteiro e MENU, na mesma ordem da janela
+			// principal. Sem eles, o botão de teclas especiais da
+			// barrinha abria um menu que esta janela não desenhava: ele
+			// aparecia na outra, na posição que o ponteiro tinha lá.
+			// Justamente o botão que mais importa em tela cheia.
+			//
+			// O menu só sai onde foi aberto — ver o dono, em menu.go.
+			rastrearPonteiroGlobal(gtx)
+			layoutMenu(gtx, j.th, j.w)
+			return d
 		}),
 	)
 }

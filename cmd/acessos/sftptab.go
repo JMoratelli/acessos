@@ -144,7 +144,7 @@ func newSFTPTab(w *app.Window, spec map[string]string) (Tab, error) {
 		user: spec["user"], senha: spec["pass"],
 		estado: "conectando…",
 	}
-	t.splash = novoSplash(w)
+	t.splash = novoSplash(func() *app.Window { return w })
 	t.local.sel = map[string]bool{}
 	t.remoto.sel = map[string]bool{}
 	t.remoto.remoto = true

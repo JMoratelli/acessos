@@ -15,9 +15,26 @@ import (
 	"gioui.org/app"
 )
 
+// janelaPrincipal é a janela do app. Preenchida no arranque.
+//
+// Existe para o que NÃO pode ser desenhado numa janela de sessão: o modal
+// é global e só a janela principal o desenha, então um diálogo pedido por
+// uma sessão destacada tem de nascer apontando para cá — senão ele ficaria
+// invisível e a sessão travaria esperando uma resposta que ninguém vê.
+var janelaPrincipal *app.Window
+
 // estadoJanela junta o que pertence a UMA janela.
 type estadoJanela struct {
 	w *app.Window
+
+	// principal distingue a janela do app das janelas de sessão.
+	//
+	// Os atalhos do PRÓPRIO app que chegam pela captura (F12 recolhe a
+	// lateral, Ctrl+W fecha aba, Ctrl+G régua) só fazem sentido nela: numa
+	// janela de sessão eles mexeriam no estado da outra janela, e — pior —
+	// engoliriam a tecla antes de ela chegar na máquina remota. F12 é
+	// tecla de trabalho dentro de uma sessão Windows.
+	principal bool
 
 	// grab é a captura Wayland desta janela: teclado, clipboard e
 	// inibição dos atalhos do compositor. Cada janela tem a sua porque
@@ -31,7 +48,15 @@ type estadoJanela struct {
 	inibicaoLigada bool
 }
 
-func novoEstadoJanela(w *app.Window) *estadoJanela { return &estadoJanela{w: w} }
+func novoEstadoJanela(w *app.Window) *estadoJanela {
+	return &estadoJanela{w: w, principal: true}
+}
+
+// novoEstadoJanelaSessao é o estado de uma janela destacada: mesma coisa,
+// menos os atalhos do app. Ver o campo principal.
+func novoEstadoJanelaSessao(w *app.Window) *estadoJanela {
+	return &estadoJanela{w: w}
+}
 
 // atualizarInibicao liga a captura dos atalhos do compositor só enquanto
 // uma TELA remota está em foco NESTA janela. O SSH recebe o teclado cru
@@ -57,11 +82,21 @@ func (e *estadoJanela) atualizarInibicao(t Tab) {
 		// que seria o defeito de verdade, e esse não acontece.
 		quer = false
 	}
+	// Sem captura ainda não há o que pedir, e ANOTAR aqui seria pior que
+	// não fazer nada: o quer==inibicaoLigada abaixo passaria a devolver
+	// cedo para sempre, e a captura de verdade — criada no primeiro
+	// WaylandViewEvent, que pode chegar DEPOIS do primeiro quadro — nunca
+	// receberia o pedido. Na janela destacada isso é a sessão em tela
+	// cheia sem inibição nenhuma, calada.
+	g := e.grab.Load()
+	if g == nil {
+		return
+	}
 	if quer == e.inibicaoLigada {
 		return
 	}
 	e.inibicaoLigada = quer
-	e.grab.Load().Inibir(quer)
+	g.Inibir(quer)
 }
 
 // ---------------------------------------------------------------- abas
@@ -140,4 +175,46 @@ func nenhumaAbaMarcada() bool {
 	abasAtivas.mu.Lock()
 	defer abasAtivas.mu.Unlock()
 	return len(abasAtivas.por) == 0
+}
+
+// ---------------------------------------------------------- destacadas
+
+// abasDestacadas são as sessões que saíram da tira e vivem em janela
+// própria.
+//
+// Existe por causa da SAÍDA do app: o encerramento percorre bar.tabs
+// chamando Close(), e uma aba destacada não está mais lá. Sem este
+// registro ela nunca receberia Close, o stop dela nunca fecharia, e o
+// processo-filho que hospeda a sessão ficaria órfão — no Linux ele acaba
+// morrendo com o socket, mas no Windows não há essa garantia.
+var abasDestacadas struct {
+	mu  sync.Mutex
+	set map[Tab]bool
+}
+
+func marcarDestacada(t Tab) {
+	abasDestacadas.mu.Lock()
+	defer abasDestacadas.mu.Unlock()
+	if abasDestacadas.set == nil {
+		abasDestacadas.set = map[Tab]bool{}
+	}
+	abasDestacadas.set[t] = true
+}
+
+func desmarcarDestacada(t Tab) {
+	abasDestacadas.mu.Lock()
+	defer abasDestacadas.mu.Unlock()
+	delete(abasDestacadas.set, t)
+}
+
+// abasForaDaTira devolve as destacadas, para o encerramento fechá-las
+// junto com as que estão na tira.
+func abasForaDaTira() []Tab {
+	abasDestacadas.mu.Lock()
+	defer abasDestacadas.mu.Unlock()
+	fora := make([]Tab, 0, len(abasDestacadas.set))
+	for t := range abasDestacadas.set {
+		fora = append(fora, t)
+	}
+	return fora
 }

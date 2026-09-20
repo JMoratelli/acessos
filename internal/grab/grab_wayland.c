@@ -547,17 +547,45 @@ static const struct wl_registry_listener ouvinte_registro = {
     .global_remove = registro_removido,
 };
 
-void grab_parar(Grab *g) {
+/* O desmonte vem em TRES pedacos porque nem sempre os tres podem rodar.
+ *
+ * O Gio abre UMA CONEXAO WAYLAND POR JANELA (newWLWindow chama
+ * newWLDisplay, em third_party/gio/app/os_wayland.go), e o close() dele
+ * enfileira WaylandViewEvent{} e DestroyEvent e EM SEGUIDA chama
+ * wl_display_disconnect — tudo dentro do dispatch, antes de o laco do
+ * cliente chegar a ler o DestroyEvent. Ou seja: quando uma janela avisa
+ * que morreu, a conexao dela JA CAIU, e destruir wl_proxy dali e
+ * use-after-free num display liberado — derruba o processo inteiro.
+ *
+ * Quem fecha a janela POR DECISAO PROPRIA chama os tres, nesta ordem, com
+ * o display ainda vivo. Quem so descobriu depois (o X do compositor) pula
+ * o do meio: os objetos Wayland ja foram embora com a conexao, e o
+ * compositor solta sozinho a inibicao de atalhos quando o cliente
+ * desconecta. */
+
+/* 1. Para a thread de repeticao de tecla. Nao toca em Wayland nenhum.
+ *
+ * SEMPRE PRIMEIRO: ela chama ao_teclar, e o lado Go entrega isso ao app,
+ * que pode estar lendo o proprio Grab. Liberar qualquer coisa com ela
+ * viva e corrida garantida. Idempotente. */
+void grab_parar_repeticao(Grab *g) {
+    if (!g || !g->rep.thread_criada) return;
+    pthread_mutex_lock(&g->rep.m);
+    g->rep.parar = 1;
+    pthread_mutex_unlock(&g->rep.m);
+    pthread_join(g->rep.thread, NULL);
+    pthread_mutex_destroy(&g->rep.m);
+    g->rep.thread_criada = 0;
+}
+
+/* 2. Solta os objetos da CONEXAO WAYLAND. So pode ser chamada com o
+ * display ainda vivo — ver o bloco acima. */
+void grab_soltar_wayland(Grab *g) {
     if (!g) return;
-    if (g->rep.thread_criada) {
-        pthread_mutex_lock(&g->rep.m);
-        g->rep.parar = 1;
-        pthread_mutex_unlock(&g->rep.m);
-        pthread_join(g->rep.thread, NULL);
-        pthread_mutex_destroy(&g->rep.m);
-    }
     if (g->inibidor) zwp_keyboard_shortcuts_inhibitor_v1_destroy(g->inibidor);
     if (g->manager) zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(g->manager);
+    g->inibidor = NULL;
+    g->manager = NULL;
     /* sob a trava, pelo mesmo motivo de fonte_cancelada: a goroutine de uma
      * sessao pode estar publicando clipboard neste instante (e em
      * cmd/vncview e cmd/rdpview ela publica direto, sem passar pelo laco). */
@@ -569,12 +597,29 @@ void grab_parar(Grab *g) {
     if (g->keyboard) wl_keyboard_release(g->keyboard);
     if (g->seat) wl_proxy_destroy((struct wl_proxy *)g->seat);
     if (g->registry) wl_proxy_destroy((struct wl_proxy *)g->registry);
+    g->data_dev = NULL;
+    g->data_mgr = NULL;
+    g->keyboard = NULL;
+    g->seat = NULL;
+    g->registry = NULL;
+}
+
+/* 3. Libera o que e so memoria local: xkb, clipboard guardado, a trava e a
+ * propria struct. Seguro com o display morto — nada aqui fala Wayland. */
+void grab_liberar(Grab *g) {
+    if (!g) return;
     xkb_state_unref(g->xkb_state);
     xkb_keymap_unref(g->xkb_keymap);
     xkb_context_unref(g->xkb_ctx);
     free(g->clip_local);
     pthread_mutex_destroy(&g->clip_m);
     free(g);
+}
+
+void grab_parar(Grab *g) {
+    grab_parar_repeticao(g);
+    grab_soltar_wayland(g);
+    grab_liberar(g);
 }
 
 Grab *grab_iniciar(void *ctx, void *display, void *surface, cb_tecla ao_teclar,
