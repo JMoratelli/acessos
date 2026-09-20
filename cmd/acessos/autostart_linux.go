@@ -11,64 +11,63 @@ package main
 // porta de entrada para isso é o portal (o sandbox não escreve em
 // ~/.config/autostart).
 //
-// A chave `[geral] atalho_autostart` no conexoes.ini manda aqui:
-//
-//	(vazio)  nunca foi pedido — pede uma vez e grava a resposta
-//	1        o sistema já sobe o serviço no login
-//	0        recusado (pelo usuário ou pelo desktop); não pergunta de novo
+// A chave `[geral] atalho_autostart` no conexoes.ini manda aqui; os
+// valores dela e a leitura/gravação moram em autostartpref.go.
 //
 // A pergunta é feita UMA vez de propósito: o portal abre um diálogo
 // ("Acessos quer rodar em segundo plano"), e um app que repete essa
-// pergunta a cada login é um app que a pessoa aprende a recusar.
+// pergunta a cada login é um app que a pessoa aprende a recusar. Quem
+// quiser mudar de ideia depois tem a caixa nos Ajustes — que chama
+// definirAutostart direto, sem passar por aqui.
 
 import (
 	"fmt"
 	"os"
 	"time"
 
-	"acessos-go/internal/conexoes"
-
 	"github.com/godbus/dbus/v5"
 )
 
 const portalFundo = "org.freedesktop.portal.Background"
+
+// Só no Linux existe portal Background e serviço à parte para subir; o
+// nil nas outras plataformas é o que faz os Ajustes não oferecerem a
+// caixa. Ver autostartpref.go.
+func init() { definirAutostartNoSistema = definirAutostart }
 
 // garantirAutostart pede ao sistema para subir o serviço no login, se
 // isso ainda não foi decidido. Erro nunca é fatal: sem autostart o atalho
 // continua funcionando na sessão corrente, que é o comportamento de
 // antes.
 func garantirAutostart(caminhoINI string) {
-	arq, err := conexoes.Carregar(caminhoINI)
-	if err != nil {
-		return
-	}
-	switch arq.Geral["atalho_autostart"] {
-	case "1", "0":
+	if lerAutostart(caminhoINI) != autostartNaoPerguntado {
 		return // já decidido; ver o cabeçalho
 	}
 
-	ok, err := pedirAutostart()
+	ok, err := definirAutostart(true)
 	if err != nil {
 		// Desktop sem o portal Background: nada a gravar. Tentar de novo
 		// no próximo login é barato e pode ser um desktop diferente.
 		fmt.Fprintf(os.Stderr, "autostart: %v\n", err)
 		return
 	}
-	valor := "0"
 	if ok {
-		valor = "1"
 		fmt.Println("autostart: o sistema passa a subir o atalho do Acessos no login")
 	} else {
 		fmt.Fprintln(os.Stderr, "autostart: recusado — o atalho global vai existir só "+
-			"depois de abrir o Acessos uma vez por sessão. Para mudar de ideia, apague "+
-			"a chave [geral] atalho_autostart do conexoes.ini")
+			"depois de abrir o Acessos uma vez por sessão. Para mudar de ideia, use a "+
+			"caixa em Ajustes")
 	}
-	if err := conexoes.SalvarGeral(caminhoINI, map[string]string{"atalho_autostart": valor}); err != nil {
+	if err := salvarAutostart(caminhoINI, ok); err != nil {
 		fmt.Fprintf(os.Stderr, "autostart: %v\n", err)
 	}
 }
 
-func pedirAutostart() (bool, error) {
+// definirAutostart pede (quer=true) ou revoga (quer=false) o autostart no
+// portal, e devolve o que o sistema decidiu — que não é necessariamente o
+// que foi pedido: o diálogo é do desktop, e a pessoa pode dizer não ali.
+// Por isso o retorno é lido em vez de presumido.
+func definirAutostart(quer bool) (bool, error) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		return false, err
@@ -98,7 +97,7 @@ func pedirAutostart() (bool, error) {
 			"handle_token": dbus.MakeVariant(tk),
 			"reason": dbus.MakeVariant(
 				"Manter o atalho de busca de máquinas funcionando com o app fechado"),
-			"autostart":        dbus.MakeVariant(true),
+			"autostart":        dbus.MakeVariant(quer),
 			"commandline":      dbus.MakeVariant([]string{"acessos", ArgServico}),
 			"dbus-activatable": dbus.MakeVariant(false),
 		}).Store(&req); err != nil {

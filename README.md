@@ -82,8 +82,11 @@ abrir duas caixas, uma por instância).
 Para o atalho existir logo depois de um login, sem ninguém abrir o app
 antes, o serviço pede ao sistema — uma vez só — permissão para subir
 sozinho (portal `Background`). A resposta fica gravada em `[geral]
-atalho_autostart` no `conexoes.ini` (`1` aceito, `0` recusado); apagar a
-chave faz perguntar de novo.
+atalho_autostart` no `conexoes.ini` (`1` aceito, `0` recusado). Para mudar
+de ideia depois, a caixa **"manter o atalho valendo depois do login"** nos
+Ajustes pergunta ao sistema de novo — desmarcá-la REVOGA o autostart, e não
+só regrava a chave: quem sobe o serviço no login é o portal, então mexer só
+no arquivo deixaria a caixa desmarcada e o serviço subindo assim mesmo.
 
 O serviço é um processo separado e proposital: ele NÃO morre junto com a
 janela. Para derrubá-lo (ao trocar de versão à mão, por exemplo),
@@ -96,8 +99,9 @@ No Linux quem amarra a tecla é o sistema, não o app — é assim que o Wayland
 permite atalho global, pelo portal `GlobalShortcuts`. O serviço pede
 `Ctrl+Shift+F12`, e o KDE confirma **uma vez só** na primeira execução. Se
 esse diálogo for recusado, o atalho fica registrado sem tecla nenhuma e pode
-ser amarrado em Preferências do Sistema → Atalhos → Acessos; o app avisa no
-terminal quando isso acontece.
+ser amarrado em Preferências do Sistema → Atalhos → Acessos. Quando isso
+acontece, os Ajustes mostram o aviso logo abaixo da caixa do atalho — antes
+ele só saía no terminal, que ninguém lê quando o app foi aberto pelo menu.
 
 No Windows quem amarra a tecla é o próprio app, com `RegisterHotKey`: sem
 portal, sem diálogo de confirmação e sem precisar do serviço — não há

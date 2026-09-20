@@ -23,6 +23,7 @@ package main
 // ----------------------------------------------------------------------
 //
 //	app (1ª instância)  --ola-app-->  serviço      "eu sou a janela grande"
+//	serviço             --gatilho-->  app          "a tecla amarrada foi esta"
 //	serviço             --abrir--->   app          "abre esta máquina"
 //	app (2ª instância)  --abrir--->   serviço --> app já aberto
 //
@@ -54,6 +55,7 @@ const (
 	msgBusca   = "busca"   // pipoque a caixa de busca (o app tem foco, o serviço não)
 	msgAtivar  = "ativar"  // traga a janela grande para a frente com este token
 	msgAtalho  = "atalho"  // o atalho global foi ligado/desligado nos Ajustes
+	msgGatilho = "gatilho" // que tecla o sistema amarrou (vazia = nenhuma)
 	msgPing    = "ping"
 	msgPong    = "pong"
 	msgOK      = "ok"
@@ -82,6 +84,11 @@ type mensagem struct {
 	// é justamente o valor falso, e omiti-lo deixaria a mensagem mais
 	// importante das duas viajando vazia.
 	Ligado bool `json:"ligado"`
+	// Gatilho acompanha msgGatilho: a tecla que o sistema amarrou, como
+	// ele a descreve. Também sem omitempty, e pela mesma razão — VAZIA é
+	// a notícia que importa ("registrado sem tecla"), e omiti-la
+	// devolveria justamente o caso que a mensagem existe para contar.
+	Gatilho string `json:"gatilho"`
 }
 
 // alvoAbrir é uma máquina escolhida na caixa de busca.

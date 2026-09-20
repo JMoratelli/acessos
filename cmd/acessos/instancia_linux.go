@@ -181,6 +181,13 @@ func (cli *clienteServico) ler() {
 		if err != nil {
 			return
 		}
+		if m.Tipo == msgGatilho {
+			// Não passa pela fila: é estado, não trabalho. Pela fila
+			// ficaria atrás de um "abrir" e, com a fila cheia, seria
+			// descartado — justamente o aviso que precisa chegar.
+			definirGatilho(m.Gatilho)
+			continue
+		}
 		if m.Tipo != msgAbrir && m.Tipo != msgBusca && m.Tipo != msgAtivar {
 			continue // mensagem que esta versão não conhece: ignora
 		}

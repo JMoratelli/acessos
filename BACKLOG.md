@@ -11,54 +11,30 @@ compilado ou testado no Windows se resolve no Windows, e o que já foi
 corrigido aparece no git. Item que só pede um olhar vira ruído e empurra
 para baixo o que é para ser feito.
 
-Os números foram refeitos em 2026-09-19, do 1 em diante, e correram de
-novo em 2026-09-20 quando o item do cursor remoto saiu resolvido. Antes
-disso a numeração tinha buracos, porque os itens resolvidos saíam e os
-que ficavam mantinham o número — com a lista curta isso deixou de valer
-a pena. Mensagem de commit antiga que fale em "item 7d", "item 9", ou no
-"item 2" do cursor, se refere à numeração de então; o git conta o que
+Os números foram refeitos em 2026-09-19, do 1 em diante, e correram duas
+vezes em 2026-09-20: quando o item do cursor remoto saiu resolvido e
+quando o da busca por atalho global saiu. Antes disso a numeração tinha
+buracos, porque os itens resolvidos saíam e os que ficavam mantinham o
+número — com a lista curta isso deixou de valer a pena. Mensagem de
+commit antiga que fale em "item 7d", "item 9", no "item 2" do cursor ou
+no "item 1" da busca, se refere à numeração de então; o git conta o que
 era.
 
-1. Busca por atalho global — as pontas que ficaram
-2. Capturas de tela do metainfo
-3. Tela cheia
+1. Capturas de tela do metainfo
+2. Tela cheia
 
 Atualizado em 2026-09-20.
 
 ---
 
-## 1. Busca por atalho global — as pontas que ficaram
-
-O atalho, a caixa e o serviço estão funcionando (ver README). Estas
-pontas continuam abertas:
-
-- **Aviso na interface quando o atalho ficou registrado SEM TECLA.** O
-  diálogo do KDE aparece uma vez só por aplicativo, e quem o fechar sem
-  querer fica com um atalho morto sem nada na tela explicando por quê.
-  Hoje o app só avisa no terminal, que ninguém lê — o lugar natural é a
-  mesma linha da caixa nova dos Ajustes (ver abaixo), que já sabe se o
-  atalho está ligado mas não se ele pegou tecla.
-- **Interface para o `[geral] atalho_autostart`** (ver
-  autostart_linux.go): a chave existe e é editável à mão, mas não tem
-  caixa nos Ajustes como a do atalho em si já tem.
-- **Soltar a captura de atalhos durante sessão remota.** Enquanto uma
-  tela remota está em foco o app inibe os atalhos do compositor (de
-  propósito: `Super` e `Alt+Tab` têm que chegar na máquina remota), e
-  não há como devolvê-los sem trocar de aba. O padrão dos outros
-  clientes remotos é uma tecla de soltura — `Ctrl+Alt` — com um aviso
-  visível na barra de sessão dizendo que a captura está ligada, sumindo
-  sozinho depois de uns segundos. **Vale notar que isto também engole o
-  Ctrl+Shift+F12**: com uma sessão remota em foco, a tecla vai para a
-  máquina remota, não para o portal.
-
-## 2. Capturas de tela do metainfo
+## 1. Capturas de tela do metainfo
 
 As cinco imagens de [screenshots/](screenshots/) são da versão Python.
 Decisão sua, de propósito, para não segurar o lançamento — mas a loja
 mostra uma interface que não existe mais. Trocar quando a 2.x estiver
 assentada.
 
-## 3. Tela cheia
+## 2. Tela cheia
 
 Pedido em 2026-09-16: tela cheia estilo F11 do Chrome / cliente RDP da
 Microsoft / Remmina (a REFERÊNCIA de comportamento, não o atalho) — some a

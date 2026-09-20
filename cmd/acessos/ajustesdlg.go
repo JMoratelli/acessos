@@ -29,6 +29,8 @@ type dlgAjustes struct {
 	diagOn      bool
 	atalho      widget.Clickable
 	atalhoOn    bool
+	autostart   widget.Clickable
+	autostartOn bool
 	lista       widget.List
 	erro        string
 	aviso       string
@@ -42,6 +44,13 @@ type dlgAjustes struct {
 	pendCaminho string
 	pendErro    string
 	pendPronto  bool
+	// O autostart tem a mesma forma: o portal abre um diálogo e espera a
+	// pessoa decidir, o que no laço de quadro seria a janela congelada
+	// por minutos. autoIndo tranca o segundo clique; pendAuto é ponteiro
+	// porque o resultado FALSO é resposta legítima ("o sistema disse
+	// não") e precisa se distinguir de "ainda não respondeu".
+	autoIndo bool
+	pendAuto *bool
 }
 
 func abrirAjustes(w *app.Window, ini string) {
@@ -49,6 +58,7 @@ func abrirAjustes(w *app.Window, ini string) {
 	d.ini.SingleLine = true
 	d.ini.SetText(ini)
 	d.atalhoOn = atalhoGlobalLigado(ini)
+	d.autostartOn = lerAutostart(ini) == autostartLigado
 	abrirDialogo(d)
 }
 
@@ -68,6 +78,9 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.atalho.Clicked(gtx) {
 		d.trocarAtalho()
 	}
+	if d.autostart.Clicked(gtx) {
+		d.trocarAutostart()
+	}
 	if d.btnProcurar.Clicked(gtx) {
 		d.mu.Lock()
 		ja := d.procurando
@@ -86,6 +99,12 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		d.erro = d.pendErro
 		d.pendErro = ""
 	}
+	if d.pendAuto != nil {
+		d.autostartOn = *d.pendAuto
+		d.pendAuto = nil
+		d.erro = ""
+	}
+	autoIndo := d.autoIndo
 	d.mu.Unlock()
 	d.lista.Axis = layout.Vertical
 
@@ -137,8 +156,39 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return caixaMarcar(gtx, th, &d.atalho, d.atalhoOn,
 				"atalho global (Ctrl+Shift+F12) para a busca de máquinas")
-		}),
-		espaco(8),
+		}))
+
+	// O atalho existe mas o sistema não amarrou tecla nenhuma — o caso de
+	// quem fechou o diálogo do KDE sem querer. Antes isto só saía em
+	// stderr, e o Ctrl+Shift+F12 ficava morto sem nada na tela explicando.
+	// Ver atalhogatilho.go.
+	//
+	// Só aparece com a caixa MARCADA: desmarcada, "sem tecla" é o estado
+	// esperado, e avisar seria alarme sobre o que a pessoa acabou de pedir.
+	if d.atalhoOn && atalhoSemTecla() {
+		filhos = append(filhos, espaco(4), layout.Rigid(recuado(
+			rotulo(th, fonteMono, spSecundario,
+				"registrado SEM TECLA — amarre em Preferências do Sistema → Atalhos → Acessos",
+				tema.AtencaoFg))))
+	}
+
+	// Autostart: só onde a ideia existe (Linux, portal Background). Fora
+	// dali não há serviço à parte para subir no login, e a caixa não faria
+	// nada — ver autostartpref.go.
+	if definirAutostartNoSistema != nil {
+		filhos = append(filhos, espaco(8),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return caixaMarcar(gtx, th, &d.autostart, d.autostartOn,
+					"manter o atalho valendo depois do login, sem abrir o app")
+			}))
+		if autoIndo {
+			filhos = append(filhos, espaco(4), layout.Rigid(recuado(
+				rotulo(th, fonteMono, spSecundario,
+					"esperando a resposta do sistema…", tema.Sec))))
+		}
+	}
+
+	filhos = append(filhos, espaco(8),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return caixaMarcar(gtx, th, &d.verDiag, d.diagOn, "mostrar diagnóstico")
 		}))
@@ -197,6 +247,59 @@ func (d *dlgAjustes) trocarAtalho() {
 	d.erro = ""
 	if aplicarAtalhoGlobal != nil {
 		aplicarAtalhoGlobal(novo)
+	}
+}
+
+// trocarAutostart liga/desliga a subida do serviço no login.
+//
+// A ordem é a INVERSA da de trocarAtalho, de propósito. Lá a chave manda,
+// e quem registra relê o arquivo. Aqui quem manda é o portal: a chave só
+// guarda a resposta para não repetir a pergunta a cada login. Gravar sem
+// falar com o sistema deixaria a caixa desmarcada e o serviço subindo
+// assim mesmo — mentira silenciosa, do tipo que só aparece no próximo
+// login. Então pergunta primeiro, grava o que o sistema responder.
+//
+// E responde em goroutine porque o portal abre um diálogo e espera a
+// pessoa ler (prazo de minutos, ver definirAutostart): no laço de quadro
+// isso é a janela inteira congelada. Mesmo desenho do procurar().
+func (d *dlgAjustes) trocarAutostart() {
+	d.mu.Lock()
+	ja := d.autoIndo
+	d.autoIndo = true
+	d.mu.Unlock()
+	if ja {
+		return
+	}
+	quer := !d.autostartOn
+	// O caminho é lido AQUI, no laço de quadro: tocar no widget.Editor de
+	// outra goroutine não é seguro (ver o comentário da struct).
+	caminho := d.ini.Text()
+	go func() {
+		ok, err := definirAutostartNoSistema(quer)
+		if err == nil {
+			// Grava o que o sistema DECIDIU, não o que foi pedido: o
+			// diálogo é do desktop, e a pessoa pode dizer não nele.
+			err = salvarAutostart(caminho, ok)
+		}
+		d.mu.Lock()
+		d.autoIndo = false
+		if err != nil {
+			d.pendErro = err.Error()
+		} else {
+			d.pendAuto = &ok
+		}
+		d.mu.Unlock()
+		d.w.Invalidate()
+	}()
+}
+
+// recuado alinha uma linha solta com o RÓTULO da caixa de marcar acima
+// dela, e não com a caixinha: 15dp do quadrado mais 6dp do espaçador,
+// ambos de caixaMarcar. Sem isso o aviso fica pendurado na margem e não
+// se liga à caixa a que se refere.
+func recuado(dentro layout.Widget) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(21)}.Layout(gtx, dentro)
 	}
 }
 

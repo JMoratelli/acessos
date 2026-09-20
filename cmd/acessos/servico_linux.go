@@ -41,6 +41,14 @@ type servico struct {
 	// buscaAberta evita empilhar caixas: apertar o atalho de novo com uma
 	// na tela não abre a segunda.
 	buscaAberta bool
+	// gatilho guarda a tecla que o sistema amarrou, e gatilhoSabido diz
+	// se já houve registro. São guardados porque o app costuma se
+	// apresentar DEPOIS do registro: sem isto, a janela que abre mais
+	// tarde nunca ficaria sabendo que o atalho está sem tecla — só a que
+	// estivesse aberta no instante exato do registro. Ver msgGatilho, em
+	// instancia.go.
+	gatilho       string
+	gatilhoSabido bool
 
 	// chegouApp avisa garantirApp na hora em que uma janela grande se
 	// apresenta. Antes ele só perguntava de 100 em 100ms, e essa espera
@@ -166,6 +174,16 @@ func (s *servico) conversa(c net.Conn) {
 			if !responder(mensagem{Tipo: msgOK}) {
 				return
 			}
+			// O atalho normalmente já foi registrado quando a janela
+			// aparece: conta a ela o que se sabe, senão a notícia de
+			// "sem tecla" só existiria para quem estivesse aberto no
+			// instante do registro.
+			s.mu.Lock()
+			sabido, tecla := s.gatilhoSabido, s.gatilho
+			s.mu.Unlock()
+			if sabido && !responder(mensagem{Tipo: msgGatilho, Gatilho: tecla}) {
+				return
+			}
 		case msgAbrir, msgAtivar:
 			// Veio de uma SEGUNDA instância do app: encaminha para a
 			// janela que já existe.
@@ -182,6 +200,17 @@ func (s *servico) conversa(c net.Conn) {
 			}
 		}
 	}
+}
+
+// guardarGatilho registra a tecla amarrada e avisa a janela, se houver
+// uma. Guardar antes de mandar é o que cobre os dois tempos possíveis: a
+// janela já aberta recebe agora, e a que abrir depois recebe no aperto
+// de mão (ver msgOlaApp).
+func (s *servico) guardarGatilho(tecla string) {
+	s.mu.Lock()
+	s.gatilho, s.gatilhoSabido = tecla, true
+	s.mu.Unlock()
+	s.mandarParaApp(mensagem{Tipo: msgGatilho, Gatilho: tecla})
 }
 
 // mandarParaApp entrega m à janela grande. Falso quando não há nenhuma.
@@ -304,6 +333,9 @@ func (s *servico) manterAtalho() {
 		default:
 			fmt.Printf("atalho global: %s\n", a.Gatilho)
 		}
+		// O stderr acima é para quem roda pelo terminal; quem abriu pelo
+		// menu não o vê. A notícia que chega na TELA sai daqui.
+		s.guardarGatilho(a.Gatilho)
 		// Com o atalho de pé, vale pedir para o sistema subir o serviço
 		// no login — é o que faz o Ctrl+Shift+F12 existir numa sessão em
 		// que ninguém abriu o app ainda. Pergunta uma vez só; ver

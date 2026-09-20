@@ -586,6 +586,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 				return
 			}
 			atalhoVivo = a
+			// Aqui o registro é do próprio app, então a notícia não
+			// precisa de socket. E "registrado sem tecla" não existe
+			// nesta ponta: RegisterHotKey ou amarra ou devolve erro,
+			// que o if acima já tratou. Ver atalhogatilho.go.
+			definirGatilho(a.Gatilho)
 		}
 		if atalhoGlobalLigado(caminhoINI) {
 			ligarAtalho()
