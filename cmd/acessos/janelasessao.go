@@ -324,10 +324,10 @@ func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 		// AGENDADA, não executada: ver acaoPendente.
 		j.acaoPendente = func() {
 			if quer {
-				j.w.Option(app.Fullscreen.Option())
+				j.pedirModo(app.Fullscreen.Option())
 				return
 			}
-			j.w.Option(app.Windowed.Option())
+			j.pedirModo(app.Windowed.Option())
 		}
 	}
 	// Botões de janela. Minimizar e maximizar passam pela ação agendada
@@ -341,9 +341,15 @@ func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 		// encostar a janela na borda aciona o snap do compositor sem
 		// passar por este botão, e um bool nosso ficaria dessincronizado.
 		if j.maximizada {
-			j.acaoPendente = func() { j.w.Perform(system.ActionUnmaximize) }
+			j.acaoPendente = func() {
+				j.w.Perform(system.ActionUnmaximize)
+				j.reafirmarDecoracao()
+			}
 		} else {
-			j.acaoPendente = func() { j.w.Perform(system.ActionMaximize) }
+			j.acaoPendente = func() {
+				j.w.Perform(system.ActionMaximize)
+				j.reafirmarDecoracao()
+			}
 		}
 	}
 	if j.btnFechar.Clicked(gtx) {
@@ -378,6 +384,28 @@ func (j *janelaSessao) tratarBotoes(gtx layout.Context) {
 			j.w.Perform(system.ActionClose)
 		}
 	}
+}
+
+// pedirModo troca o modo da janela REAFIRMANDO a decoração do cliente.
+//
+// Não é redundância. MEDIDO com cmd/fantasma: o KWin responde SERVER_SIDE
+// assim que a janela entra em tela cheia — ali o modo de decoração não
+// significa nada para ele — e o Gio grava essa resposta no MESMO campo em
+// que guarda o pedido do app (Config.Decorated). Na próxima negociação ele
+// reenvia o que o compositor impôs, e a janela volta de tela cheia com a
+// moldura do sistema por cima da nossa barrinha, para sempre.
+//
+// Mandar o pedido junto com a troca de modo desfaz isso: o que o app pede
+// vence o que ficou gravado. Conferido: sem esta linha, Decorated fica
+// true depois da tela cheia; com ela, volta a false.
+func (j *janelaSessao) pedirModo(modo app.Option) {
+	j.w.Option(modo, app.Decorated(false))
+}
+
+// reafirmarDecoracao é o mesmo pedido sem trocar de modo, para depois de
+// um maximizar/restaurar — que também passa pela negociação.
+func (j *janelaSessao) reafirmarDecoracao() {
+	j.w.Option(app.Decorated(false))
 }
 
 func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
@@ -431,9 +459,17 @@ func (j *janelaSessao) desenhar(gtx layout.Context) layout.Dimensions {
 			// porque em tela cheia não significa nada — quem cuida do
 			// tamanho ali é o ⛶ ao lado.
 			//
-			// Some quando o compositor recusa a decoração do cliente e
-			// desenha a dele: aí estes seriam uma segunda fileira.
-			if !j.decoraSistema {
+			// Somem só quando o compositor está DE FATO desenhando a
+			// moldura dele, o que nunca acontece em tela cheia.
+			//
+			// E o Decorated não serve de resposta sozinho: MEDIDO, o KWin
+			// responde SERVER_SIDE assim que a janela entra em tela cheia,
+			// mesmo tendo recebido o set_mode(CLIENT_SIDE) — ali o modo
+			// não significa nada para ele, porque não há moldura em tela
+			// cheia de qualquer jeito. Confiando só nele, os botões
+			// sumiam justamente onde são a ÚNICA saída: a janela
+			// destacada NASCE em tela cheia. Ver cmd/fantasma -cheia.
+			if j.telaCheia || !j.decoraSistema {
 				extras = append(extras, func(gtx layout.Context) layout.Dimensions {
 					filhos := []layout.FlexChild{
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {

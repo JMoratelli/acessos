@@ -74,9 +74,18 @@ func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao,
 				return chipEstado(gtx, th, e.Chip, e.Tipo)
 			}),
 			layout.Rigid(layout.Spacer{Width: 8}.Layout),
-			layout.Rigid(txt(th, fonteMono, spSecundario, e.Texto, tema.Sec).Layout),
+			// O DESTINO é quem cede quando falta largura, e por isso é
+			// Flexed e não Rigid: ele absorve a folga quando sobra espaço
+			// (fazendo o resto encostar à direita, como antes) e encolhe
+			// quando falta, em vez de empurrar os controles e os botões de
+			// janela para fora da barra.
+			//
+			// Era Rigid com um espaçador flexível ao lado, e aí um nome de
+			// máquina longo numa janela estreita zerava a largura de tudo
+			// o que vinha depois — inclusive o ✕, que é o canto que o
+			// operador procura para fechar. Ver barrasessao_test.go.
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, 0)}
+				return txt(th, fonteMono, spSecundario, e.Texto, tema.Sec).Layout(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return a.ControlesSessao(gtx, th)

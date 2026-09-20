@@ -53,6 +53,7 @@ func alvos() map[string]int {
 
 func main() {
 	comGrab := flag.Bool("grab", false, "arma e solta a captura, como a janela de sessão")
+	cheia := flag.Bool("cheia", false, "abre a segunda janela em TELA CHEIA, como o destacamento faz")
 	voltas := flag.Int("voltas", 4, "quantas vezes abrir e fechar")
 	flag.Parse()
 
@@ -82,7 +83,14 @@ func main() {
 
 		for v := 1; v <= *voltas; v++ {
 			w := new(app.Window)
-			w.Option(app.Title(fmt.Sprintf("fantasma-%d", v)), app.Size(320, 240))
+			// MESMAS opções da janela de sessão destacada, para medir se
+			// o compositor aceita a decoração do cliente numa SEGUNDA
+			// janela como aceita na primeira.
+			w.Option(app.Title(fmt.Sprintf("fantasma-%d", v)),
+				app.Decorated(false), app.Size(320, 240))
+			if *cheia {
+				w.Option(app.Fullscreen.Option())
+			}
 			fim := make(chan struct{})
 			var g atomic.Pointer[grab.Handle]
 			go func() {
@@ -104,10 +112,17 @@ func main() {
 								g.Store(h)
 							}
 						}
+					case app.ConfigEvent:
+						fmt.Printf("  janela %d: Decorated=%v Mode=%v\n",
+							v, e.Config.Decorated, e.Config.Mode)
 					case app.FrameEvent:
 						gtx := app.NewContext(&ops, e)
 						quadros++
-						if quadros == 5 {
+						if quadros == 5 && *cheia {
+							// volta para janela, como o ⛶ faz
+							w.Option(app.Windowed.Option(), app.Decorated(false))
+						}
+						if quadros == 12 {
 							if *comGrab {
 								if h := g.Load(); h != nil {
 									h.Inibir(false)
