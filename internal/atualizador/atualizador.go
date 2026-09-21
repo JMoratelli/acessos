@@ -338,28 +338,20 @@ func instalarFlatpak(r *Release, progresso func(float64), instalando func()) err
 // =====================================================================
 // PENDENTE DE TESTE NO WINDOWS - APAGAR ESTE BLOCO QUANDO PASSAR
 // =====================================================================
-// Nada do que está abaixo foi exercitado numa máquina Windows.
 // /VERYSILENT, o Restart Manager fechando o app e o código de saída do
-// Inno não existem no Linux e não aparecem em `go test` - o que está
-// verde hoje é compilação, vet e os testes de seleção de release.
+// Inno não existem no Linux e não aparecem em `go test`.
 //
-// Apague este bloco INTEIRO (e o item correspondente no CLAUDE.md) assim
-// que os quatro passarem. Se algum falhar, o que está escrito aqui é o
-// ESPERADO, não o observado: corrija o código, não o comentário.
+// Em 2026-09-21, numa máquina Windows 10 de verdade, passaram: a bateria
+// nativa; o instalador cru com o app aberto (nenhuma janela do Inno, o
+// Restart Manager fechou o app e o [Run] o reabriu, saída 0); e o
+// caminho de falha do cmd.Wait (o diálogo mostra o erro e devolve os
+// botões, em vez de ficar parado em "Instalando...").
 //
-// 1. Bateria nativa: `go test ./...`. Lembrar do PATH do CLAUDE.md
-//    (PATH=/c/msys64/ucrt64/bin:$PATH e
-//    PKG_CONFIG=/c/msys64/ucrt64/bin/pkg-config), senão pega o gcc e o
-//    pkg-config do Strawberry Perl.
-//
-// 2. Instalador cru. É onde mora o risco desta mudança, e NÃO precisa de
-//    release nenhuma: com o acessos.exe ABERTO, rodar
-//    "AcessosSetup-X.Y.Z.exe /VERYSILENT /NORESTART".
-//    Esperado: nenhuma janela do Inno em momento algum; o app fecha
-//    sozinho (Restart Manager, via CloseApplications=yes); o app reabre
-//    sozinho (o [Run] com skipifnotsilent). Se ele NÃO fechar, o Inno
-//    aborta ANTES de copiar - nada fica pela metade, e o motivo está no
-//    log em %TEMP%\Setup Log*.txt (SetupLogging=yes no .iss).
+// FALTA SÓ O 3, e não é questão de tempo: ele depende de uma release
+// publicada MAIS NOVA que a instalada, e não há como forjar isso
+// localmente. Apague este bloco (e o item correspondente no CLAUDE.md)
+// quando ele passar. Se falhar, o que está escrito aqui é o ESPERADO,
+// não o observado: corrija o código, não o comentário.
 //
 // 3. Fluxo pelo app, de ponta a ponta. DEPENDE de uma release mais nova
 //    que a instalada, com .exe + SHA256SUMS: quem roda o /VERYSILENT é o
@@ -371,12 +363,6 @@ func instalarFlatpak(r *Release, progresso func(float64), instalando func()) err
 //    sumia no instante em que o instalador era disparado; reabre; a
 //    versão nova aparece em Sobre. Ver o item PENDENTE do CLAUDE.md para
 //    o estado da release v2.7.1.
-//
-// 4. Caminho triste, que é a razão de existir o cmd.Wait abaixo. Trocar a
-//    linha do exec.Command temporariamente por
-//    `exec.Command("cmd.exe", "/c", "exit", "3")` e confirmar que o
-//    diálogo mostra o erro e devolve os botões, em vez de ficar parado em
-//    "Instalando..." para sempre. Desfazer depois.
 // =====================================================================
 
 // instalarWindows baixa o AcessosSetup-X.Y.Z.exe, confere o sha256
@@ -411,6 +397,12 @@ func instalarWindows(r *Release, progresso func(float64), instalando func()) err
 		return err
 	}
 
+	// Limpar AQUI, e não depois de instalar: a partir do cmd.Start abaixo
+	// este processo pode morrer a qualquer instante — é o caminho NORMAL
+	// no Windows, o instalador o fecha para sobrescrever o .exe. Limpeza
+	// agendada para depois simplesmente nunca rodaria.
+	limparPacotes(filepath.Dir(destino), pacotesMantidos, destino)
+
 	cmd := exec.Command(destino, "/VERYSILENT", "/NORESTART")
 	if err := cmd.Start(); err != nil {
 		return err
@@ -423,8 +415,105 @@ func instalarWindows(r *Release, progresso func(float64), instalando func()) err
 	// processo (app rodando de outra pasta que não a instalada, por
 	// exemplo). A instância nova já subiu pelo [Run], então esta sai
 	// igual ao Linux.
-	os.Remove(destino)
+	//
+	// O pacote NÃO é apagado aqui, de propósito. Quem manda no que fica
+	// no disco é o limparPacotes acima, num lugar só: apagar neste ponto
+	// deixaria o caminho raro sem o instalador da versão recém-posta e o
+	// caminho normal com ele, que é a incoerência que justamente tira o
+	// rollback manual de quem mais vai precisar dele.
 	return nil
+}
+
+// pacotesMantidos é quantos instaladores baixados ficam no disco: o que
+// acabou de chegar e o anterior.
+//
+// O ANTERIOR existe para ROLLBACK MANUAL. Atualização que dá errado no
+// USO — e não na instalação, que o instalador mesmo aborta — se desfaz
+// rodando o instalador da versão de antes, e ele já está na máquina: não
+// depende de rede, de achar a release velha no GitHub, nem de ela
+// continuar publicada.
+const pacotesMantidos = 2
+
+// padraoPacote casa com o que instalarWindows baixa: AcessosSetup-<tag>.exe.
+// Só isso é apagado — o diretório é o %TEMP% do usuário, cheio de coisa de
+// outros programas, e um glob frouxo aqui sairia caro.
+const padraoPacote = "AcessosSetup-*.exe"
+
+// limparPacotes apaga os instaladores baixados por atualizações
+// anteriores, deixando os manter mais recentes. Devolve o que apagou (é
+// o que o teste confere).
+//
+// Só o Windows precisa disto. O irmão do Linux (instalarFlatpak) baixa
+// sempre com o MESMO nome, atualizacao.flatpak, e remove no defer: lá não
+// há como acumular, e não há rollback manual a preservar, porque o
+// flatpak guarda a versão anterior sozinho. Não há lógica comum para
+// extrair — são políticas diferentes pela mesma razão de serem sistemas
+// diferentes.
+//
+// preservar conta na cota e nunca é apagado, mesmo que seja o mais velho
+// da pasta: é o pacote que ACABOU de ser conferido e está prestes a
+// rodar. Data de arquivo é palpite (cópia, restauração de backup, relógio
+// que voltou), e apagar o instalador que está em uso seria trocar um
+// desperdício de disco por uma atualização que não acontece.
+//
+// Falha ao apagar é ignorada de propósito. Isto é faxina: um arquivo
+// travado por antivírus ou já removido por outra instância não pode
+// impedir uma atualização. Não há logger neste pacote — quem registra é
+// quem chama, em cmd/acessos —, então o retorno existe para o teste, e
+// para quem um dia quiser registrar.
+func limparPacotes(dir string, manter int, preservar string) []string {
+	achados, err := filepath.Glob(filepath.Join(dir, padraoPacote))
+	if err != nil || len(achados) == 0 {
+		return nil
+	}
+
+	type pacote struct {
+		caminho string
+		quando  time.Time
+	}
+	var pacotes []pacote
+	for _, c := range achados {
+		fi, err := os.Stat(c)
+		if err != nil || fi.IsDir() {
+			continue
+		}
+		pacotes = append(pacotes, pacote{c, fi.ModTime()})
+	}
+
+	// Mais novo primeiro. O desempate pelo nome não é capricho: dois
+	// arquivos com a mesma data deixariam a ordem — e portanto QUEM é
+	// apagado — à mercê da ordem do diretório, e o teste passaria a
+	// falhar de vez em quando sem ninguém entender por quê.
+	sort.Slice(pacotes, func(i, j int) bool {
+		if !pacotes[i].quando.Equal(pacotes[j].quando) {
+			return pacotes[i].quando.After(pacotes[j].quando)
+		}
+		return pacotes[i].caminho > pacotes[j].caminho
+	})
+
+	var apagados []string
+	guardados := 0
+	base := filepath.Base(preservar)
+	for _, p := range pacotes {
+		// preservar CONTA na cota: com manter=2 ficam o que acabou de
+		// chegar e UM anterior — não dois anteriores mais ele.
+		//
+		// Comparação por nome, não por caminho: os dois lados vêm do
+		// mesmo diretório (o glob não sai dele), e no Windows o mesmo
+		// arquivo tem mais de uma grafia possível de caminho.
+		if filepath.Base(p.caminho) == base {
+			guardados++
+			continue
+		}
+		if guardados < manter {
+			guardados++
+			continue
+		}
+		if os.Remove(p.caminho) == nil {
+			apagados = append(apagados, filepath.Base(p.caminho))
+		}
+	}
+	return apagados
 }
 
 func conferirSha256(caminho, esperado string) error {

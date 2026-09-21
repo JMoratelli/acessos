@@ -79,14 +79,19 @@
     internal/` lá antes de fechar a release (o `third_party/vt10x`
     aparece e fica como está — é código de terceiro).
 
-- **PENDENTE: a atualização sem janela do instalador nunca rodou no
-  Windows.** A troca de `/SILENT` para `/VERYSILENT` e a passagem do
-  fechamento do app para o Restart Manager (`CloseApplications=yes` no
+- **PENDENTE: falta o item 3 do teste da atualização no Windows.** A
+  troca de `/SILENT` para `/VERYSILENT` e a passagem do fechamento do app
+  para o Restart Manager (`CloseApplications=yes` no
   `scripts/instalador.iss`) foram escritas e conferidas só do lado Linux,
   onde nada disso existe. O checklist dos quatro itens — bateria nativa,
   instalador cru com o app aberto, fluxo completo pelo app e o caminho de
   falha do `cmd.Wait` — está no bloco de comentário logo acima de
   `instalarWindows`, em `internal/atualizador/atualizador.go`.
+
+  **Em 2026-09-21 os itens 1, 2 e 4 passaram** numa máquina Windows 10 de
+  verdade e saíram do bloco, que hoje só tem o 3. Ele não é questão de
+  tempo: depende de uma release publicada MAIS NOVA que a instalada, e não
+  há como forjar isso localmente.
 
   **O `AcessosSetup-2.7.1.exe` anexado à release v2.7.1 NÃO é o build da
   2.7.1.** Em 2026-09-21 ele foi substituído, em silêncio, por um build do

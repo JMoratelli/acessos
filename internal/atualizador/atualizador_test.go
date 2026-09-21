@@ -5,8 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestMaisNova(t *testing.T) {
@@ -271,5 +274,114 @@ func TestChecarPropagaFalhaDaAPI(t *testing.T) {
 
 	if _, err := Checar("2.5.2"); err == nil {
 		t.Fatal("queria erro, veio nil")
+	}
+}
+
+// ---------------------------------------------------------------------
+// Limpeza dos instaladores baixados (só Windows usa, mas o teste roda em
+// qualquer sistema: a função mexe em arquivo, não em API do Windows).
+// ---------------------------------------------------------------------
+
+// pacoteEm cria um instalador de mentira com a data pedida. A data é o
+// critério de "mais novo", então ela é o dado do teste, não detalhe.
+func pacoteEm(t *testing.T, dir, nome string, idade time.Duration) string {
+	t.Helper()
+	c := filepath.Join(dir, nome)
+	if err := os.WriteFile(c, []byte(nome), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quando := time.Now().Add(-idade)
+	if err := os.Chtimes(c, quando, quando); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func existe(t *testing.T, caminho string) bool {
+	t.Helper()
+	_, err := os.Stat(caminho)
+	return err == nil
+}
+
+// O caso de sempre: sobram o que acabou de chegar e UM anterior — o do
+// rollback manual. Era este o vazamento: quatro instaladores, 195 MB, no
+// %TEMP% de uma máquina de produção.
+func TestLimparPacotesDeixaONovoEUmAnterior(t *testing.T) {
+	dir := t.TempDir()
+	velho1 := pacoteEm(t, dir, "AcessosSetup-v2.6.1.exe", 72*time.Hour)
+	velho2 := pacoteEm(t, dir, "AcessosSetup-v2.6.3.exe", 48*time.Hour)
+	anterior := pacoteEm(t, dir, "AcessosSetup-v2.7.0.exe", 24*time.Hour)
+	novo := pacoteEm(t, dir, "AcessosSetup-v2.7.1.exe", 0)
+
+	apagados := limparPacotes(dir, pacotesMantidos, novo)
+
+	if len(apagados) != 2 {
+		t.Fatalf("apagou %v; queria os dois mais velhos", apagados)
+	}
+	if !existe(t, novo) || !existe(t, anterior) {
+		t.Fatal("o novo e o anterior tinham de ficar — é o rollback manual")
+	}
+	if existe(t, velho1) || existe(t, velho2) {
+		t.Fatal("os dois mais velhos tinham de sair")
+	}
+}
+
+// Data de arquivo é palpite: cópia, backup restaurado, relógio que
+// voltou. O pacote que está PRESTES A RODAR não pode sumir por causa
+// disso — seria trocar disco economizado por atualização que não
+// acontece.
+func TestLimparPacotesNuncaApagaOQueVaiRodar(t *testing.T) {
+	dir := t.TempDir()
+	pacoteEm(t, dir, "AcessosSetup-v2.7.0.exe", 0)
+	pacoteEm(t, dir, "AcessosSetup-v2.6.3.exe", time.Hour)
+	novoComDataVelha := pacoteEm(t, dir, "AcessosSetup-v2.7.1.exe", 900*time.Hour)
+
+	limparPacotes(dir, pacotesMantidos, novoComDataVelha)
+
+	if !existe(t, novoComDataVelha) {
+		t.Fatal("apagou o instalador que estava em uso")
+	}
+}
+
+// O diretório é o %TEMP% do usuário, cheio de coisa de outros programas.
+// Um glob frouxo aqui sai caro.
+func TestLimparPacotesSoMexeNosPacotesDoApp(t *testing.T) {
+	dir := t.TempDir()
+	novo := pacoteEm(t, dir, "AcessosSetup-v2.7.1.exe", 0)
+	alheios := []string{
+		pacoteEm(t, dir, "OutroApp-v1.0.exe", 100*time.Hour),
+		pacoteEm(t, dir, "AcessosSetup-v2.6.1.exe.parcial", 100*time.Hour),
+		pacoteEm(t, dir, "acessos.log", 100*time.Hour),
+	}
+	sobrando := pacoteEm(t, dir, "AcessosSetup-v2.6.1.exe", 100*time.Hour)
+
+	limparPacotes(dir, 1, novo)
+
+	if existe(t, sobrando) {
+		t.Fatal("o pacote velho do app tinha de sair")
+	}
+	for _, a := range alheios {
+		if !existe(t, a) {
+			t.Fatalf("apagou arquivo que não é pacote do app: %s", a)
+		}
+	}
+}
+
+// Menos arquivos que a cota: não há o que apagar, e nada pode explodir
+// numa pasta vazia (primeira atualização da vida da máquina).
+func TestLimparPacotesComPoucoOuNadaNaoFazNada(t *testing.T) {
+	vazio := t.TempDir()
+	if apagados := limparPacotes(vazio, pacotesMantidos, filepath.Join(vazio, "AcessosSetup-v1.exe")); apagados != nil {
+		t.Fatalf("pasta vazia devia dar nil, veio %v", apagados)
+	}
+
+	dir := t.TempDir()
+	novo := pacoteEm(t, dir, "AcessosSetup-v2.7.1.exe", 0)
+	unico := pacoteEm(t, dir, "AcessosSetup-v2.7.0.exe", time.Hour)
+	if apagados := limparPacotes(dir, pacotesMantidos, novo); apagados != nil {
+		t.Fatalf("dois arquivos e cota dois: nada a apagar, veio %v", apagados)
+	}
+	if !existe(t, unico) || !existe(t, novo) {
+		t.Fatal("não podia ter apagado nada")
 	}
 }
