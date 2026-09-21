@@ -33,15 +33,22 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupLogging=yes
-; O atualizador roda este instalador com /SILENT enquanto o próprio
-; acessos.exe está de pé — CloseApplications é a rede de segurança que
-; fecha o processo via Restart Manager SE ele ainda estiver travando o
-; arquivo na hora de sobrescrever (já é o padrão do Inno 6, mas fica
-; explícito aqui). Reabrir depois é o [Run] logo abaixo, não
-; RestartApplications: esse só reabre o que o PRÓPRIO Restart Manager
-; fechou, e na prática o processo já saiu sozinho antes disso (o
-; atualizador fecha a janela assim que dispara o instalador), então
-; nunca havia o que reabrir.
+; O atualizador roda este instalador com /VERYSILENT enquanto o próprio
+; acessos.exe está de pé, e NÃO fecha o app ao disparar: quem fecha é o
+; Restart Manager, daqui, na hora de sobrescrever o arquivo. Isso é de
+; propósito — com /VERYSILENT não há janela nenhuma na tela, e o app
+; saindo na hora deixaria o usuário olhando para o nada durante toda a
+; cópia. Segurando a janela dele até este ponto, o que fica no ar é a UI
+; do próprio Acessos ("Instalando a atualização…"), como no Linux, onde o
+; flatpak install não precisa derrubar ninguém para instalar.
+; Portanto CloseApplications NÃO é mais rede de segurança, é o caminho
+; normal (continua sendo o padrão do Inno 6, mas aqui é explícito porque
+; agora se depende dele).
+;
+; Reabrir depois é o [Run] logo abaixo, e não RestartApplications: esse só
+; reabre o que o Restart Manager fechou, e o app também pode ter saído por
+; conta própria (o usuário fechando a janela no meio) — o [Run] cobre os
+; dois casos.
 CloseApplications=yes
 RestartApplications=no
 
@@ -65,7 +72,7 @@ Name: "desktopicon"; Description: "Criar um atalho na Área de Trabalho"; GroupD
 ; interativo, com a caixa "abrir agora" ao final.
 Filename: "{app}\acessos.exe"; Description: "Abrir o Acessos agora"; Flags: nowait postinstall skipifsilent
 ; skipifnotsilent: o complemento, para o atualizador (que SEMPRE roda
-; silencioso) — reabre sem perguntar nada, já que não há tela para
+; /VERYSILENT) — reabre sem perguntar nada, já que não há tela para
 ; perguntar.
 Filename: "{app}\acessos.exe"; Flags: nowait skipifnotsilent
 

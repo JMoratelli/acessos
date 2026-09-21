@@ -287,17 +287,31 @@ func partes(v string) []int {
 	return out
 }
 
-// Instalar baixa o pacote da release e reinstala por cima, deixando uma
-// instância nova em pé. Quem chama deve encerrar a janela atual logo
-// depois.
-func Instalar(r *Release, progresso func(float64)) error {
+// Instalar baixa o pacote da release e instala por cima.
+//
+// progresso recebe a fração já baixada, de 0 a 1. instalando é chamado
+// uma vez, quando o download acaba e a instalação começa: dali em diante
+// não há progresso nenhum para ler, e quem chama troca o aviso na tela em
+// vez de deixar uma barra parada em 100%.
+//
+// Voltar sem erro quer dizer "instalado, e a instância nova já está
+// subindo" — quem chama fecha a janela atual. No Windows o normal é NÃO
+// voltar: o instalador encerra este processo no meio da espera, de
+// propósito (ver instalarWindows).
+func Instalar(r *Release, progresso func(float64), instalando func()) error {
 	if runtime.GOOS == "windows" {
-		return instalarWindows(r, progresso)
+		return instalarWindows(r, progresso, instalando)
 	}
-	return instalarFlatpak(r, progresso)
+	return instalarFlatpak(r, progresso, instalando)
 }
 
-func instalarFlatpak(r *Release, progresso func(float64)) error {
+func avisar(f func()) {
+	if f != nil {
+		f()
+	}
+}
+
+func instalarFlatpak(r *Release, progresso func(float64), instalando func()) error {
 	destino := filepath.Join(cacheDir(), "atualizacao.flatpak")
 	if err := os.MkdirAll(filepath.Dir(destino), 0o700); err != nil {
 		return err
@@ -307,6 +321,7 @@ func instalarFlatpak(r *Release, progresso func(float64)) error {
 	}
 	defer os.Remove(destino)
 
+	avisar(instalando)
 	saida, err := noHost("flatpak", "install", "--user", "-y",
 		"--noninteractive", "--reinstall", destino)
 	if err != nil {
@@ -323,15 +338,25 @@ func instalarFlatpak(r *Release, progresso func(float64)) error {
 // instalarWindows baixa o AcessosSetup-X.Y.Z.exe, confere o sha256
 // publicado junto da release e dispara a instalação silenciosa.
 //
-// Não espera o instalador terminar (Start, não Run): o instalador vai
-// substituir ESTE .exe, que está em execução agora — quem chama fecha a
-// janela atual logo em seguida (CloseApplications no .iss é só a rede de
-// segurança caso o processo ainda esteja de pé nesse instante). Reabrir
-// depois de instalar é o [Run] do instalador.iss com a flag
-// skipifnotsilent, não o Restart Manager: como o processo já saiu
-// sozinho antes da hora de sobrescrever o arquivo, nunca haveria nada
-// para o Restart Manager reabrir.
-func instalarWindows(r *Release, progresso func(float64)) error {
+// /VERYSILENT, não /SILENT: com /SILENT o Inno mostra a PRÓPRIA janela de
+// progresso, uma janela alheia por cima de tudo. O progresso que
+// interessa — o download, que é a parte demorada — já está desenhado no
+// diálogo do app.
+//
+// Quem fecha o app NÃO é esta função: é o instalador, pelo Restart
+// Manager (CloseApplications=yes no .iss), no instante em que precisa
+// sobrescrever o acessos.exe que está em execução. Esse é o jeito de
+// chegar mais perto do Linux, onde o flatpak install monta um deploy novo
+// sem derrubar ninguém e a janela do app fica no ar até o fim: aqui ela
+// fica até o último momento possível. Sair assim que o instalador é
+// disparado deixaria a tela vazia durante toda a cópia.
+//
+// Por isso o Wait: no caminho feliz ele NÃO volta, este processo morre
+// esperando. Ele existe para o caminho triste — instalador que aborta
+// (não conseguiu fechar o app, disco cheio, pacote corrompido) —, em que
+// sem ninguém escutando o app ficaria parado em "Instalando…" para
+// sempre. Reabrir depois é o [Run] do instalador.iss com skipifnotsilent.
+func instalarWindows(r *Release, progresso func(float64), instalando func()) error {
 	destino := filepath.Join(os.TempDir(), "AcessosSetup-"+r.Tag+".exe")
 	if err := baixar(r.Bundle, destino, progresso); err != nil {
 		return fmt.Errorf("falha ao baixar a atualização: %w", err)
@@ -342,10 +367,20 @@ func instalarWindows(r *Release, progresso func(float64)) error {
 		return err
 	}
 
-	// /SILENT (não /VERYSILENT) deixa a barra do próprio instalador
-	// visível — o app já vai fechar em seguida, então não custa mostrar
-	// o que está rodando.
-	return exec.Command(destino, "/SILENT", "/NORESTART").Start()
+	cmd := exec.Command(destino, "/VERYSILENT", "/NORESTART")
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	avisar(instalando)
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("o instalador falhou: %w", err)
+	}
+	// Chegar aqui é raro: o instalador terminou sem precisar fechar este
+	// processo (app rodando de outra pasta que não a instalada, por
+	// exemplo). A instância nova já subiu pelo [Run], então esta sai
+	// igual ao Linux.
+	os.Remove(destino)
+	return nil
 }
 
 func conferirSha256(caminho, esperado string) error {

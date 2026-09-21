@@ -22,12 +22,16 @@ type dlgAtualizar struct {
 	w   *app.Window
 	rel *atualizador.Release
 
-	mu        sync.Mutex
-	baixando  bool
-	fracao    float64
-	erro      string
-	btnAgora  widget.Clickable
-	btnDepois widget.Clickable
+	mu sync.Mutex
+	// baixando cobre da confirmação até o pacote estar no disco;
+	// instalando é o que vem depois. No Linux instalando dura o
+	// flatpak install; no Windows vai até o instalador fechar o app.
+	baixando   bool
+	instalando bool
+	fracao     float64
+	erro       string
+	btnAgora   widget.Clickable
+	btnDepois  widget.Clickable
 }
 
 func oferecerAtualizacao(w *app.Window, r *atualizador.Release) {
@@ -39,14 +43,16 @@ func (d *dlgAtualizar) Largura() unit.Dp { return 460 }
 
 func (d *dlgAtualizar) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	d.mu.Lock()
-	baixando, fracao, erro := d.baixando, d.fracao, d.erro
+	baixando, instalando, fracao, erro := d.baixando, d.instalando, d.fracao, d.erro
 	d.mu.Unlock()
 
-	if d.btnDepois.Clicked(gtx) {
-		fecharDialogo()
-	}
-	if !baixando && d.btnAgora.Clicked(gtx) {
-		d.instalar()
+	if !instalando {
+		if d.btnDepois.Clicked(gtx) {
+			fecharDialogo()
+		}
+		if !baixando && d.btnAgora.Clicked(gtx) {
+			d.instalar()
+		}
 	}
 
 	filhos := []layout.FlexChild{
@@ -66,24 +72,37 @@ func (d *dlgAtualizar) Corpo(gtx layout.Context, th *material.Theme) layout.Dime
 				return b.Layout(gtx)
 			}))
 	}
+	if instalando {
+		// A barra continua onde estava, cheia: ela mede o DOWNLOAD, que
+		// de fato acabou. A linha abaixo é só para dizer o que está
+		// acontecendo agora, já que a instalação não tem progresso para
+		// ler. No Linux ela pisca por poucos segundos e a janela nova
+		// sobe; no Windows fica até o instalador fechar este processo, que
+		// é o tempo em que a tela ficaria sem nada para mostrar.
+		filhos = append(filhos, espaco(8),
+			layout.Rigid(rotulo(th, fonteMono, spCardMeta,
+				"Instalando a atualização…", tema.Sec)))
+	}
 	if erro != "" {
 		filhos = append(filhos, espaco(8),
 			layout.Rigid(rotulo(th, fonteMono, spSecundario, erro, tema.ErroFg)))
 	}
-	filhos = append(filhos, espaco(14), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: gtx.Constraints.Min}
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return botaoNeutro(gtx, th, &d.btnDepois, "Depois")
-			}),
-			layout.Rigid(layout.Spacer{Width: 8}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return botao(gtx, th, &d.btnAgora, "Atualizar agora", pesoPrimario, baixando)
-			}),
-		)
-	}))
+	if !instalando {
+		filhos = append(filhos, espaco(14), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: gtx.Constraints.Min}
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return botaoNeutro(gtx, th, &d.btnDepois, "Depois")
+				}),
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return botao(gtx, th, &d.btnAgora, "Atualizar agora", pesoPrimario, baixando)
+				}),
+			)
+		}))
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 }
 
@@ -93,20 +112,28 @@ func (d *dlgAtualizar) instalar() {
 	d.mu.Unlock()
 
 	go func() {
-		err := atualizador.Instalar(d.rel, func(f float64) {
-			d.mu.Lock()
-			d.fracao = f
-			d.mu.Unlock()
-			d.w.Invalidate()
-		})
+		err := atualizador.Instalar(d.rel,
+			func(f float64) {
+				d.mu.Lock()
+				d.fracao = f
+				d.mu.Unlock()
+				d.w.Invalidate()
+			},
+			func() {
+				d.mu.Lock()
+				d.instalando = true
+				d.mu.Unlock()
+				d.w.Invalidate()
+			})
 		if err != nil {
 			d.mu.Lock()
-			d.baixando, d.erro = false, err.Error()
+			d.baixando, d.instalando, d.erro = false, false, err.Error()
 			d.mu.Unlock()
 			d.w.Invalidate()
 			return
 		}
-		// A instância nova já está subindo; esta sai.
+		// A instância nova já está subindo; esta sai. No Windows é raro
+		// chegar aqui: o instalador costuma fechar este processo antes.
 		d.w.Perform(system.ActionClose)
 	}()
 }
