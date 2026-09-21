@@ -86,8 +86,27 @@
   onde nada disso existe. O checklist dos quatro itens — bateria nativa,
   instalador cru com o app aberto, fluxo completo pelo app e o caminho de
   falha do `cmd.Wait` — está no bloco de comentário logo acima de
-  `instalarWindows`, em `internal/atualizador/atualizador.go`. Apagar lá e
-  apagar este item quando passarem.
+  `instalarWindows`, em `internal/atualizador/atualizador.go`.
+
+  **O `AcessosSetup-2.7.1.exe` anexado à release v2.7.1 NÃO é o build da
+  2.7.1.** Em 2026-09-21 ele foi substituído, em silêncio, por um build do
+  `master` em `5bfb7fe`, que carrega esta mudança; o `SHA256SUMS.txt` foi
+  regerado junto e bate (`5d2e1f9a97…`). É esse o instalador a usar no
+  teste — ele diz "2.7.1" em Sobre como qualquer outro.
+
+  **Ele serve para os itens 1, 2 e 4, não para o 3.** O item 3 exercita o
+  lado do APP que foi mudado, e quem roda o `/VERYSILENT` é o app JÁ
+  INSTALADO, não o instalador baixado: um 2.7.0 atualizando para este
+  pacote usaria o código velho, com `/SILENT`, e não testaria nada.
+  Para o item 3 é preciso uma release MAIS NOVA que a 2.7.1 com um
+  `AcessosSetup-*.exe` anexado, com este app instalado por baixo.
+
+  **RETIRAR DEPOIS.** Quando os itens 1, 2 e 4 passarem, publicar a
+  release de verdade (versão nova, com `.exe` e, se for o caso, o bundle
+  `.flatpak`): ela fecha o item 3 e desfaz esta gambiarra de uma vez. O
+  `.exe` original da 2.7.1 não está mais na release — se for preciso, ele
+  se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
+  bloco de comentário em `instalarWindows`.
 
 - **Compilar no Windows não é o build oficial** (conferido em
   2026-09-20, nesta máquina). O `.exe` entregue sai de

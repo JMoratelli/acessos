@@ -361,12 +361,16 @@ func instalarFlatpak(r *Release, progresso func(float64), instalando func()) err
 //    aborta ANTES de copiar - nada fica pela metade, e o motivo está no
 //    log em %TEMP%\Setup Log*.txt (SetupLogging=yes no .iss).
 //
-// 3. Fluxo pelo app, de ponta a ponta. Instalar um build DESTE código com
-//    versão menor que uma release já publicada com .exe + SHA256SUMS,
-//    abrir e aceitar a atualização. Esperado: barra de download; depois
-//    "Instalando a atualização..." FICA na tela até o app fechar - é
-//    exatamente o que mudou, antes ele sumia no instante em que o
-//    instalador era disparado; reabre; a versão nova aparece em Sobre.
+// 3. Fluxo pelo app, de ponta a ponta. DEPENDE de uma release mais nova
+//    que a instalada, com .exe + SHA256SUMS: quem roda o /VERYSILENT é o
+//    app JÁ INSTALADO, não o instalador baixado, então atualizar PARA um
+//    pacote novo usando um app velho não testa nada. Com este código
+//    instalado e uma release maior publicada, aceitar a atualização.
+//    Esperado: barra de download; depois "Instalando a atualização..."
+//    FICA na tela até o app fechar - é exatamente o que mudou, antes ele
+//    sumia no instante em que o instalador era disparado; reabre; a
+//    versão nova aparece em Sobre. Ver o item PENDENTE do CLAUDE.md para
+//    o estado da release v2.7.1.
 //
 // 4. Caminho triste, que é a razão de existir o cmd.Wait abaixo. Trocar a
 //    linha do exec.Command temporariamente por
