@@ -79,6 +79,16 @@
     internal/` lá antes de fechar a release (o `third_party/vt10x`
     aparece e fica como está — é código de terceiro).
 
+- **PENDENTE: a atualização sem janela do instalador nunca rodou no
+  Windows.** A troca de `/SILENT` para `/VERYSILENT` e a passagem do
+  fechamento do app para o Restart Manager (`CloseApplications=yes` no
+  `scripts/instalador.iss`) foram escritas e conferidas só do lado Linux,
+  onde nada disso existe. O checklist dos quatro itens — bateria nativa,
+  instalador cru com o app aberto, fluxo completo pelo app e o caminho de
+  falha do `cmd.Wait` — está no bloco de comentário logo acima de
+  `instalarWindows`, em `internal/atualizador/atualizador.go`. Apagar lá e
+  apagar este item quando passarem.
+
 - **Compilar no Windows não é o build oficial** (conferido em
   2026-09-20, nesta máquina). O `.exe` entregue sai de
   `scripts/build-windows.sh`, no Linux, e o script monta o sysroot MSYS2

@@ -335,6 +335,46 @@ func instalarFlatpak(r *Release, progresso func(float64), instalando func()) err
 	return exec.Command("flatpak-spawn", "--host", "flatpak", "run", AppID).Start()
 }
 
+// =====================================================================
+// PENDENTE DE TESTE NO WINDOWS - APAGAR ESTE BLOCO QUANDO PASSAR
+// =====================================================================
+// Nada do que está abaixo foi exercitado numa máquina Windows.
+// /VERYSILENT, o Restart Manager fechando o app e o código de saída do
+// Inno não existem no Linux e não aparecem em `go test` - o que está
+// verde hoje é compilação, vet e os testes de seleção de release.
+//
+// Apague este bloco INTEIRO (e o item correspondente no CLAUDE.md) assim
+// que os quatro passarem. Se algum falhar, o que está escrito aqui é o
+// ESPERADO, não o observado: corrija o código, não o comentário.
+//
+// 1. Bateria nativa: `go test ./...`. Lembrar do PATH do CLAUDE.md
+//    (PATH=/c/msys64/ucrt64/bin:$PATH e
+//    PKG_CONFIG=/c/msys64/ucrt64/bin/pkg-config), senão pega o gcc e o
+//    pkg-config do Strawberry Perl.
+//
+// 2. Instalador cru. É onde mora o risco desta mudança, e NÃO precisa de
+//    release nenhuma: com o acessos.exe ABERTO, rodar
+//    "AcessosSetup-X.Y.Z.exe /VERYSILENT /NORESTART".
+//    Esperado: nenhuma janela do Inno em momento algum; o app fecha
+//    sozinho (Restart Manager, via CloseApplications=yes); o app reabre
+//    sozinho (o [Run] com skipifnotsilent). Se ele NÃO fechar, o Inno
+//    aborta ANTES de copiar - nada fica pela metade, e o motivo está no
+//    log em %TEMP%\Setup Log*.txt (SetupLogging=yes no .iss).
+//
+// 3. Fluxo pelo app, de ponta a ponta. Instalar um build DESTE código com
+//    versão menor que uma release já publicada com .exe + SHA256SUMS,
+//    abrir e aceitar a atualização. Esperado: barra de download; depois
+//    "Instalando a atualização..." FICA na tela até o app fechar - é
+//    exatamente o que mudou, antes ele sumia no instante em que o
+//    instalador era disparado; reabre; a versão nova aparece em Sobre.
+//
+// 4. Caminho triste, que é a razão de existir o cmd.Wait abaixo. Trocar a
+//    linha do exec.Command temporariamente por
+//    `exec.Command("cmd.exe", "/c", "exit", "3")` e confirmar que o
+//    diálogo mostra o erro e devolve os botões, em vez de ficar parado em
+//    "Instalando..." para sempre. Desfazer depois.
+// =====================================================================
+
 // instalarWindows baixa o AcessosSetup-X.Y.Z.exe, confere o sha256
 // publicado junto da release e dispara a instalação silenciosa.
 //
