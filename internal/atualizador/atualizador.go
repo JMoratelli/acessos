@@ -11,7 +11,16 @@
 //  2. Não usa "flatpak update": os releases são bundles soltos anexados à
 //     release do GitHub, não um repositório OSTree. No Windows, da mesma
 //     forma, o anexo é o `.exe` do Inno Setup, não um feed de update.
-//  3. No Flatpak o download vai para o cache do app, um caminho REAL do
+//  3. A release do GitHub marcada como "latest" NÃO serve de ponto de
+//     partida: uma versão pode sair só de um lado (só o .exe, só o
+//     bundle) e, quando sai, a "latest" fica sem pacote para a outra
+//     plataforma e o app de lá para de enxergar atualização — inclusive
+//     as anteriores, que tinham pacote. Aconteceu na v2.7.1, publicada
+//     só com o instalador do Windows: o Linux ficou preso na 2.5.2 com
+//     a 2.7.0 disponível e ninguém avisado. Por isso a checagem varre a
+//     LISTA de releases e fica com a mais nova que tenha pacote PARA
+//     ESTA plataforma.
+//  4. No Flatpak o download vai para o cache do app, um caminho REAL do
 //     $HOME do host — tanto este processo quanto o "flatpak install"
 //     rodado no host enxergam o mesmo arquivo pelo mesmo caminho. No
 //     Windows o download vai para a pasta temporária do usuário e é
@@ -30,6 +39,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,10 +47,14 @@ import (
 
 const (
 	AppID       = "org.jj.Acessos"
-	urlRelease  = "https://api.github.com/repos/JMoratelli/acessos/releases/latest"
 	tempoRede   = 8 * time.Second
 	tempoBaixar = 5 * time.Minute
 )
+
+// var, não const, só para o teste conseguir apontar para um servidor
+// local — a decodificação da lista é a parte que nenhum teste de unidade
+// de escolher() cobre.
+var urlReleases = "https://api.github.com/repos/JMoratelli/acessos/releases?per_page=30"
 
 // Release é o que a interface precisa mostrar e usar.
 type Release struct {
@@ -67,10 +81,36 @@ func Suportado() bool {
 	return EmFlatpak()
 }
 
-// Checar consulta a release mais recente. Devolve nil quando não há nada
-// a oferecer: versão igual ou mais velha, ou release sem bundle anexado.
+// releaseGitHub e assetGitHub são o recorte da API que interessa aqui.
+type releaseGitHub struct {
+	Tag      string        `json:"tag_name"`
+	Corpo    string        `json:"body"`
+	Rascunho bool          `json:"draft"`
+	Previa   bool          `json:"prerelease"`
+	Assets   []assetGitHub `json:"assets"`
+}
+
+type assetGitHub struct {
+	Nome string `json:"name"`
+	URL  string `json:"browser_download_url"`
+}
+
+// Checar procura a versão mais nova que tenha pacote para esta
+// plataforma. Devolve nil quando não há nada a oferecer: nenhuma release
+// mais nova que a instalada, ou nenhuma delas com o pacote daqui.
 func Checar(versaoAtual string) (*Release, error) {
-	req, err := http.NewRequest("GET", urlRelease, nil)
+	lista, err := listar()
+	if err != nil {
+		return nil, err
+	}
+	return escolher(lista, versaoAtual, runtime.GOOS, acharSoma)
+}
+
+// listar traz as releases publicadas, da mais recente para a mais
+// antiga. As 30 do topo cobrem com folga a distância entre dois pacotes
+// da mesma plataforma; quem ficar para trás disso reinstala na mão.
+func listar() ([]releaseGitHub, error) {
+	req, err := http.NewRequest("GET", urlReleases, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -87,24 +127,60 @@ func Checar(versaoAtual string) (*Release, error) {
 		return nil, fmt.Errorf("GitHub respondeu %s", resp.Status)
 	}
 
-	var dado struct {
-		Tag    string `json:"tag_name"`
-		Corpo  string `json:"body"`
-		Assets []struct {
-			Nome string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&dado); err != nil {
+	var lista []releaseGitHub
+	if err := json.NewDecoder(resp.Body).Decode(&lista); err != nil {
 		return nil, err
 	}
-	if dado.Tag == "" || !MaisNova(dado.Tag, versaoAtual) {
-		return nil, nil
-	}
+	return lista, nil
+}
 
-	if runtime.GOOS == "windows" {
+// escolher fica com a primeira release, da mais nova para a mais velha,
+// que seja mais nova que versaoAtual E tenha pacote para o sistema so.
+// somaDe é o leitor do SHA256SUMS, separado para o teste não precisar de
+// rede.
+//
+// Um erro ao ler o SHA256SUMS de uma candidata não interrompe a varredura
+// — a release seguinte ainda pode servir —, mas é guardado e devolvido se
+// no fim não sobrar nada, para a falha de rede não passar por "está tudo
+// atualizado".
+func escolher(lista []releaseGitHub, versaoAtual, so string, somaDe func(url, nome string) (string, error)) (*Release, error) {
+	// A API ordena por data de criação. Reordenar por versão evita que uma
+	// tag republicada, ou uma correção de linha antiga lançada depois,
+	// esconda o que na verdade veio antes dela.
+	ordem := make([]releaseGitHub, len(lista))
+	copy(ordem, lista)
+	sort.SliceStable(ordem, func(i, j int) bool { return MaisNova(ordem[i].Tag, ordem[j].Tag) })
+
+	var primeiroErro error
+	for i := range ordem {
+		r := &ordem[i]
+		if r.Tag == "" || r.Rascunho || r.Previa {
+			continue
+		}
+		if !MaisNova(r.Tag, versaoAtual) {
+			// Lista ordenada: daqui para baixo só vem coisa ainda mais velha.
+			break
+		}
+		rel, err := montar(r, so, somaDe)
+		if err != nil {
+			if primeiroErro == nil {
+				primeiroErro = err
+			}
+			continue
+		}
+		if rel != nil {
+			return rel, nil
+		}
+	}
+	return nil, primeiroErro
+}
+
+// montar traduz uma release no que o sistema so consegue instalar, ou
+// nil quando aquela release não trouxe pacote para cá.
+func montar(r *releaseGitHub, so string, somaDe func(url, nome string) (string, error)) (*Release, error) {
+	if so == "windows" {
 		var exeNome, exeURL, somasURL string
-		for _, a := range dado.Assets {
+		for _, a := range r.Assets {
 			if strings.HasPrefix(a.Nome, "AcessosSetup-") && strings.HasSuffix(a.Nome, ".exe") {
 				exeNome, exeURL = a.Nome, a.URL
 			}
@@ -115,7 +191,7 @@ func Checar(versaoAtual string) (*Release, error) {
 		if exeURL == "" || somasURL == "" {
 			return nil, nil
 		}
-		soma, err := acharSoma(somasURL, exeNome)
+		soma, err := somaDe(somasURL, exeNome)
 		if err != nil {
 			return nil, err
 		}
@@ -125,12 +201,12 @@ func Checar(versaoAtual string) (*Release, error) {
 			// baixar um .exe às cegas.
 			return nil, nil
 		}
-		return &Release{Tag: dado.Tag, Bundle: exeURL, Sha256: soma, Notas: dado.Corpo}, nil
+		return &Release{Tag: r.Tag, Bundle: exeURL, Sha256: soma, Notas: r.Corpo}, nil
 	}
 
-	for _, a := range dado.Assets {
+	for _, a := range r.Assets {
 		if strings.HasSuffix(a.Nome, ".flatpak") {
-			return &Release{Tag: dado.Tag, Bundle: a.URL, Notas: dado.Corpo}, nil
+			return &Release{Tag: r.Tag, Bundle: a.URL, Notas: r.Corpo}, nil
 		}
 	}
 	return nil, nil
