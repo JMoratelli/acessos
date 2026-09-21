@@ -83,10 +83,9 @@
   troca de `/SILENT` para `/VERYSILENT` e a passagem do fechamento do app
   para o Restart Manager (`CloseApplications=yes` no
   `scripts/instalador.iss`) foram escritas e conferidas só do lado Linux,
-  onde nada disso existe. O checklist dos quatro itens — bateria nativa,
-  instalador cru com o app aberto, fluxo completo pelo app e o caminho de
-  falha do `cmd.Wait` — está no bloco de comentário logo acima de
-  `instalarWindows`, em `internal/atualizador/atualizador.go`.
+  onde nada disso existe. O que falta conferir está no bloco de
+  comentário logo acima de `instalarWindows`, em
+  `internal/atualizador/atualizador.go`.
 
   **Em 2026-09-21 os itens 1, 2 e 4 passaram** numa máquina Windows 10 de
   verdade e saíram do bloco, que hoje só tem o 3. Ele não é questão de
@@ -106,8 +105,7 @@
   Para o item 3 é preciso uma release MAIS NOVA que a 2.7.1 com um
   `AcessosSetup-*.exe` anexado, com este app instalado por baixo.
 
-  **RETIRAR DEPOIS.** Quando os itens 1, 2 e 4 passarem, publicar a
-  release de verdade (versão nova, com `.exe` e, se for o caso, o bundle
+  **RETIRAR DEPOIS.** Publicar a release de verdade (versão nova, com `.exe` e, se for o caso, o bundle
   `.flatpak`): ela fecha o item 3 e desfaz esta gambiarra de uma vez. O
   `.exe` original da 2.7.1 não está mais na release — se for preciso, ele
   se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
