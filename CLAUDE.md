@@ -111,6 +111,46 @@
   se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
   bloco de comentário em `instalarWindows`.
 
+- **ALERTA: o build do Windows mudou e ainda não rodou no Linux**
+  (2026-09-22). O conserto do runtime C (item abaixo) mexeu em
+  `scripts/build-windows.sh`, `scripts/sysroot-msys2.py` e criou o
+  `scripts/crt-windows.sh`, e **nada disso foi executado de ponta a ponta
+  do lado que importa** — de um Windows dá para conferir sintaxe
+  (`bash -n`, `py_compile`) e exercitar a lógica em pedaços, não rodar o
+  build.
+
+  Conferir na PRIMEIRA exportação e, passando, **apagar este item**:
+
+  - O passo 0 imprime `>> runtime C do x86_64-w64-mingw32-gcc: ...`. O
+    esperado hoje é `msvcrt` (é o que o `.exe` da v2.7.1 importa), o que
+    leva ao repositório `mingw64`. Se disser `ucrt`, o toolchain do Arch
+    mudou de novo e o `ucrt64` continua valendo — nos dois casos está
+    certo, o que não pode é o sysroot discordar do compilador.
+  - **Vai baixar um sysroot novo** (~200 MB) porque ele agora mora num
+    diretório por sabor. É esperado, não é defeito. O
+    `build/win/sysroot/ucrt64` antigo fica no disco sem uso.
+  - O passo 4b imprime `>> conferindo o runtime C do que vai ser
+    empacotado` e as duas medições. Se falhar, **não publique**: é
+    exatamente o defeito que ele existe para pegar.
+  - `scripts/crt-windows.sh` foi gravado no índice como `100755`. Se der
+    "permission denied", o bit se perdeu no caminho — `chmod +x`.
+  - O `objdump` vem do `mingw-w64-binutils` (dependência do
+    `mingw-w64-gcc`). Sem ele as medições saem `desconhecido` e a trava
+    só avisa, em vez de barrar.
+  - Com o pacote pronto, **testar VNC e RDP no Windows**: o payload
+    inteiro de DLLs troca de sabor.
+
+  O que JÁ foi verificado de um Windows, para não refazer: o par exato que
+  o próximo build produz (`.exe` msvcrt + `libvncclient.dll` do `mingw64`)
+  passa na trava; o layout do pacote `mingw64` tem `bin/libvncclient.dll`,
+  `lib/pkgconfig/` e `lib/ossl-modules/legacy.dll` onde o script espera; os
+  dois sabores publicam as MESMAS versões (freerdp 3.31.1-1, libvncserver
+  0.9.15-3, openssl 3.6.4-1, ffmpeg, zlib, libjpeg-turbo), então casar com
+  o compilador não arrasta biblioteca; e uma sessão VNC completa contra
+  máquina de verdade (conexão, autenticação, quadros com retângulo sujo
+  incremental, queda do filho e religação) funciona num build de CRT
+  coerente.
+
 - **O `.exe` e as DLLs têm de usar o MESMO runtime C** (achado em
   2026-09-22, depurando "o VNC não funciona"). O Windows tem dois —
   `msvcrt.dll` e UCRT — e cada um tem o SEU heap. Memória alocada dentro
