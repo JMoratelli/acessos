@@ -64,6 +64,12 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.7.3" date="2026-09-22">
+      <description>
+        <p>Corrige a sessão RDP em aba ficar presa numa resolução só, em vez de acompanhar o tamanho da aba. O pedido de resolução era enviado antes de o canal que o servidor usa para isso terminar de abrir, e nesse caso ele era descartado sem que nada tentasse de novo — a sessão seguia na resolução com que tinha conectado. Acontecia de forma intermitente, dependendo de quanto o servidor demorava para abrir o canal.</p>
+        <p>Quando o servidor simplesmente não oferece resolução dinâmica — um Terminal Server com resolução fixa, por exemplo —, isso agora fica registrado no diagnóstico. Antes a sessão ficava presa sem nenhuma explicação disponível.</p>
+      </description>
+    </release>
     <release version="2.7.2" date="2026-09-22">
       <description>
         <p>Corrige, no Windows, toda sessão VNC morrendo no momento de conectar. A janela abria normalmente e a conexão caía em cerca de um segundo, repetidamente. Atingia a 2.7.1 inteira, em qualquer máquina. Quem estiver na 2.7.1 do Windows precisa desta atualização.</p>
