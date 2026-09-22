@@ -2,7 +2,8 @@
 # crt-windows.sh — mede o runtime C de um binário PE, e confere se dois
 # binários usam o mesmo.
 #
-#   scripts/crt-windows.sh <arquivo>              -> ucrt | msvcrt | misto | desconhecido
+#   scripts/crt-windows.sh <arquivo>
+#        -> ucrt | msvcrt | misto | desconhecido | ilegivel
 #   scripts/crt-windows.sh --conferir <exe> <dll> -> sai 1 se forem diferentes
 #   scripts/crt-windows.sh --conferir-payload <dir>
 #                                                 -> mede TODO .exe/.dll de
@@ -49,8 +50,20 @@ crt_de() {
         return 0
     fi
     # Só a tabela de importação: é o que o carregador vai de fato resolver.
-    importadas=$("$objdump" -p "$bin" 2>/dev/null | sed -n 's/.*DLL Name: //p' \
-        | tr 'A-Z' 'a-z' | tr -d '\r') || true
+    if ! importadas=$("$objdump" -p "$bin" 2>/dev/null | sed -n 's/.*DLL Name: //p' \
+        | tr 'A-Z' 'a-z' | tr -d '\r'); then
+        echo ilegivel
+        return 0
+    fi
+    # Tabela de importação VAZIA não é "não usa runtime C": todo PE de
+    # verdade importa ao menos a kernel32. Vazio aqui é arquivo truncado,
+    # cópia pela metade ou coisa que nem PE é — e isso PRECISA ser distinto
+    # de "desconhecido", senão o portão do payload conta como "sem runtime
+    # próprio, o que é normal" e deixa passar.
+    if [ -z "$importadas" ]; then
+        echo ilegivel
+        return 0
+    fi
 
     # ucrtbase direto ou pelos stubs api-ms-win-crt-*, que é como o
     # mingw-w64 UCRT liga na prática.
@@ -113,17 +126,18 @@ MSG
         exit 1
     fi
 
-    ucrt=() msvcrt=() misto=() sem=()
+    ucrt=() msvcrt=() misto=() sem=() ilegivel=()
     while IFS= read -r -d '' arq; do
         case "$(crt_de "$arq")" in
-            ucrt)   ucrt+=("$arq") ;;
-            msvcrt) msvcrt+=("$arq") ;;
-            misto)  misto+=("$arq") ;;
-            *)      sem+=("$arq") ;;
+            ucrt)     ucrt+=("$arq") ;;
+            msvcrt)   msvcrt+=("$arq") ;;
+            misto)    misto+=("$arq") ;;
+            ilegivel) ilegivel+=("$arq") ;;
+            *)        sem+=("$arq") ;;
         esac
     done < <(find "$dir" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0 | sort -z)
 
-    total=$(( ${#ucrt[@]} + ${#msvcrt[@]} + ${#misto[@]} + ${#sem[@]} ))
+    total=$(( ${#ucrt[@]} + ${#msvcrt[@]} + ${#misto[@]} + ${#sem[@]} + ${#ilegivel[@]} ))
     if [ "$total" = 0 ]; then
         echo "ERRO: nenhum .exe ou .dll em $dir — não há o que empacotar." >&2
         exit 1
@@ -137,6 +151,18 @@ MSG
             echo "        $(basename "$a")" >&2
         done
     }
+
+    # Arquivo que não dá para medir não passa como "não opina": num pacote
+    # deste projeto todo .exe/.dll é PE de verdade, então ilegível aqui é
+    # cópia truncada, download pela metade ou disco cheio — defeito que
+    # chegaria ao usuário como "o app não abre".
+    if [ ${#ilegivel[@]} -gt 0 ]; then
+        echo >&2
+        echo "ERRO: arquivo que o objdump não conseguiu ler (truncado? não é PE?):" >&2
+        listar "${ilegivel[@]}"
+        echo >&2
+        exit 1
+    fi
 
     # misto é defeito em si: um binário só, importando os dois runtimes,
     # já carrega os dois heaps para dentro do processo.
@@ -193,7 +219,8 @@ if [ "${1:-}" = "--conferir" ]; then
     crt_exe=$(crt_de "$exe")
     crt_dll=$(crt_de "$dll")
     echo "runtime C: $(basename "$exe")=$crt_exe, $(basename "$dll")=$crt_dll"
-    if [ "$crt_exe" = desconhecido ] || [ "$crt_dll" = desconhecido ]; then
+    if [ "$crt_exe" = desconhecido ] || [ "$crt_dll" = desconhecido ] \
+       || [ "$crt_exe" = ilegivel ] || [ "$crt_dll" = ilegivel ]; then
         echo "AVISO: não deu para medir os dois lados; a conferência não vale." >&2
         exit 0
     fi
