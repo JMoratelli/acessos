@@ -6,6 +6,7 @@
 # programa e o -I some, com o erro enganoso de "header não encontrado".
 # Daí este wrapper.
 #
-# --define-prefix é obrigatório: os .pc do MSYS2 trazem "prefix=/mingw64"
-# embutido, e o nosso sysroot está extraído em outro lugar.
+# --define-prefix é obrigatório: os .pc do MSYS2 trazem o prefixo do
+# repositório embutido ("prefix=/ucrt64" ou "/mingw64", conforme o sabor
+# que o build escolheu), e o nosso sysroot está extraído em outro lugar.
 exec pkg-config --define-prefix "$@"

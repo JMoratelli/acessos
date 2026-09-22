@@ -10,6 +10,19 @@
 # O build é OFFLINE: as dependências Go vêm de vendor/, e as duas
 # bibliotecas C (libvncserver e FreeRDP3) são baixadas pelo flatpak-builder
 # a partir dos tarballs com sha256 fixo no manifesto.
+#
+# IRMÃO DO WINDOWS (scripts/build-windows.sh): lá existe um passo que aqui
+# não existe — escolher o runtime C e conferir, depois de ligar, que o
+# .exe e as DLLs usam o mesmo. Aqui não existe porque não há o que
+# escolher: o app e as duas bibliotecas C são compilados na MESMA passada,
+# contra a mesma libc do runtime do Flatpak, e um heap só. No Windows há
+# dois runtimes possíveis (msvcrt e UCRT), as bibliotecas vêm PRONTAS do
+# MSYS2, e misturar os dois derrubou toda sessão VNC na v2.7.1 — memória
+# alocada dentro da libvncclient e liberada pelo .exe.
+#
+# Se um dia as bibliotecas daqui passarem a vir prontas de algum lugar em
+# vez de compiladas nesta passada, a diferença acaba e o cuidado de lá
+# passa a valer aqui também.
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 

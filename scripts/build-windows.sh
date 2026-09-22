@@ -18,20 +18,11 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 
 APPID=org.jj.Acessos
 SAIDA=build/win
-SYSROOT_REAL=$PWD/$SAIDA/sysroot/ucrt64
-# cgo corta CGO_LDFLAGS/CGO_CFLAGS/PKG_CONFIG no primeiro espaço do valor,
-# sem suporte a aspas — limite conhecido do Go. Se o próprio repositório
-# estiver num caminho com espaço (pasta sincronizada tipo "Google Drive",
-# como aqui), qualquer flag que aponte direto pro sysroot quebra o link
-# ("cannot find Drive/Machado/..."). Um link simbólico fixo fora do
-# repositório contorna isso sem mudar onde o sysroot de fato mora (continua
-# em build/win, como todo o resto).
-SYSROOT=/tmp/acessos-win-sysroot
-ln -sfn "$SYSROOT_REAL" "$SYSROOT"
 DIST=$SAIDA/dist
 CACHE=$SAIDA/.cache
 WINEPREFIX_LOCAL=$PWD/$SAIDA/wine
 INNO_URL=https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+CC=${CC:-x86_64-w64-mingw32-gcc}
 
 VERSAO=$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' flatpak/$APPID.metainfo.xml | head -1)
 
@@ -41,10 +32,64 @@ if [ "${1:-}" = "--limpar" ]; then
     exit 0
 fi
 
+# 0. RUNTIME C: o .exe e as DLLs que viajam com ele TÊM de usar o mesmo.
+#
+# No Linux esta etapa não tem irmã e nem poderia ter: lá o app e as
+# bibliotecas falam com a MESMA libc, a do sistema (ou a do runtime do
+# Flatpak), e não existe escolha a fazer. No Windows existem duas — a
+# antiga msvcrt.dll e a UCRT —, cada uma com o SEU heap. Memória alocada
+# dentro de uma DLL de um sabor e liberada pelo .exe do outro é violação de
+# acesso na certa.
+#
+# ISSO JÁ ACONTECEU, e caro. O .exe da v2.7.1 saiu do cross-compiler ligado
+# em msvcrt.dll enquanto o sysroot vinha do repositório ucrt64 do MSYS2.
+# Resultado: toda sessão VNC morria na conexão — a primeira linha do
+# vs_conectar libera o serverHost que a libvncclient tinha alocado, e o
+# free() caía no heap errado. Compilava limpo, ligava limpo, instalava,
+# abria a janela, e só morria na hora de usar.
+#
+# O script anterior escolhia o repositório por uma AFIRMAÇÃO em comentário
+# ("o gcc do Arch gera UCRT"). Era verdade quando foi escrita e deixou de
+# ser sem avisar ninguém. Agora ninguém afirma nada: mede-se o compilador,
+# compilando um programa de uma linha e olhando o que ele importa.
+sonda=$(mktemp -d)
+printf 'int main(void){return 0;}\n' > "$sonda/sonda.c"
+if "$CC" "$sonda/sonda.c" -o "$sonda/sonda.exe" >/dev/null 2>&1; then
+    CRT_CC=$(scripts/crt-windows.sh "$sonda/sonda.exe" || echo desconhecido)
+else
+    CRT_CC=desconhecido
+fi
+rm -rf "$sonda"
+
+case "$CRT_CC" in
+    ucrt)   REPO=ucrt64 ;;
+    msvcrt) REPO=mingw64 ;;
+    *)
+        REPO=ucrt64
+        echo "AVISO: não consegui medir o runtime C de $CC (deu '$CRT_CC')." >&2
+        echo "       Seguindo com $REPO; a trava depois do link confere." >&2
+        ;;
+esac
+echo ">> runtime C do $CC: $CRT_CC — sysroot do repositório $REPO"
+
+# O sysroot mora num diretório POR SABOR: trocar de compilador não pode
+# reaproveitar em silêncio o sysroot do outro, que é exatamente o caminho
+# de volta para o defeito acima.
+SYSROOT_REAL=$PWD/$SAIDA/sysroot/$REPO
+# cgo corta CGO_LDFLAGS/CGO_CFLAGS/PKG_CONFIG no primeiro espaço do valor,
+# sem suporte a aspas — limite conhecido do Go. Se o próprio repositório
+# estiver num caminho com espaço (pasta sincronizada tipo "Google Drive",
+# como aqui), qualquer flag que aponte direto pro sysroot quebra o link
+# ("cannot find Drive/Machado/..."). Um link simbólico fixo fora do
+# repositório contorna isso sem mudar onde o sysroot de fato mora (continua
+# em build/win, como todo o resto).
+SYSROOT=/tmp/acessos-win-sysroot
+ln -sfn "$SYSROOT_REAL" "$SYSROOT"
+
 # 1. sysroot: as bibliotecas C que o Arch não empacota para MinGW.
 if [ ! -d "$SYSROOT/lib/pkgconfig" ]; then
     echo ">> montando o sysroot MinGW (MSYS2)"
-    python3 scripts/sysroot-msys2.py "$SAIDA" freerdp libvncserver
+    python3 scripts/sysroot-msys2.py --repo "$REPO" "$SAIDA" freerdp libvncserver
 fi
 
 # 2. ícone: um .ico multi-resolução a partir do mesmo SVG do Linux, para
@@ -120,11 +165,22 @@ cp scripts/pkg-config-mingw "$pkgConfigMingw"
 chmod +x "$pkgConfigMingw"
 export PKG_CONFIG="$pkgConfigMingw"
 export CGO_ENABLED=1 GOOS=windows GOARCH=amd64
-export CC=x86_64-w64-mingw32-gcc
+export CC   # medido no passo 0; o sysroot foi escolhido para casar com ele
 export CGO_LDFLAGS="-O2 -g -L$SYSROOT/lib"
 mkdir -p "$DIST"
 # -H=windowsgui: sem isto o Windows abre um console preto atrás da janela.
 go build -ldflags "-H=windowsgui" -o "$DIST/acessos.exe" ./cmd/acessos
+
+# 4b. TRAVA do runtime C. O passo 0 escolhe o sysroot pelo compilador;
+#     aqui se confere o que DE FATO saiu, medindo o .exe contra uma DLL que
+#     vai junto dele. É a trava que faltava: sem ela, um sysroot velho de
+#     outro sabor (ou um compilador trocado no meio do caminho) volta a
+#     produzir um pacote que instala, abre e só morre na hora de conectar.
+#
+#     Falhar aqui é o ponto: um .exe destes não pode ser publicado.
+echo ">> conferindo o runtime C do que vai ser empacotado"
+scripts/crt-windows.sh --conferir "$DIST/acessos.exe" \
+    "$SYSROOT/bin/libvncclient.dll" "$SYSROOT_REAL"
 
 # 5. DLLs: o linker grava só as dependências diretas; o resto da cadeia
 #    vem daqui.

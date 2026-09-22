@@ -553,7 +553,20 @@ int vs_conectar(Sessao *s, const char *host, int porta) {
 
     /* free ANTES de substituir: o rfbGetClient ja deixa um serverHost
      * alocado aqui, e sobrescrever direto vazava aquela alocacao a cada
-     * tentativa de conexao (reconexao automatica repete isto sem fim). */
+     * tentativa de conexao (reconexao automatica repete isto sem fim).
+     *
+     * ESTE free SO E VALIDO porque o .exe e a libvncclient compartilham o
+     * mesmo runtime C. Quando nao compartilham sao HEAPS diferentes, e
+     * devolver a um o que o outro alocou e violacao de acesso na PRIMEIRA
+     * conexao — foi exatamente o que aconteceu na v2.7.1 do Windows, com
+     * .exe ligado em msvcrt.dll e DLLs do repositorio ucrt64: toda sessao
+     * VNC morria aqui, nesta linha.
+     *
+     * Quem garante a invariante e o build, e nao a boa vontade de quem
+     * mexer neste arquivo: scripts/build-windows.sh escolhe o sysroot
+     * medindo o compilador e, depois de ligar, confere o .exe contra uma
+     * DLL que vai junto (scripts/crt-windows.sh). No Linux nao ha o que
+     * garantir: a libc e uma so. */
     free(s->cl->serverHost);
     s->cl->serverHost = strdup(host);
     s->cl->serverPort = porta;

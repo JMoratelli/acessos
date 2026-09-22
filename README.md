@@ -119,14 +119,22 @@ scripts/build-windows.sh --instalador  # build/win/AcessosSetup-<versão>.exe
 scripts/build-windows.sh --limpar      # apaga build/win/
 ```
 
-Nada precisa ser instalado no sistema e nada pede root: o script monta um
-sysroot MinGW com os pacotes binários do MSYS2 (`scripts/sysroot-msys2.py`
-— repositório `ucrt64`, a mesma ABI do `mingw-w64-gcc` do Arch), gera o
-ícone a partir do mesmo SVG do Linux, compila com cgo (VNC e RDP ligados),
-resolve **recursivamente** as DLLs de que o `.exe` depende
+Nada precisa ser instalado no sistema e nada pede root: o script **mede o
+runtime C do cross-compiler** e monta um sysroot MinGW com os pacotes
+binários do MSYS2 do mesmo sabor (`scripts/sysroot-msys2.py`, repositório
+`ucrt64` ou `mingw64`), gera o ícone a partir do mesmo SVG do Linux,
+compila com cgo (VNC e RDP ligados), **confere que o `.exe` e as DLLs
+ficaram no mesmo runtime** (`scripts/crt-windows.sh`), resolve
+**recursivamente** as DLLs de que o `.exe` depende
 (`scripts/dlls-windows.py`) e, no `--instalador`, compila
 `scripts/instalador.iss` com o Inno Setup rodando num prefixo Wine próprio,
 em `build/win/wine` — o `~/.wine` do usuário fica intocado.
+
+A medição do runtime C não é zelo: os dois sabores têm heaps separados, e
+o pacote da v2.7.1 saiu com o `.exe` em `msvcrt` e as DLLs em `UCRT` — toda
+sessão VNC morria ao conectar, num `free()` que devolvia ao heap errado a
+memória alocada dentro da `libvncclient`. O build falha hoje se isso se
+repetir.
 
 O instalador não pede administrador: instala em
 `%LOCALAPPDATA%\Acessos`, com atalho no Menu Iniciar e (opcional) na Área

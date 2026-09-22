@@ -7,14 +7,21 @@ repositório oficial, nem o AUR). Compilá-las do zero significaria também
 compilar OpenSSL, zlib, libjpeg e mais meia dúzia de dependências — meia
 hora de build para chegar exatamente no que o MSYS2 já publica pronto.
 
-Então: baixamos os pacotes do MSYS2 (repositório "mingw64", que é o
-MinGW-w64 com MSVCRT, a mesma ABI do mingw-w64-gcc do Arch), resolvemos as
-dependências RECURSIVAMENTE pelo banco de dados oficial e extraímos tudo
-num prefixo local. Nenhuma instalação no sistema, nenhum root, e o
-resultado é o mesmo em qualquer máquina.
+Então: baixamos os pacotes do MSYS2, resolvemos as dependências
+RECURSIVAMENTE pelo banco de dados oficial e extraímos tudo num prefixo
+local. Nenhuma instalação no sistema, nenhum root, e o resultado é o mesmo
+em qualquer máquina.
+
+QUAL REPOSITÓRIO não é preferência. O MSYS2 publica o mesmo pacote em dois
+sabores de runtime C — "ucrt64" (UCRT) e "mingw64" (MSVCRT) — e o que vem
+daqui tem de casar com o que o CROSS-COMPILER gera. Misturar põe dois
+runtimes C no mesmo processo, com um heap cada: memória alocada dentro de
+uma DLL e liberada pelo .exe vira violação de acesso. Quem mede e decide é
+o scripts/build-windows.sh, com o scripts/crt-windows.sh; o padrão abaixo
+só serve para quem rodar este script na mão.
 
 Uso:
-    scripts/sysroot-msys2.py <diretório> pacote [pacote...]
+    scripts/sysroot-msys2.py [--repo ucrt64|mingw64] <diretório> pacote [pacote...]
 """
 
 import os
@@ -24,16 +31,37 @@ import sys
 import tarfile
 import urllib.request
 
-# O repositório tem de casar com a ABI do compilador local: o
-# mingw-w64-gcc do Arch gera binários UCRT (as importações api-ms-win-crt-*
-# no .exe provam), então usamos o repositório "ucrt64" do MSYS2. Misturar
-# com o repositório "mingw64" (MSVCRT) daria dois runtimes C no mesmo
-# processo — memória alocada por um e liberada pelo outro, que é o tipo de
-# falha que só aparece em produção.
+# Os dois sabores, com o prefixo de nome de pacote de cada um. As versões
+# publicadas são as MESMAS nos dois (conferido em 2026-09-22: freerdp
+# 3.31.1-1 e libvncserver 0.9.15-3 em ambos) — o que muda é o runtime C
+# contra o qual foram compilados.
+#
+# O comentário que morava aqui afirmava que o mingw-w64-gcc do Arch gera
+# binários UCRT, "as importações api-ms-win-crt-* no .exe provam". Deixou
+# de ser verdade em algum momento e ninguém percebeu: o .exe da v2.7.1
+# importa msvcrt.dll, e foi assim que TODA sessão VNC passou a morrer no
+# Windows — o free() do serverHost, no vs_conectar, devolvia ao heap do
+# msvcrt um ponteiro que a libvncclient tinha alocado no do ucrtbase.
+#
+# Por isso ninguém mais ACHA nada aqui: o build mede o compilador e diz.
+REPOS = {
+    "ucrt64": "mingw-w64-ucrt-x86_64-",
+    "mingw64": "mingw-w64-x86_64-",
+}
 REPO = "ucrt64"
-ESPELHO = f"https://mirror.msys2.org/mingw/{REPO}"
-BANCO = f"{REPO}.db.tar.zst"
-PREFIXO = "mingw-w64-ucrt-x86_64-"
+
+
+def prefixo():
+    return REPOS[REPO]
+
+
+def espelho():
+    return f"https://mirror.msys2.org/mingw/{REPO}"
+
+
+def banco():
+    return f"{REPO}.db.tar.zst"
+
 
 # Pacotes de cadeia de ferramentas que NÃO entram no sysroot: quem compila
 # aqui é o mingw-w64-gcc do Arch, com o CRT e os cabeçalhos dele. Misturar
@@ -68,7 +96,8 @@ def ler_banco(cache):
     O banco traz um diretório por pacote, cada um com um 'desc' em blocos
     %CHAVE% seguidos de linhas. Interessam %NAME%, %FILENAME%, %DEPENDS% e
     %PROVIDES% (há pacote que depende de um nome "virtual")."""
-    dados = abrir_zst(baixar(f"{ESPELHO}/{BANCO}", os.path.join(cache, BANCO)))
+    dados = abrir_zst(baixar(f"{espelho()}/{banco()}",
+                             os.path.join(cache, banco())))
     import io
     pacotes, provedores = {}, {}
     with tarfile.open(fileobj=io.BytesIO(dados)) as tf:
@@ -106,7 +135,7 @@ def fecho(pacotes, provedores, raizes):
             nome = provedores.get(nome, nome)
             if nome not in pacotes or nome in vistos:
                 continue
-        if nome[len(PREFIXO):] in SEM_CADEIA:
+        if nome[len(prefixo()):] in SEM_CADEIA:
             continue
         vistos.add(nome)
         fila.extend(pacotes[nome][1])
@@ -114,15 +143,31 @@ def fecho(pacotes, provedores, raizes):
 
 
 def main():
-    if len(sys.argv) < 3:
+    global REPO
+    args = sys.argv[1:]
+    # --repo antes de tudo: quem chama (build-windows.sh) já mediu o
+    # compilador e não pode ser contrariado por um padrão daqui.
+    while args and args[0].startswith("--repo"):
+        if args[0] == "--repo":
+            if len(args) < 2:
+                print("--repo exige um valor", file=sys.stderr)
+                return 2
+            REPO, args = args[1], args[2:]
+        else:
+            REPO, args = args[0].split("=", 1)[1], args[1:]
+        if REPO not in REPOS:
+            print(f"repositório desconhecido: {REPO} "
+                  f"(esperado: {', '.join(sorted(REPOS))})", file=sys.stderr)
+            return 2
+    if len(args) < 2:
         print(__doc__)
         return 2
-    destino, pedidos = sys.argv[1], sys.argv[2:]
+    destino, pedidos = args[0], args[1:]
     cache = os.path.join(destino, ".cache")
     raiz = os.path.join(destino, "sysroot")
 
     pacotes, provedores = ler_banco(cache)
-    raizes = [p if p.startswith(PREFIXO) else PREFIXO + p for p in pedidos]
+    raizes = [p if p.startswith(prefixo()) else prefixo() + p for p in pedidos]
     for r in raizes:
         if r not in pacotes:
             print(f"pacote desconhecido no MSYS2: {r}", file=sys.stderr)
@@ -135,11 +180,12 @@ def main():
         arquivo = pacotes[nome][0]
         if not arquivo:
             continue
-        local = baixar(f"{ESPELHO}/{arquivo}", os.path.join(cache, arquivo))
+        local = baixar(f"{espelho()}/{arquivo}", os.path.join(cache, arquivo))
         subprocess.run(["tar", "--use-compress-program=unzstd", "-xf", local,
                         "-C", raiz, "--exclude=.PKGINFO", "--exclude=.BUILDINFO",
                         "--exclude=.MTREE", "--exclude=.INSTALL"], check=True)
-    print(f"sysroot pronto em {raiz}/{REPO}")
+    crt = "UCRT" if REPO == "ucrt64" else "MSVCRT"
+    print(f"sysroot pronto em {raiz}/{REPO} (runtime C: {crt})")
     return 0
 
 

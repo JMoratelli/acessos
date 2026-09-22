@@ -441,6 +441,13 @@ static BOOL hook_authenticate_ex(freerdp *inst, char **usuario, char **senha,
      * ou faltou informar, ou o servidor rejeitou — nos dois casos so
      * repetimos o que ja tinhamos, sem inventar dialogo aqui: quem decide
      * se tenta de novo e o lado Python. */
+    /* Estes tres free() sao na memoria que a FreeRDP alocou, e valem pela
+     * mesma invariante do vs_conectar (vncshim.c): .exe e DLLs no MESMO
+     * runtime C, garantido pelo scripts/build-windows.sh. Com runtimes
+     * diferentes isto aqui e violacao de acesso — e mais traicoeiro que o
+     * caso do VNC, porque este gancho so e chamado quando falta credencial
+     * ou o servidor rejeita: passa despercebido no uso normal e quebra na
+     * senha errada de alguem. */
     if (s) {
         free(*usuario); *usuario = strdup(s->usuario ? s->usuario : "");
         free(*senha);   *senha   = strdup(s->senha ? s->senha : "");

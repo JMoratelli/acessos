@@ -7,7 +7,7 @@ operador tenta conectar (libfreerdp3 sem libwinpr3, por exemplo). As DLLs
 do próprio Windows (KERNEL32, WS2_32…) ficam de fora: existem em qualquer
 máquina e copiá-las é receita para conflito.
 
-Uso: dlls-windows.py <exe> <sysroot/mingw64> <destino>
+Uso: dlls-windows.py <exe> <sysroot/ucrt64|sysroot/mingw64> <destino>
 
 Qualquer dependência que não esteja no sysroot E não seja reconhecida
 como DLL do próprio Windows interrompe o build (ver DLLS_SISTEMA) — o

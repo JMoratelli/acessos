@@ -111,6 +111,45 @@
   se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
   bloco de comentário em `instalarWindows`.
 
+- **O `.exe` e as DLLs têm de usar o MESMO runtime C** (achado em
+  2026-09-22, depurando "o VNC não funciona"). O Windows tem dois —
+  `msvcrt.dll` e UCRT — e cada um tem o SEU heap. Memória alocada dentro
+  de uma DLL e liberada pelo `.exe` (ou o contrário) é violação de acesso.
+
+  Foi o que aconteceu na v2.7.1: o `.exe` saiu do cross-compiler do Arch
+  ligado em `msvcrt.dll`, o sysroot veio do repositório `ucrt64` do MSYS2,
+  e a PRIMEIRA linha do `vs_conectar` — o `free()` do `serverHost` que a
+  `libvncclient` tinha alocado — matava o processo da sessão a cada
+  conexão. **Toda sessão VNC, em toda máquina.** Compilava limpo, ligava
+  limpo, instalava, abria a janela, e só morria na hora de usar.
+
+  Como foi fechado, e é o método que vale para a próxima vez: reproduzir
+  com `-conn type=vnc,host=...` numa instância isolada (`-ini` próprio,
+  sem tocar no app nem no log de quem está usando), e comparar com o MESMO
+  commit compilado nativamente no MSYS2 ucrt64 — mesma DLL, mesma
+  máquina, muda só o CRT do executável. O nativo conecta; o cross-build
+  crasha.
+
+  O `scripts/sysroot-msys2.py` escolhia o repositório por uma AFIRMAÇÃO em
+  comentário ("o gcc do Arch gera UCRT, as importações api-ms-win-crt-* no
+  .exe provam"). Era verdade quando foi escrita e deixou de ser sem avisar
+  ninguém. Hoje o `scripts/build-windows.sh` MEDE: compila um programa de
+  uma linha, olha o que ele importa (`scripts/crt-windows.sh`), escolhe o
+  sysroot do mesmo sabor e, depois de ligar, confere o `.exe` contra uma
+  DLL que vai junto — e FALHA o build se divergirem. Os dois repositórios
+  publicam as mesmas versões (freerdp 3.31.1-1, libvncserver 0.9.15-3),
+  então casar com o compilador não custa biblioteca velha.
+
+  O `rdpshim.c` tem o mesmo padrão no `hook_authenticate_ex` (libera as
+  strings que a FreeRDP alocou) e é mais traiçoeiro: aquele gancho só é
+  chamado quando falta credencial ou o servidor rejeita, então passa
+  despercebido no uso normal e quebra na senha errada de alguém.
+
+  **Não há irmão disto no Linux**, e a razão está escrita no `build.sh`:
+  lá o app e as bibliotecas são compilados na mesma passada, contra a
+  mesma libc, e não há dois heaps possíveis. Se um dia as bibliotecas do
+  Linux passarem a vir prontas, o cuidado passa a valer lá também.
+
 - **Compilar no Windows não é o build oficial** (conferido em
   2026-09-20, nesta máquina). O `.exe` entregue sai de
   `scripts/build-windows.sh`, no Linux, e o script monta o sysroot MSYS2

@@ -18,3 +18,5 @@
 # para o build do Flatpak rodar OFFLINE, não para versionar 31 MB de
 # código de terceiros.
 /vendor/
+# bytecode do Python, gerado por quem roda os scripts de build
+__pycache__/
