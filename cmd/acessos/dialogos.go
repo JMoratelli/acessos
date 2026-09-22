@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"gioui.org/app"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -76,6 +77,36 @@ func (d *dlgConflito) Corpo(gtx layout.Context, th *material.Theme) layout.Dimen
 	)
 }
 
+// focoInicial leva o foco ao campo certo quando o diálogo abre, e PARA DE
+// PEDIR assim que ele chega em alguém.
+//
+// Existe porque o jeito ingênuo — `gtx.Execute(key.FocusCmd{...})` a cada
+// quadro — não falha como problema de foco, e sim como CAMPO QUEBRADO: o
+// clique dá o foco, o quadro seguinte toma de volta, e quem está digitando
+// conclui que o segundo campo não aceita clique nem Tab. Foi assim que
+// "Criar cofre" ficou sem como repetir a senha, relatado da tela.
+//
+// Guardar só "já pedi" não basta: o primeiro pedido pode não pegar (o
+// alvo precisa estar registrado no quadro, ver o comentário do foco em
+// buscapop.go). Por isso repete ATÉ ALGUÉM receber, e aí para para sempre
+// — inclusive se quem recebeu foi outro campo, porque nesse caso o
+// operador já escolheu onde quer estar.
+//
+// pediu é o estado do diálogo; alvo é quem deve começar com o foco;
+// focaveis são todos os alvos que contam como "o foco já chegou".
+func focoInicial(gtx layout.Context, pediu *bool, alvo event.Tag, focaveis ...event.Tag) {
+	if *pediu {
+		return
+	}
+	for _, f := range focaveis {
+		if gtx.Focused(f) {
+			*pediu = true
+			return
+		}
+	}
+	gtx.Execute(key.FocusCmd{Tag: alvo})
+}
+
 // dlgTexto é o "um campo, duas saídas" do dialogo_ui: validação INLINE sob
 // o campo, nunca um segundo diálogo empilhado em cima do primeiro.
 type dlgTexto struct {
@@ -88,6 +119,7 @@ type dlgTexto struct {
 
 	btnOk   widget.Clickable
 	btnCanc widget.Clickable
+	focou   bool
 }
 
 func (d *dlgTexto) Titulo() string   { return d.titulo }
@@ -143,6 +175,8 @@ func (d *dlgTexto) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensio
 				}),
 			)
 		}))
-	gtx.Execute(key.FocusCmd{Tag: &d.valor})
+	// Um campo só, mas os botões também recebem foco: pedir a cada
+	// quadro tirava o Tab para "Cancelar" e "Criar".
+	focoInicial(gtx, &d.focou, &d.valor, &d.valor, &d.btnOk, &d.btnCanc)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 }

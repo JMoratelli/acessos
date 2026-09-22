@@ -37,6 +37,7 @@ type dlgEfemera struct {
 	btnCanc  widget.Clickable
 	erro     string
 	iniciado bool
+	focou    bool // ver focoInicial, em dialogos.go
 }
 
 // pedirCredenciaisEfemeras abre o diálogo e chama abrir com a conexão já
@@ -138,9 +139,11 @@ func (d *dlgEfemera) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.proto != conexoes.VNC && d.usuario.Text() == "" {
 		foco = &d.usuario
 	}
-	if !gtx.Focused(&d.usuario) && !gtx.Focused(&d.senha) && !gtx.Focused(&d.dominio) {
-		gtx.Execute(key.FocusCmd{Tag: foco})
-	}
+	// A guarda antiga olhava só os CAMPOS, e por isso devolvia o foco ao
+	// campo quando ele ia para um botão: não havia como alcançar
+	// "Conectar" pelo teclado. Ver focoInicial, em dialogos.go.
+	focoInicial(gtx, &d.focou, foco,
+		&d.usuario, &d.senha, &d.dominio, &d.btnOk, &d.btnCanc)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 }
 

@@ -37,6 +37,9 @@ type dlgCofre struct {
 	aviso     string
 	recarrega func() // recarrega o .ini depois de reescrever
 
+	// focou: ver focoInicial, em dialogos.go.
+	focou bool
+
 	// Cofre ainda não existe neste inventário: em vez de pedir uma senha
 	// que nunca vai bater, o diálogo CRIA o cofre. Um arquivo novo (o
 	// exemplo que o app escreve na primeira execução) não tem seção
@@ -182,7 +185,8 @@ func (d *dlgCofre) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensio
 	if d.criando {
 		foco = &d.nova
 	}
-	gtx.Execute(key.FocusCmd{Tag: foco})
+	focoInicial(gtx, &d.focou, foco,
+		&d.senha, &d.nova, &d.confirma, &d.btnOk, &d.btnCanc, &d.btnTrocar)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 }
 
