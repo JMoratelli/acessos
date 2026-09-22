@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 
 	"acessos-go/internal/rdp"
 	"acessos-go/internal/telaproc"
@@ -42,6 +43,59 @@ type workerRDP struct {
 	// exatamente esse o sintoma: funcionava "às vezes", dependendo de
 	// quão cheia a fila compartilhada estava bem naquele instante.
 	dispPronto chan struct{}
+
+	// resizePend guarda o último tamanho que o RequestResize RECUSOU por
+	// o canal Display Control ainda não ter fechado o handshake, para
+	// reenviar assim que ele fechar. Ver pedirResize.
+	resizeMu      sync.Mutex
+	resizePendW   int
+	resizePendH   int
+	resizeAvisado bool
+}
+
+// pedirResize manda o tamanho ao servidor e, quando o canal Display
+// Control ainda não está pronto, GUARDA o pedido em vez de perdê-lo.
+//
+// Por que isto mora aqui e não do lado do pai: o RequestResize devolve
+// false quando o canal não anunciou suporte, e esse booleano NÃO
+// atravessa o socket — o Processo.Resize do pai devolve só erro de
+// escrita. Então o pai manda o tamanho, recebe "ok" e fica achando que
+// pediu; o pedido morreu aqui dentro, calado.
+//
+// A recuperação existia, mas por um caminho longo: o EvtDisplayPronto
+// sobe para o pai, ele esquece o último tamanho pedido e o laço de
+// QUADRO dele reenvia. Depende de dois processos e da ordem entre o
+// evento e o próximo quadro. Este lado já sabe as duas coisas — que o
+// pedido foi recusado e que o canal ficou pronto —, então resolve sozinho
+// e o caminho pelo pai vira redundância, não a única saída.
+//
+// O aviso sai uma vez por sessão: servidor que não abre o canal (Terminal
+// Server com resolução fixa, por exemplo) deixaria a sessão presa na
+// resolução da conexão SEM UMA LINHA dizendo por quê — que era
+// exatamente a queixa "fica só numa resolução".
+func (wk *workerRDP) pedirResize(w, h int) {
+	if wk.sess.RequestResize(w, h) {
+		wk.resizeMu.Lock()
+		wk.resizePendW, wk.resizePendH = 0, 0
+		wk.resizeMu.Unlock()
+		return
+	}
+	wk.resizeMu.Lock()
+	wk.resizePendW, wk.resizePendH = w, h
+	avisar := !wk.resizeAvisado
+	wk.resizeAvisado = true
+	wk.resizeMu.Unlock()
+	if avisar {
+		fmt.Fprintf(os.Stderr,
+			"[filho rdp] resize %dx%d adiado: canal Display Control ainda não pronto\n", w, h)
+	}
+}
+
+// resizeGuardado devolve o pedido pendente (0,0 quando não há).
+func (wk *workerRDP) resizeGuardado() (int, int) {
+	wk.resizeMu.Lock()
+	defer wk.resizeMu.Unlock()
+	return wk.resizePendW, wk.resizePendH
 }
 
 func rodarWorkerRDP(c *telaproc.Conn) {
@@ -102,6 +156,13 @@ func (wk *workerRDP) despacharEnviosFora() {
 func (wk *workerRDP) despacharDispPronto() {
 	for range wk.dispPronto {
 		_ = wk.c.Enviar(telaproc.EvtDisplayPronto, nil)
+		// O canal acabou de ficar pronto: reenvia o que foi recusado
+		// antes dele existir. É o que fecha o buraco — sem isto o pedido
+		// perdido só voltava se o pai reenviasse, e a aba parada num
+		// tamanho que não muda não dá motivo nenhum para ele reenviar.
+		if w, h := wk.resizeGuardado(); w > 0 && h > 0 {
+			wk.pedirResize(w, h)
+		}
 	}
 }
 
@@ -214,7 +275,7 @@ func (wk *workerRDP) lacoComandos() {
 
 		case telaproc.CmdResize:
 			if w, h, ok := telaproc.LerResize(corpo); ok {
-				wk.sess.RequestResize(w, h)
+				wk.pedirResize(w, h)
 			}
 		}
 	}
