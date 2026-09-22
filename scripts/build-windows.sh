@@ -167,6 +167,12 @@ export PKG_CONFIG="$pkgConfigMingw"
 export CGO_ENABLED=1 GOOS=windows GOARCH=amd64
 export CC   # medido no passo 0; o sysroot foi escolhido para casar com ele
 export CGO_LDFLAGS="-O2 -g -L$SYSROOT/lib"
+# Zerar o dist, e não só sobrescrever: o coletor do passo 5 COPIA por cima,
+# nunca apaga. Trocar de sabor de runtime (ou de versão de biblioteca)
+# deixava as DLLs antigas para trás, e o pacote saía com uma mistura que
+# nenhuma etapa olhava. Foi assim que este diretório ficou com um .exe
+# msvcrt e 101 DLLs ucrt ao mesmo tempo.
+rm -rf "$DIST"
 mkdir -p "$DIST"
 # -H=windowsgui: sem isto o Windows abre um console preto atrás da janela.
 go build -ldflags "-H=windowsgui" -o "$DIST/acessos.exe" ./cmd/acessos
@@ -208,6 +214,20 @@ python3 scripts/dlls-windows.py "$DIST/acessos.exe" "$SYSROOT" "$DIST"
 echo ">> copiando o provider legacy do OpenSSL"
 mkdir -p "$DIST/ossl-modules"
 cp "$SYSROOT/lib/ossl-modules/legacy.dll" "$DIST/ossl-modules/"
+
+# 5c. PORTÃO FINAL do runtime C, agora sobre o que vai DE FATO no pacote.
+#
+#     O passo 4b mede uma amostra (o .exe contra uma DLL do sysroot) e
+#     roda antes de o payload existir. Entre um e outro ainda passam o
+#     coletor de DLLs, o provider do OpenSSL e qualquer sobra de build
+#     anterior — justamente por onde o defeito entrou. Aqui se mede
+#     arquivo por arquivo, e falha FECHADO: sem objdump não passa como
+#     "não conferido", que é o estado em que a v2.7.1 foi publicada.
+#
+#     É o mais perto que se chega da garantia que o Linux tem de graça,
+#     onde app e bibliotecas saem da mesma passada contra a mesma libc.
+echo ">> conferindo o runtime C do pacote inteiro"
+scripts/crt-windows.sh --conferir-payload "$DIST"
 
 echo "pronto: $DIST ($(du -sh "$DIST" | cut -f1))"
 

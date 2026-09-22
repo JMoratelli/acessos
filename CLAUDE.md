@@ -93,10 +93,12 @@
   há como forjar isso localmente.
 
   **O `AcessosSetup-2.7.1.exe` anexado à release v2.7.1 NÃO é o build da
-  2.7.1.** Em 2026-09-21 ele foi substituído, em silêncio, por um build do
-  `master` em `5bfb7fe`, que carrega esta mudança; o `SHA256SUMS.txt` foi
-  regerado junto e bate (`5d2e1f9a97…`). É esse o instalador a usar no
-  teste — ele diz "2.7.1" em Sobre como qualquer outro.
+  2.7.1.** Ele é o pacote de teste, e foi trocado duas vezes: em
+  2026-09-21 por um build de `5bfb7fe` — que saiu com o runtime C
+  misturado e portanto com todo o VNC morto — e em 2026-09-22 pelo build
+  corrigido, já com o sysroot `mingw64` casando com o compilador
+  (`SHA256SUMS.txt` regerado junto, `d7669da3b3…`). É esse o instalador a
+  usar no teste; ele diz "2.7.1" em Sobre como qualquer outro.
 
   **Ele serve para os itens 1, 2 e 4, não para o 3.** O item 3 exercita o
   lado do APP que foi mudado, e quem roda o `/VERYSILENT` é o app JÁ
@@ -110,46 +112,6 @@
   `.exe` original da 2.7.1 não está mais na release — se for preciso, ele
   se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
   bloco de comentário em `instalarWindows`.
-
-- **ALERTA: o build do Windows mudou e ainda não rodou no Linux**
-  (2026-09-22). O conserto do runtime C (item abaixo) mexeu em
-  `scripts/build-windows.sh`, `scripts/sysroot-msys2.py` e criou o
-  `scripts/crt-windows.sh`, e **nada disso foi executado de ponta a ponta
-  do lado que importa** — de um Windows dá para conferir sintaxe
-  (`bash -n`, `py_compile`) e exercitar a lógica em pedaços, não rodar o
-  build.
-
-  Conferir na PRIMEIRA exportação e, passando, **apagar este item**:
-
-  - O passo 0 imprime `>> runtime C do x86_64-w64-mingw32-gcc: ...`. O
-    esperado hoje é `msvcrt` (é o que o `.exe` da v2.7.1 importa), o que
-    leva ao repositório `mingw64`. Se disser `ucrt`, o toolchain do Arch
-    mudou de novo e o `ucrt64` continua valendo — nos dois casos está
-    certo, o que não pode é o sysroot discordar do compilador.
-  - **Vai baixar um sysroot novo** (~200 MB) porque ele agora mora num
-    diretório por sabor. É esperado, não é defeito. O
-    `build/win/sysroot/ucrt64` antigo fica no disco sem uso.
-  - O passo 4b imprime `>> conferindo o runtime C do que vai ser
-    empacotado` e as duas medições. Se falhar, **não publique**: é
-    exatamente o defeito que ele existe para pegar.
-  - `scripts/crt-windows.sh` foi gravado no índice como `100755`. Se der
-    "permission denied", o bit se perdeu no caminho — `chmod +x`.
-  - O `objdump` vem do `mingw-w64-binutils` (dependência do
-    `mingw-w64-gcc`). Sem ele as medições saem `desconhecido` e a trava
-    só avisa, em vez de barrar.
-  - Com o pacote pronto, **testar VNC e RDP no Windows**: o payload
-    inteiro de DLLs troca de sabor.
-
-  O que JÁ foi verificado de um Windows, para não refazer: o par exato que
-  o próximo build produz (`.exe` msvcrt + `libvncclient.dll` do `mingw64`)
-  passa na trava; o layout do pacote `mingw64` tem `bin/libvncclient.dll`,
-  `lib/pkgconfig/` e `lib/ossl-modules/legacy.dll` onde o script espera; os
-  dois sabores publicam as MESMAS versões (freerdp 3.31.1-1, libvncserver
-  0.9.15-3, openssl 3.6.4-1, ffmpeg, zlib, libjpeg-turbo), então casar com
-  o compilador não arrasta biblioteca; e uma sessão VNC completa contra
-  máquina de verdade (conexão, autenticação, quadros com retângulo sujo
-  incremental, queda do filho e religação) funciona num build de CRT
-  coerente.
 
 - **O `.exe` e as DLLs têm de usar o MESMO runtime C** (achado em
   2026-09-22, depurando "o VNC não funciona"). O Windows tem dois —
@@ -184,6 +146,26 @@
   strings que a FreeRDP alocou) e é mais traiçoeiro: aquele gancho só é
   chamado quando falta credencial ou o servidor rejeita, então passa
   despercebido no uso normal e quebra na senha errada de alguém.
+
+  **Conferido de ponta a ponta no Linux em 2026-09-22**, que é onde o
+  `.exe` de entrega é gerado: o passo 0 mediu `msvcrt` e foi ao repositório
+  `mingw64`, o sysroot novo baixou, o passo 4b casou, e o pacote saiu
+  homogêneo — `msvcrt` nos 103 binários (o `.exe`, as 101 DLLs e o
+  `ossl-modules/legacy.dll`).
+
+  **Duas travas foram acrescentadas na mesma passada**, porque as que
+  existiam não pegariam o defeito de novo:
+
+  - **O `dist/` é zerado a cada build.** O `dlls-windows.py` copia por
+    cima e nunca apaga, então trocar de sabor deixava as DLLs velhas para
+    trás. Não é hipótese: quando o build novo rodou pela primeira vez,
+    este diretório estava com um `.exe` msvcrt e 101 DLLs ucrt ao mesmo
+    tempo.
+  - **`crt-windows.sh --conferir-payload`, o portão final**, roda depois
+    do pacote montado e mede TODO `.exe`/`.dll` dele, um por um, em vez de
+    amostrar. E falha FECHADO: sem `objdump` ele barra o build, em vez de
+    avisar e deixar passar — "não conferido" foi exatamente o estado em
+    que a v2.7.1 saiu. O passo 4b continua onde está, para falhar cedo.
 
   **Não há irmão disto no Linux**, e a razão está escrita no `build.sh`:
   lá o app e as bibliotecas são compilados na mesma passada, contra a

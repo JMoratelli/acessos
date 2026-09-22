@@ -4,6 +4,10 @@
 #
 #   scripts/crt-windows.sh <arquivo>              -> ucrt | msvcrt | misto | desconhecido
 #   scripts/crt-windows.sh --conferir <exe> <dll> -> sai 1 se forem diferentes
+#   scripts/crt-windows.sh --conferir-payload <dir>
+#                                                 -> mede TODO .exe/.dll de
+#                                                    dir; sai 1 se houver
+#                                                    mais de um sabor
 #
 # POR QUE ISTO EXISTE. O .exe e as DLLs que viajam com ele TÊM de usar o
 # mesmo runtime C. Runtimes diferentes são heaps diferentes: memória
@@ -71,6 +75,106 @@ crt_de() {
         echo desconhecido
     fi
 }
+
+# --conferir-payload: o ÚLTIMO portão, sobre o que vai de fato no pacote.
+#
+# O --conferir abaixo mede uma amostra (o .exe contra uma DLL do sysroot) e
+# roda antes de as DLLs serem coletadas. Serve para falhar cedo, não para
+# dar garantia: entre ele e o .zip ainda passam o coletor de DLLs, o
+# provider do OpenSSL e qualquer sobra de um build anterior. Aqui se mede
+# ARQUIVO POR ARQUIVO o diretório pronto.
+#
+# É o mais perto que dá para chegar da garantia que o Linux tem de graça.
+# Lá o app e as bibliotecas saem da mesma passada de compilação contra a
+# mesma libc, e misturar runtime é impossível por construção; aqui as
+# bibliotecas vêm prontas do MSYS2, então a garantia tem de ser medida —
+# em tudo, não por amostragem.
+if [ "${1:-}" = "--conferir-payload" ]; then
+    dir=${2:-}
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        echo "uso: $0 --conferir-payload <diretório>" >&2
+        exit 2
+    fi
+
+    # Sem objdump não há medição — e aqui isso é ERRO, não aviso. "Não
+    # consegui medir" é exatamente o estado em que a v2.7.1 foi publicada
+    # com todo o VNC morto; este portão falha FECHADO de propósito.
+    if ! achar_objdump >/dev/null 2>&1; then
+        cat >&2 <<'MSG'
+
+ERRO: nenhum objdump encontrado, e sem ele não há como medir o runtime C.
+
+Instale o mingw-w64-binutils (traz o x86_64-w64-mingw32-objdump), ou
+aponte OBJDUMP= para um que leia PE.
+
+Este portão não deixa passar "não conferido": publicar sem esta medição já
+custou uma release inteira com todas as sessões VNC morrendo na conexão.
+MSG
+        exit 1
+    fi
+
+    ucrt=() msvcrt=() misto=() sem=()
+    while IFS= read -r -d '' arq; do
+        case "$(crt_de "$arq")" in
+            ucrt)   ucrt+=("$arq") ;;
+            msvcrt) msvcrt+=("$arq") ;;
+            misto)  misto+=("$arq") ;;
+            *)      sem+=("$arq") ;;
+        esac
+    done < <(find "$dir" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0 | sort -z)
+
+    total=$(( ${#ucrt[@]} + ${#msvcrt[@]} + ${#misto[@]} + ${#sem[@]} ))
+    if [ "$total" = 0 ]; then
+        echo "ERRO: nenhum .exe ou .dll em $dir — não há o que empacotar." >&2
+        exit 1
+    fi
+
+    listar() {
+        local n=0 a
+        for a in "$@"; do
+            n=$((n + 1))
+            [ "$n" -gt 8 ] && { echo "        ... e mais $(($# - 8))" >&2; break; }
+            echo "        $(basename "$a")" >&2
+        done
+    }
+
+    # misto é defeito em si: um binário só, importando os dois runtimes,
+    # já carrega os dois heaps para dentro do processo.
+    if [ ${#misto[@]} -gt 0 ]; then
+        echo >&2
+        echo "ERRO: binário importando OS DOIS runtimes C:" >&2
+        listar "${misto[@]}"
+        echo >&2
+        exit 1
+    fi
+
+    if [ ${#ucrt[@]} -gt 0 ] && [ ${#msvcrt[@]} -gt 0 ]; then
+        cat >&2 <<MSG
+
+ERRO: o pacote mistura runtimes C. Ele NÃO pode ser publicado.
+
+    ucrt   (${#ucrt[@]} arquivo(s))
+MSG
+        listar "${ucrt[@]}"
+        echo "    msvcrt (${#msvcrt[@]} arquivo(s))" >&2
+        listar "${msvcrt[@]}"
+        cat >&2 <<MSG
+
+Cada runtime tem o seu heap: memória alocada dentro de uma DLL e liberada
+pelo .exe vira violação de acesso, e o app só quebra na hora de USAR.
+
+Normalmente é sobra de um build do outro sabor no diretório de saída.
+Rode "scripts/build-windows.sh --limpar" e refaça.
+MSG
+        exit 1
+    fi
+
+    sabor=msvcrt
+    [ ${#ucrt[@]} -gt 0 ] && sabor=ucrt
+    echo "runtime C do pacote: $sabor em $total binário(s)" \
+         "(${#sem[@]} sem runtime próprio, o que é normal)"
+    exit 0
+fi
 
 if [ "${1:-}" = "--conferir" ]; then
     exe=${2:-}
