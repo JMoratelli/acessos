@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.7.2" date="2026-09-22">
+      <description>
+        <p>Corrige, no Windows, toda sessão VNC morrendo no momento de conectar. A janela abria normalmente e a conexão caía em cerca de um segundo, repetidamente. Atingia a 2.7.1 inteira, em qualquer máquina. Quem estiver na 2.7.1 do Windows precisa desta atualização.</p>
+        <p>Corrige a atualização automática deixar de enxergar versão nova quando a última publicada não tem pacote para o seu sistema — o que acontece sempre que uma versão sai só para Windows ou só para Linux. O efeito não era pular aquela versão: o aplicativo parava de oferecer QUALQUER atualização, inclusive as anteriores que tinham pacote, e ficava assim sem avisar. Foi o que prendeu o Linux na 2.5.2 com a 2.7.0 publicada e disponível.</p>
+        <p>No Windows, atualizar deixa de abrir a janela do instalador por cima de tudo. O acompanhamento agora é o do próprio aplicativo, do download até o fim da instalação, como já era no Linux.</p>
+        <p>Corrige, no Windows, os instaladores baixados ficarem para sempre na pasta temporária — eram cerca de 46 MB por atualização, acumulando sem limite. Agora ficam dois: o que acabou de ser instalado e o anterior, que serve para voltar atrás sem depender de internet.</p>
+      </description>
+    </release>
     <release version="2.7.1" date="2026-09-20">
       <description>
         <p>Só Windows. Corrige a tela cheia da sessão destacada: a janela cobria o monitor inteiro, mas a imagem parava na área útil e sobrava a faixa da barra de tarefas. Não era o sistema se recusando a ceder a tela — era o app não ocupando o que já tinha.</p>
