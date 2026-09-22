@@ -79,98 +79,30 @@
     internal/` lá antes de fechar a release (o `third_party/vt10x`
     aparece e fica como está — é código de terceiro).
 
-- **PENDENTE: falta o item 3 do teste da atualização no Windows.** A
-  troca de `/SILENT` para `/VERYSILENT` e a passagem do fechamento do app
-  para o Restart Manager (`CloseApplications=yes` no
-  `scripts/instalador.iss`) foram escritas e conferidas só do lado Linux,
-  onde nada disso existe. O que falta conferir está no bloco de
+- **PENDENTE: falta o item 3 do teste da atualização no Windows**, e ele
+  ficou DESTRAVADO em 2026-09-22, com a v2.7.2 publicada. A troca de
+  `/SILENT` para `/VERYSILENT` e a passagem do fechamento do app para o
+  Restart Manager (`CloseApplications=yes` no `scripts/instalador.iss`)
+  foram escritas do lado Linux; os itens 1, 2 e 4 passaram numa máquina
+  Windows 10 de verdade em 2026-09-21. O que falta está no bloco de
   comentário logo acima de `instalarWindows`, em
   `internal/atualizador/atualizador.go`.
 
-  **Em 2026-09-21 os itens 1, 2 e 4 passaram** numa máquina Windows 10 de
-  verdade e saíram do bloco, que hoje só tem o 3. Ele não é questão de
-  tempo: depende de uma release publicada MAIS NOVA que a instalada, e não
-  há como forjar isso localmente.
+  **A receita do item 3, agora que ela existe:** instalar o
+  `AcessosSetup-2.7.1.exe` da release v2.7.1 — que NÃO é o build da 2.7.1,
+  é um pacote de teste com este código — e deixar o app oferecer a v2.7.2.
+  Essa é a única combinação que exercita o caminho novo, porque quem roda
+  o `/VERYSILENT` é o app JÁ INSTALADO, não o instalador baixado.
+  Instalar a 2.7.2 direto não serve: não há release mais nova para ela
+  oferecer.
 
-  **O `AcessosSetup-2.7.1.exe` anexado à release v2.7.1 NÃO é o build da
-  2.7.1.** Ele é o pacote de teste, e foi trocado duas vezes: em
-  2026-09-21 por um build de `5bfb7fe` — que saiu com o runtime C
-  misturado e portanto com todo o VNC morto — e em 2026-09-22 pelo build
-  corrigido, já com o sysroot `mingw64` casando com o compilador
-  (`SHA256SUMS.txt` regerado junto, `d7669da3b3…`). É esse o instalador a
-  usar no teste; ele diz "2.7.1" em Sobre como qualquer outro.
-
-  **Ele serve para os itens 1, 2 e 4, não para o 3.** O item 3 exercita o
-  lado do APP que foi mudado, e quem roda o `/VERYSILENT` é o app JÁ
-  INSTALADO, não o instalador baixado: um 2.7.0 atualizando para este
-  pacote usaria o código velho, com `/SILENT`, e não testaria nada.
-  Para o item 3 é preciso uma release MAIS NOVA que a 2.7.1 com um
-  `AcessosSetup-*.exe` anexado, com este app instalado por baixo.
-
-  **RETIRAR DEPOIS.** Publicar a release de verdade (versão nova, com `.exe` e, se for o caso, o bundle
-  `.flatpak`): ela fecha o item 3 e desfaz esta gambiarra de uma vez. O
-  `.exe` original da 2.7.1 não está mais na release — se for preciso, ele
-  se refaz a partir da tag `v2.7.1`. Feito isso, apagar este item E o
-  bloco de comentário em `instalarWindows`.
-
-- **O `.exe` e as DLLs têm de usar o MESMO runtime C** (achado em
-  2026-09-22, depurando "o VNC não funciona"). O Windows tem dois —
-  `msvcrt.dll` e UCRT — e cada um tem o SEU heap. Memória alocada dentro
-  de uma DLL e liberada pelo `.exe` (ou o contrário) é violação de acesso.
-
-  Foi o que aconteceu na v2.7.1: o `.exe` saiu do cross-compiler do Arch
-  ligado em `msvcrt.dll`, o sysroot veio do repositório `ucrt64` do MSYS2,
-  e a PRIMEIRA linha do `vs_conectar` — o `free()` do `serverHost` que a
-  `libvncclient` tinha alocado — matava o processo da sessão a cada
-  conexão. **Toda sessão VNC, em toda máquina.** Compilava limpo, ligava
-  limpo, instalava, abria a janela, e só morria na hora de usar.
-
-  Como foi fechado, e é o método que vale para a próxima vez: reproduzir
-  com `-conn type=vnc,host=...` numa instância isolada (`-ini` próprio,
-  sem tocar no app nem no log de quem está usando), e comparar com o MESMO
-  commit compilado nativamente no MSYS2 ucrt64 — mesma DLL, mesma
-  máquina, muda só o CRT do executável. O nativo conecta; o cross-build
-  crasha.
-
-  O `scripts/sysroot-msys2.py` escolhia o repositório por uma AFIRMAÇÃO em
-  comentário ("o gcc do Arch gera UCRT, as importações api-ms-win-crt-* no
-  .exe provam"). Era verdade quando foi escrita e deixou de ser sem avisar
-  ninguém. Hoje o `scripts/build-windows.sh` MEDE: compila um programa de
-  uma linha, olha o que ele importa (`scripts/crt-windows.sh`), escolhe o
-  sysroot do mesmo sabor e, depois de ligar, confere o `.exe` contra uma
-  DLL que vai junto — e FALHA o build se divergirem. Os dois repositórios
-  publicam as mesmas versões (freerdp 3.31.1-1, libvncserver 0.9.15-3),
-  então casar com o compilador não custa biblioteca velha.
-
-  O `rdpshim.c` tem o mesmo padrão no `hook_authenticate_ex` (libera as
-  strings que a FreeRDP alocou) e é mais traiçoeiro: aquele gancho só é
-  chamado quando falta credencial ou o servidor rejeita, então passa
-  despercebido no uso normal e quebra na senha errada de alguém.
-
-  **Conferido de ponta a ponta no Linux em 2026-09-22**, que é onde o
-  `.exe` de entrega é gerado: o passo 0 mediu `msvcrt` e foi ao repositório
-  `mingw64`, o sysroot novo baixou, o passo 4b casou, e o pacote saiu
-  homogêneo — `msvcrt` nos 103 binários (o `.exe`, as 101 DLLs e o
-  `ossl-modules/legacy.dll`).
-
-  **Duas travas foram acrescentadas na mesma passada**, porque as que
-  existiam não pegariam o defeito de novo:
-
-  - **O `dist/` é zerado a cada build.** O `dlls-windows.py` copia por
-    cima e nunca apaga, então trocar de sabor deixava as DLLs velhas para
-    trás. Não é hipótese: quando o build novo rodou pela primeira vez,
-    este diretório estava com um `.exe` msvcrt e 101 DLLs ucrt ao mesmo
-    tempo.
-  - **`crt-windows.sh --conferir-payload`, o portão final**, roda depois
-    do pacote montado e mede TODO `.exe`/`.dll` dele, um por um, em vez de
-    amostrar. E falha FECHADO: sem `objdump` ele barra o build, em vez de
-    avisar e deixar passar — "não conferido" foi exatamente o estado em
-    que a v2.7.1 saiu. O passo 4b continua onde está, para falhar cedo.
-
-  **Não há irmão disto no Linux**, e a razão está escrita no `build.sh`:
-  lá o app e as bibliotecas são compilados na mesma passada, contra a
-  mesma libc, e não há dois heaps possíveis. Se um dia as bibliotecas do
-  Linux passarem a vir prontas, o cuidado passa a valer lá também.
+  **RETIRAR DEPOIS.** Quando o item 3 passar, apagar este item E o bloco
+  em `instalarWindows`. E decidir o que fazer com o asset da v2.7.1, que
+  ficou sendo um binário de teste sob o nome de uma release — hoje
+  inofensivo (o atualizador serve a v2.7.2 a quem estiver abaixo dela,
+  nunca aquele), mas mentiroso. O `.exe` original da 2.7.1 não existe
+  mais; refazê-lo a partir da tag `v2.7.1` produziria outro binário, não
+  aquele.
 
 - **Compilar no Windows não é o build oficial** (conferido em
   2026-09-20, nesta máquina). O `.exe` entregue sai de
