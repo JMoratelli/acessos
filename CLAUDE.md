@@ -79,30 +79,14 @@
     internal/` lá antes de fechar a release (o `third_party/vt10x`
     aparece e fica como está — é código de terceiro).
 
-- **PENDENTE: falta o item 3 do teste da atualização no Windows**, e ele
-  ficou DESTRAVADO em 2026-09-22, com a v2.7.2 publicada. A troca de
-  `/SILENT` para `/VERYSILENT` e a passagem do fechamento do app para o
-  Restart Manager (`CloseApplications=yes` no `scripts/instalador.iss`)
-  foram escritas do lado Linux; os itens 1, 2 e 4 passaram numa máquina
-  Windows 10 de verdade em 2026-09-21. O que falta está no bloco de
-  comentário logo acima de `instalarWindows`, em
-  `internal/atualizador/atualizador.go`.
-
-  **A receita do item 3, agora que ela existe:** instalar o
-  `AcessosSetup-2.7.1.exe` da release v2.7.1 — que NÃO é o build da 2.7.1,
-  é um pacote de teste com este código — e deixar o app oferecer a v2.7.2.
-  Essa é a única combinação que exercita o caminho novo, porque quem roda
-  o `/VERYSILENT` é o app JÁ INSTALADO, não o instalador baixado.
-  Instalar a 2.7.2 direto não serve: não há release mais nova para ela
-  oferecer.
-
-  **RETIRAR DEPOIS.** Quando o item 3 passar, apagar este item E o bloco
-  em `instalarWindows`. E decidir o que fazer com o asset da v2.7.1, que
-  ficou sendo um binário de teste sob o nome de uma release — hoje
-  inofensivo (o atualizador serve a v2.7.2 a quem estiver abaixo dela,
-  nunca aquele), mas mentiroso. O `.exe` original da 2.7.1 não existe
-  mais; refazê-lo a partir da tag `v2.7.1` produziria outro binário, não
-  aquele.
+- **O asset da release v2.7.1 é um binário de TESTE, não o build da
+  2.7.1.** Trocado em 2026-09-21 para destravar o teste da atualização
+  (que passou em 2026-09-23) e nunca desfeito: o `.exe` original não
+  existe mais, e refazê-lo a partir da tag produziria outro binário. Hoje
+  é inofensivo — o atualizador serve sempre a release MAIS NOVA a quem
+  estiver abaixo dela, nunca aquele —, mas é uma mentira guardada.
+  Decidir: republicar um build da tag, ou dizer no corpo da release o que
+  aquele arquivo é.
 
 - **Compilar no Windows não é o build oficial** (conferido em
   2026-09-20, nesta máquina). O `.exe` entregue sai de

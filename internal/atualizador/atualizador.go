@@ -335,36 +335,6 @@ func instalarFlatpak(r *Release, progresso func(float64), instalando func()) err
 	return exec.Command("flatpak-spawn", "--host", "flatpak", "run", AppID).Start()
 }
 
-// =====================================================================
-// PENDENTE DE TESTE NO WINDOWS - APAGAR ESTE BLOCO QUANDO PASSAR
-// =====================================================================
-// /VERYSILENT, o Restart Manager fechando o app e o código de saída do
-// Inno não existem no Linux e não aparecem em `go test`.
-//
-// Em 2026-09-21, numa máquina Windows 10 de verdade, passaram: a bateria
-// nativa; o instalador cru com o app aberto (nenhuma janela do Inno, o
-// Restart Manager fechou o app e o [Run] o reabriu, saída 0); e o
-// caminho de falha do cmd.Wait (o diálogo mostra o erro e devolve os
-// botões, em vez de ficar parado em "Instalando...").
-//
-// FALTA SÓ O 3, e não é questão de tempo: ele depende de uma release
-// publicada MAIS NOVA que a instalada, e não há como forjar isso
-// localmente. Apague este bloco (e o item correspondente no CLAUDE.md)
-// quando ele passar. Se falhar, o que está escrito aqui é o ESPERADO,
-// não o observado: corrija o código, não o comentário.
-//
-// 3. Fluxo pelo app, de ponta a ponta. DEPENDE de uma release mais nova
-//    que a instalada, com .exe + SHA256SUMS: quem roda o /VERYSILENT é o
-//    app JÁ INSTALADO, não o instalador baixado, então atualizar PARA um
-//    pacote novo usando um app velho não testa nada. Com este código
-//    instalado e uma release maior publicada, aceitar a atualização.
-//    Esperado: barra de download; depois "Instalando a atualização..."
-//    FICA na tela até o app fechar - é exatamente o que mudou, antes ele
-//    sumia no instante em que o instalador era disparado; reabre; a
-//    versão nova aparece em Sobre. Ver o item PENDENTE do CLAUDE.md para
-//    o estado da release v2.7.1.
-// =====================================================================
-
 // instalarWindows baixa o AcessosSetup-X.Y.Z.exe, confere o sha256
 // publicado junto da release e dispara a instalação silenciosa.
 //
