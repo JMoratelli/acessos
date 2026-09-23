@@ -113,6 +113,32 @@ if [ ! -f "$ICO" ] || [ icones/acessos.svg -nt "$ICO" ]; then
     rm -rf "$tmp"
 fi
 
+# 2b. imagem da tela de espera da atualização (ver o [Code] do
+#     scripts/instalador.iss). Mesmo SVG do ícone, achatado sobre a cor de
+#     cartão do tema escuro (#171b21, de cmd/acessos/tema.go) porque o
+#     TBitmapImage do Inno não faz alfa.
+#
+#     BMP3, e não BMP: o BMP padrão do ImageMagick pode sair com canal alfa
+#     (BITMAPV4/V5), e aí o TBitmapImage desenha lixo ou nem carrega. BMP3
+#     é o de 24 bits de sempre.
+ESPERA=$SAIDA/espera-icone.bmp
+if [ ! -f "$ESPERA" ] || [ icones/acessos.svg -nt "$ESPERA" ]; then
+    echo ">> gerando a imagem da tela de espera"
+    rsvg-convert -w 96 -h 96 icones/acessos.svg -o "$SAIDA/espera-icone.png"
+    magick "$SAIDA/espera-icone.png" -background "#171b21" \
+        -flatten -alpha off "BMP3:$ESPERA"
+    rm -f "$SAIDA/espera-icone.png"
+    # Conferência barata do formato: o TBitmapImage do Inno só lê BMP
+    # de 24 bits sem alfa, e um arquivo errado aqui não quebraria o
+    # build — apareceria (ou melhor, NÃO apareceria) só na máquina de
+    # quem estivesse atualizando, onde ninguém está olhando.
+    bits=$(od -An -tu2 -j28 -N2 "$ESPERA" | tr -d " ")
+    if [ "$bits" != "24" ]; then
+        echo "ERRO: $ESPERA saiu com $bits bits por pixel; o Inno precisa de 24." >&2
+        exit 1
+    fi
+fi
+
 # 3. recurso do Windows: ícone no Explorer e aba "Detalhes" com a versão.
 #    O sufixo _windows no .syso mantém o build de Linux intocado.
 echo ">> gerando o recurso (ícone + versão $VERSAO)"
