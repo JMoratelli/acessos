@@ -869,6 +869,11 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			rastrearPonteiroGlobal(gtx)
 			layoutMenu(gtx, th, w)
 			layoutTrocarHost(gtx, th)
+			// A dica por último de todos: ela é a única coisa na tela que
+			// ninguém clica, então cobrir o menu ou o diálogo seria só
+			// atrapalhar. Desenhada depois, some por cima de tudo — e é
+			// exatamente aí que ela não esconde nada que importe.
+			layoutDica(gtx, th)
 
 			regua(gtx, sb.largura(gtx))
 			recorte.Pop()

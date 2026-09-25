@@ -27,7 +27,9 @@ type dlgConexao struct {
 	caminho  string
 	original conexoes.Conexao
 
-	nome, grupo, host                   widget.Editor
+	nome, host                          widget.Editor
+	grupo                               comboGrupo
+	descricao                           widget.Editor
 	vncPorta, vncUser, vncSenha         widget.Editor
 	sshPorta, sshUser, sshSenha         widget.Editor
 	rdpPorta, rdpUser, rdpSenha, rdpDom widget.Editor
@@ -94,8 +96,20 @@ func editarConexao(w *app.Window, caminho string, cx conexoes.Conexao, recarrega
 		e.SetText(v)
 	}
 	por(&d.nome, cx.Nome)
-	por(&d.grupo, strings.Join(cx.Grupo, ";"))
 	por(&d.host, cx.Host)
+	// Os grupos que já existem saem do arquivo AGORA, não de uma cópia
+	// guardada: o arquivo mora num Drive sincronizado, então a loja nova
+	// pode ter sido criada em OUTRA máquina entre uma abertura e outra.
+	// Falha na leitura só deixa a lista vazia — o campo continua aceitando
+	// texto livre, então não há motivo para impedir o cadastro por isso.
+	arq, _ := conexoes.Carregar(caminho)
+	d.grupo.iniciar(gruposDoArquivo(arq), strings.Join(cx.Grupo, ";"))
+	por(&d.descricao, cx.Descricao)
+	// O teto é do MODELO (conexoes.LimiteDescricao), não um número solto
+	// aqui: quem grava à mão no .ini passa longe deste campo, e é o
+	// LimitarDescricao do salvar que fecha a porta. Isto é só para o
+	// campo não deixar digitar o que seria cortado depois, calado.
+	d.descricao.MaxLen = conexoes.LimiteDescricao
 	por(&d.vncPorta, strconv.Itoa(cx.VNC.Porta))
 	por(&d.vncUser, cx.VNC.Usuario)
 	por(&d.sshPorta, strconv.Itoa(cx.SSH.Porta))
@@ -165,7 +179,11 @@ func (d *dlgConexao) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		d.salvar()
 	}
 
-	linha := func(rot string, e *widget.Editor, dica string) layout.FlexChild {
+	// linhaW é a linha "rótulo à esquerda, campo à direita" com o campo
+	// aberto: o grupo não é um editor puro (tem o balão de sugestões), e
+	// sem isto ele ficaria com outra largura de rótulo e desalinharia o
+	// formulário inteiro — o mesmo motivo que linhaSenha existe.
+	linhaW := func(rot string, w layout.Widget) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: 6}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
@@ -174,11 +192,14 @@ func (d *dlgConexao) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 						gtx.Constraints.Min.X, gtx.Constraints.Max.X = larg, larg
 						return rotulo(th, fonteMono, spSecundario, rot, tema.Sec)(gtx)
 					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return caixaEditor(gtx, th, e, dica, 0)
-					}),
+					layout.Flexed(1, w),
 				)
 			})
+		})
+	}
+	linha := func(rot string, e *widget.Editor, dica string) layout.FlexChild {
+		return linhaW(rot, func(gtx layout.Context) layout.Dimensions {
+			return caixaEditor(gtx, th, e, dica, 0)
 		})
 	}
 	// senha tem o MESMO rótulo à esquerda dos outros campos; o que muda é
@@ -234,8 +255,13 @@ func (d *dlgConexao) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 
 	campos := []layout.FlexChild{
 		linha("nome", &d.nome, "CAIXA5201"),
-		linha("grupo", &d.grupo, "Loja 06;Caixas  (subgrupos com ;)"),
+		linhaW("grupo", func(gtx layout.Context) layout.Dimensions {
+			return d.grupo.layout(gtx, th, "Loja 06;Caixas  (subgrupos com ;)")
+		}),
 		linha("host", &d.host, "192.168.8.101"),
+		// Opcional, e por isso a dica diz para que serve em vez de dar um
+		// exemplo de formato: campo em branco não vira linha no .ini.
+		linha("descrição", &d.descricao, "opcional — o que diferencia esta máquina"),
 		espaco(4),
 		d.bloco(gtx, th, 0, "TELA · VNC", &d.ligaVNC, d.vncOn, func() []layout.FlexChild {
 			return []layout.FlexChild{
@@ -339,9 +365,13 @@ func (d *dlgConexao) salvar() {
 		return
 	}
 	campos := map[string]string{
-		"grupo": strings.TrimSpace(d.grupo.Text()),
+		"grupo": strings.TrimSpace(d.grupo.ed.Text()),
 		"host":  strings.TrimSpace(d.host.Text()),
-		"vnc":   umZero(d.vncOn), "porta": d.vncPorta.Text(), "usuario": d.vncUser.Text(),
+		// Vazia some do arquivo: salvarSecao apaga a chave de valor
+		// vazio, então desmarcar a descrição não deixa "descricao = "
+		// para trás.
+		"descricao": conexoes.LimitarDescricao(d.descricao.Text()),
+		"vnc":       umZero(d.vncOn), "porta": d.vncPorta.Text(), "usuario": d.vncUser.Text(),
 		"ssh": umZero(d.sshOn), "ssh_porta": d.sshPorta.Text(), "ssh_usuario": d.sshUser.Text(),
 		"rdp": umZero(d.rdpOn), "rdp_porta": d.rdpPorta.Text(), "rdp_usuario": d.rdpUser.Text(),
 		"rdp_dominio": d.rdpDom.Text(),

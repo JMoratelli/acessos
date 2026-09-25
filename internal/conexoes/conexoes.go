@@ -69,6 +69,11 @@ type Conexao struct {
 	Nome    string
 	Grupo   []string // ["Loja 06", "Caixas"]
 	Host    string
+	// Descricao é texto livre OPCIONAL sobre o host ("caixa 3, impressora
+	// fiscal"). Vazia não vai para o arquivo: salvarSecao já apaga chave
+	// de valor vazio, então quem não preencher não ganha uma linha morta
+	// no .ini. O tamanho é limitado por LimiteDescricao.
+	Descricao string
 
 	VNC AcessoVNC
 	SSH AcessoSSH
@@ -142,10 +147,11 @@ func Carregar(caminho string) (*Arquivo, error) {
 // usuário configurado, e vnc nasce LIGADO quando a chave não existe.
 func montar(nome string, c map[string]string) Conexao {
 	cx := Conexao{
-		Nome:  nome,
-		Grupo: caminhoGrupo(c["grupo"]),
-		Host:  c["host"],
-		bruto: c,
+		Nome:      nome,
+		Grupo:     caminhoGrupo(c["grupo"]),
+		Host:      c["host"],
+		Descricao: LimitarDescricao(c["descricao"]),
+		bruto:     c,
 	}
 
 	cx.Windows = verdade(c, "windows", false)
@@ -250,6 +256,42 @@ func ordenar(g *Grupo) {
 	for _, f := range g.Filhos {
 		ordenar(f)
 	}
+}
+
+// LimiteDescricao é o teto da descrição, em RUNAS (não bytes: acento
+// conta um, senão "Três" gastaria cinco).
+//
+// 255 por três razões que se somam, não por gosto. É o limite clássico de
+// campo de descrição curta (o VARCHAR(255) que todo inventário/CMDB usa
+// para "descrição do host"), então quem exportar isto para planilha ou
+// banco não perde texto no caminho. É folgado para uma linha de .ini —
+// com a chave e o "= " dá ~270 bytes, longe de qualquer parser ou editor
+// reclamar. E, na fonte do app, 255 runas dão cerca de três linhas curtas
+// no balão de hover: ainda se lê de relance, que é a função da dica. Mais que isso vira documento, e
+// documento não cabe em tooltip.
+const LimiteDescricao = 255
+
+// LimitarDescricao deixa a descrição segura para uma linha de .ini e para
+// a tela.
+//
+// A troca de quebra de linha por espaço não é enfeite: o arquivo é lido
+// linha a linha (ver o cabeçalho deste pacote), e um "\n" colado no meio
+// do texto partiria a seção — o resto da descrição viraria uma linha solta
+// que o parser leria como chave inválida, ou pior, como outra chave. O
+// campo da tela é SingleLine, mas colar e a edição à mão do arquivo passam
+// por fora dele.
+func LimitarDescricao(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > LimiteDescricao {
+		s = strings.TrimSpace(string(r[:LimiteDescricao]))
+	}
+	return s
 }
 
 func caminhoGrupo(v string) []string {

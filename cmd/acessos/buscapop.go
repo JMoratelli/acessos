@@ -90,6 +90,10 @@ const buscaMaxLinhas = 1
 
 const (
 	buscaLinhaAlt = unit.Dp(38)
+	// Altura da linha QUANDO o host tem descrição: a mesma mais a segunda
+	// linha de texto. A caixa cresce por isso — é o preço de mostrar o
+	// detalhe aqui, e ele só é cobrado de quem preencheu a descrição.
+	buscaLinhaAltDesc = unit.Dp(54)
 	// Margem transparente em volta do cartão: sem ela a sombra ficaria
 	// recortada pela borda da janela e o vidro viraria um retângulo duro.
 	buscaMargem = unit.Dp(14)
@@ -216,7 +220,25 @@ func (j *janelaBusca) alturaDesejada() unit.Dp {
 	if n > buscaMaxLinhas+1 {
 		n = buscaMaxLinhas + 1 // +1: a linha do destino avulso
 	}
-	return buscaAlt + buscaRespiroLista + unit.Dp(n)*buscaLinhaAlt
+	// Somadas uma a uma, e não n × altura: com a descrição a linha deixou
+	// de ter altura única. Multiplicar pela maior sobraria faixa vazia
+	// embaixo de quem não tem descrição, e pela menor cortaria o texto.
+	var soma unit.Dp
+	for i := 0; i < n; i++ {
+		soma += j.alturaDaLinha(i)
+	}
+	return buscaAlt + buscaRespiroLista + soma
+}
+
+// alturaDaLinha é a altura da linha i — o único lugar que decide isso,
+// porque o layout e a altura da JANELA têm de concordar: se discordarem, a
+// lista é desenhada abaixo da borda e simplesmente não aparece (foi o que
+// alturaDesejada existe para consertar).
+func (j *janelaBusca) alturaDaLinha(i int) unit.Dp {
+	if cx, ok := j.conexaoDa(i); ok && cx.Descricao != "" {
+		return buscaLinhaAltDesc
+	}
+	return buscaLinhaAlt
 }
 
 // protocoloPreferido é o que o Enter abre quando o host tem mais de um.
@@ -686,7 +708,7 @@ func (j *janelaBusca) lista(gtx layout.Context) layout.Dimensions {
 func (j *janelaBusca) linha(i int, cx conexoes.Conexao, avulso bool) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		gtx.Constraints.Min.Y = gtx.Dp(buscaLinhaAlt)
+		gtx.Constraints.Min.Y = gtx.Dp(j.alturaDaLinha(i))
 		return j.cliques[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -703,18 +725,35 @@ func (j *janelaBusca) linha(i int, cx conexoes.Conexao, avulso bool) layout.Widg
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					return layout.Inset{Top: 7, Bottom: 7, Left: 10, Right: 10}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(negrito(txt(j.th, fonteCond, spCardHost, cx.Nome, tema.Texto)).Layout),
-								layout.Rigid(layout.Spacer{Width: 10}.Layout),
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									meta := cx.GrupoStr()
-									if avulso {
-										meta = "não cadastrado · sessão temporária"
-									}
-									return rotulo(j.th, fonteMono, spCardMeta, meta, tema.Sec)(gtx)
-								}),
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return j.selos(gtx, i, cx)
+									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+										layout.Rigid(negrito(txt(j.th, fonteCond, spCardHost, cx.Nome, tema.Texto)).Layout),
+										layout.Rigid(layout.Spacer{Width: 10}.Layout),
+										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+											meta := cx.GrupoStr()
+											if avulso {
+												meta = "não cadastrado · sessão temporária"
+											}
+											return rotulo(j.th, fonteMono, spCardMeta, meta, tema.Sec)(gtx)
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return j.selos(gtx, i, cx)
+										}),
+									)
+								}),
+								// Segunda linha só para quem tem descrição, e de
+								// UMA linha só, cortada: a caixa da busca é lida
+								// de relance e cresce sobre o desktop — deixar o
+								// texto quebrar em três linhas faria a altura da
+								// janela depender do que alguém digitou no
+								// cadastro.
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									if cx.Descricao == "" {
+										return layout.Dimensions{}
+									}
+									return layout.Inset{Top: 2}.Layout(gtx,
+										rotuloLinha(j.th, fonteSans, spCardMeta, cx.Descricao, tema.Sec))
 								}),
 							)
 						})

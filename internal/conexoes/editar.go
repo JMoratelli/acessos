@@ -218,7 +218,7 @@ func salvarSecao(caminho, nome, novoNome string, campos map[string]string) error
 // quando o app só fazia tela. Mudar isso quebraria todo .ini existente e o
 // app Python, que lê o MESMO arquivo.
 var ordemChaves = []string{
-	"grupo", "host",
+	"grupo", "host", "descricao",
 	"vnc", "porta", "usuario", "senha", "modo", "auto", "ronly",
 	"ssh", "ssh_porta", "ssh_usuario", "ssh_senha", "ssh_auto",
 	"rdp", "rdp_porta", "rdp_usuario", "rdp_senha", "rdp_dominio", "rdp_tela", "rdp_auto",

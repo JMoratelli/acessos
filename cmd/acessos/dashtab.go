@@ -711,6 +711,9 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 	if hov.Hovered() {
 		cx := cx
 		d.sobCursor = &cx
+		// A chave do hover já identifica o card (grupo + nome), então
+		// serve de identidade para a dica sem inventar outra.
+		pedirDica("card:"+cx.GrupoStr()+"|"+cx.Nome, cx.Descricao)
 	}
 
 	dims := hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -972,7 +975,13 @@ func filtrar(lista []conexoes.Conexao, termo string) []conexoes.Conexao {
 func casaComTermo(cx conexoes.Conexao, termo string) bool {
 	return strings.Contains(strings.ToLower(cx.Nome), termo) ||
 		strings.Contains(strings.ToLower(cx.Host), termo) ||
-		strings.Contains(strings.ToLower(cx.GrupoStr()), termo)
+		strings.Contains(strings.ToLower(cx.GrupoStr()), termo) ||
+		// A descrição entra no casamento, e não só na tela: ela existe
+		// para dizer o que o nome não diz ("impressora fiscal", "troca em
+		// outubro"), e é por esse detalhe que se procura quando o nome
+		// não é lembrado. Vale aqui, num lugar só, então o filtro do
+		// Painel e a busca do atalho global concordam de graça.
+		strings.Contains(strings.ToLower(cx.Descricao), termo)
 }
 
 // algumCasa responde "tem alguma?" sem montar a lista das que casam, e

@@ -463,6 +463,10 @@ func (s *sidebar) linhaHost(gtx layout.Context, th *material.Theme, cx conexoes.
 	if btn.Hovered() {
 		cx := cx
 		s.sobCursor = &cx
+		// Mesma dica do Painel: a lateral também lista a máquina pelo
+		// NOME, e é onde ela é mais estreita — o nome fica truncado com
+		// mais frequência aqui do que lá.
+		pedirDica("lateral:"+cx.GrupoStr()+"|"+cx.Nome, cx.Descricao)
 	}
 	e := estiloDe(s.proto)
 	corIco := e.cor()
