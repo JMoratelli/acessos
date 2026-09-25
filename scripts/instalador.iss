@@ -130,11 +130,16 @@ const
   SWP_NOSIZE = $1;
   SWP_NOMOVE = $2;
   SWP_NOACTIVATE = $10;
+  RDW_INVALIDATE = $1;
+  RDW_ALLCHILDREN = $80;
+  RDW_UPDATENOW = $100;
 
 function AddFontResourceEx(lpszFilename: string; fl: DWORD; pdv: Integer): Integer;
   external 'AddFontResourceExW@gdi32.dll stdcall';
 function SetWindowPos(hWnd: HWND; hWndInsertAfter: Integer; X, Y, cx, cy: Integer;
   uFlags: UINT): BOOL; external 'SetWindowPos@user32.dll stdcall';
+function RedrawWindow(hWnd: HWND; lprcUpdate: Integer; hrgnUpdate: Integer;
+  flags: UINT): BOOL; external 'RedrawWindow@user32.dll stdcall';
 
 var
   formEspera: TSetupForm;
@@ -221,6 +226,20 @@ begin
   // Por cima de tudo, mas SEM roubar o foco de quem estiver digitando.
   SetWindowPos(formEspera.Handle, HWND_TOPMOST, 0, 0, 0, 0,
     SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE);
+
+  // Pintar AGORA, e de forma SÍNCRONA, inclusive os filhos (RDW_ALLCHILDREN).
+  //
+  // Mostrar a janela só marca a área como inválida: quem desenha é a bomba
+  // de mensagens, e daqui o instalador sai direto para descompactar e
+  // fechar o app pelo Restart Manager, sem voltar a ela por alguns
+  // segundos. O resultado, visto na instalação DE VERDADE (a de demo, sem
+  // compressão, não mostrava): a moldura aparece vazia e o ícone e os
+  // textos só entram quando a cópia começa.
+  //
+  // Um Update no formulário não bastaria: ícone e textos são controles
+  // filhos, com a própria área inválida.
+  RedrawWindow(formEspera.Handle, 0, 0,
+    RDW_INVALIDATE or RDW_UPDATENOW or RDW_ALLCHILDREN);
 end;
 
 // O Inno chama isto conforme copia os arquivos: é o que move a barra.
@@ -248,6 +267,9 @@ begin
     AbrirEspera;
   except
     formEspera := nil;
+    // O SetupLogging=yes lá em cima vale aqui: se a tela não aparecer, o
+    // motivo fica no log em vez de virar mistério.
+    Log('tela de espera: falhou, instalando sem ela: ' + GetExceptionMessage);
   end;
 end;
 
