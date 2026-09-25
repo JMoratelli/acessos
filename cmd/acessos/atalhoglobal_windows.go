@@ -63,6 +63,12 @@ type msg struct {
 
 type AtalhoGlobal struct {
 	Gatilho string
+	// Mudou existe para o irmão do Linux compilar aqui (ver
+	// atalhoglobal_linux.go) e NUNCA recebe nada: no Windows a tecla é a
+	// que o app pediu no RegisterHotKey e não há Preferências do Sistema
+	// para trocá-la. Quem escuta trata isso sozinho — canal que não
+	// entrega nada é um select que nunca acorda.
+	Mudou chan string
 	// Caiu fecha quando o laço de mensagens sai — na prática, só por
 	// Fechar: RegisterHotKey não tem sessão externa para morrer junto com
 	// o processo, ao contrário do portal do Linux.
@@ -99,9 +105,17 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string))
 	}
 
 	pronto := make(chan error, 1)
-	a := &AtalhoGlobal{Gatilho: gatilho, Caiu: make(chan struct{})}
+	a := &AtalhoGlobal{Gatilho: gatilho, Mudou: make(chan string), Caiu: make(chan struct{})}
+
+	// O atendimento NÃO roda no laço de mensagens — ver atalhodisparo.go.
+	// Enquanto rodava, um aperto parava a bomba de mensagens da thread
+	// pelo tempo de ler o .ini (que mora num Drive sincronizado), e com
+	// ela parada o atalho inteiro deixava de responder. É o mesmo defeito
+	// que o lado Linux tinha, e agora os dois usam o mesmo atendente.
+	disp := novoDisparador(ao)
 
 	go func() {
+		defer disp.pararTudo()
 		runtime.LockOSThread()
 		// Antes de registrar: quem chamou só recebe o ponteiro depois do
 		// <-pronto, então gravar aqui não corre com o Fechar.
@@ -125,8 +139,8 @@ func registrarAtalhoGlobal(id, descricao, gatilho string, ao func(token string))
 				close(a.Caiu)
 				return
 			}
-			if m.Message == wmHotkey && m.WParam == idAtalho && ao != nil {
-				ao("")
+			if m.Message == wmHotkey && m.WParam == idAtalho {
+				disp.disparar("")
 			}
 		}
 	}()

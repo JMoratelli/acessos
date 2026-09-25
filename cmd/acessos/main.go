@@ -603,6 +603,21 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			// não existe: RegisterHotKey ou amarra ou devolve erro, que
 			// o if acima já tratou. Ver atalhogatilho.go.
 			definirGatilho(a.Gatilho)
+			// E segue ouvindo a troca de tecla. Sem serviço não há socket
+			// no caminho, mas o problema é o mesmo do lado do Linux: o
+			// portal avisa a mudança e, sem isto, a janela continuaria
+			// anunciando a tecla de quando o app subiu. definirGatilho
+			// guarda num atomic, então vir de outra goroutine é seguro.
+			go func(a *AtalhoGlobal) {
+				for {
+					select {
+					case <-a.Caiu:
+						return
+					case novo := <-a.Mudou:
+						definirGatilho(novo)
+					}
+				}
+			}(a)
 		}
 		if atalhoGlobalLigado(caminhoINI) {
 			ligarAtalho()

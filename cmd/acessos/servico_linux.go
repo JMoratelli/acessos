@@ -417,6 +417,18 @@ func (s *servico) manterAtalho() {
 				// que não existe mais.
 				s.guardarGatilho("")
 				soltou = true
+			case novo := <-a.Mudou:
+				// O usuário reamarrou a tecla em Preferências do Sistema.
+				// Antes isto atualizava um campo que ninguém relia, e a
+				// janela seguia anunciando a tecla ANTIGA até a sessão do
+				// portal cair. O atalho em si não precisa de nada: quem
+				// amarra é o sistema, e ele já amarrou.
+				if novo == "" {
+					fmt.Fprintln(os.Stderr, "atalho global: a tecla foi solta em Preferências do Sistema")
+				} else {
+					fmt.Printf("atalho global: tecla trocada para %s\n", novo)
+				}
+				s.guardarGatilho(novo)
 			case <-s.atalhoMudou:
 				if atalhoGlobalLigado(s.ini) {
 					continue // religado antes de soltarmos: segue de pé

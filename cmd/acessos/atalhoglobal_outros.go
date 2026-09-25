@@ -16,6 +16,9 @@ import "errors"
 
 type AtalhoGlobal struct {
 	Gatilho string
+	// Mudou existe para o mesmo select do lado Linux compilar aqui; nunca
+	// entrega nada, porque não há portal para avisar troca de tecla.
+	Mudou chan string
 	// Caiu existe para a mesma espera do lado Linux compilar aqui; nunca
 	// fecha, porque não há sessão de portal para cair.
 	Caiu chan struct{}

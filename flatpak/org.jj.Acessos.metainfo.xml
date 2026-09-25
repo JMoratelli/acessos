@@ -71,7 +71,8 @@
         <p>Criar o cofre voltou a ser possível: o segundo campo de senha não aceitava clique nem Tab, então não havia como repetir a senha mestra e o botão nunca podia ser usado. O campo não estava quebrado — o diálogo tomava o foco de volta a cada quadro desenhado, e o clique se perdia nesse vaivém. O mesmo acontecia ao trocar a senha mestra, que tem três campos, e nos dois casos também não dava para alcançar os botões pelo teclado.</p>
         <p>A caixa que pede usuário e senha de uma conexão avulsa tinha a metade desse problema: dava para clicar entre os campos, mas o Tab nunca chegava em "Conectar".</p>
         <p>A atualização no Windows deixou de parecer travada. Enquanto os arquivos são copiados o app precisa ficar fechado, e nesse intervalo não havia nada na tela — quase dez segundos numa máquina rápida, bem mais numa lenta. Agora aparece uma tela de espera com a cara do app, com o progresso real da cópia, do começo ao fim da troca.</p>
-      </description>
+              <p>Correções no atalho global. Trocar a tecla em Preferências do Sistema passou a valer na hora: antes o app seguia anunciando a tecla antiga até ser reiniciado, e quem trocasse ficava sem saber qual das duas estava valendo. Apertar o atalho várias vezes seguidas enquanto o app ainda sobe deixou de poder deixá-lo sem resposta. E ligar e desligar o atalho pelos Ajustes já não deixa restos acumulados em segundo plano a cada vez — num computador que fica dias ligado, isso se somava.</p>
+</description>
     </release>
     <release version="2.7.3" date="2026-09-22">
       <description>
