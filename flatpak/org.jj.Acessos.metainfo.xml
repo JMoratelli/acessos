@@ -64,6 +64,15 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.7.4" date="2026-09-25">
+      <description>
+        <p>As máquinas ganharam uma descrição. É um campo de texto livre e opcional no cadastro, para o que o nome não conta: "CAIXA5201" não diz que aquela é a caixa 3, que tem impressora fiscal ou que troca em outubro — e costuma ser por esse detalhe que se procura quando o nome não vem à cabeça. A descrição aparece no balão ao passar o mouse, na caixa de busca do atalho global, e o filtro do Painel também procura dentro dela. Quem não preencher não ganha nada de novo no inventário.</p>
+        <p>O campo de grupo passou a sugerir os grupos que já existem enquanto se digita. Era onde mais se errava: o grupo é o caminho da árvore do Painel, e um acento a menos ou um "Caixa" no singular não dá erro nenhum — cria um galho novo, quase igual ao certo, com uma máquina dentro. O erro só aparece depois, procurando a máquina onde ela não está. Continua sendo texto livre, porque grupo novo tem de poder nascer ali.</p>
+        <p>Criar o cofre voltou a ser possível: o segundo campo de senha não aceitava clique nem Tab, então não havia como repetir a senha mestra e o botão nunca podia ser usado. O campo não estava quebrado — o diálogo tomava o foco de volta a cada quadro desenhado, e o clique se perdia nesse vaivém. O mesmo acontecia ao trocar a senha mestra, que tem três campos, e nos dois casos também não dava para alcançar os botões pelo teclado.</p>
+        <p>A caixa que pede usuário e senha de uma conexão avulsa tinha a metade desse problema: dava para clicar entre os campos, mas o Tab nunca chegava em "Conectar".</p>
+        <p>A atualização no Windows deixou de parecer travada. Enquanto os arquivos são copiados o app precisa ficar fechado, e nesse intervalo não havia nada na tela — quase dez segundos numa máquina rápida, bem mais numa lenta. Agora aparece uma tela de espera com a cara do app, com o progresso real da cópia, do começo ao fim da troca.</p>
+      </description>
+    </release>
     <release version="2.7.3" date="2026-09-22">
       <description>
         <p>Corrige a sessão RDP em aba ficar presa numa resolução só, em vez de acompanhar o tamanho da aba. O pedido de resolução era enviado antes de o canal que o servidor usa para isso terminar de abrir, e nesse caso ele era descartado sem que nada tentasse de novo — a sessão seguia na resolução com que tinha conectado. Acontecia de forma intermitente, dependendo de quanto o servidor demorava para abrir o canal.</p>
