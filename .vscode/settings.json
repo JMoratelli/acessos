@@ -31,5 +31,17 @@
     "**/build/**",
     "**/.flatpak-builder/**",
     "**/vendor/**"
-  ]
+  ],
+  // O gopls também ignora as exclusões do editor e varre o diretório por
+  // conta própria — chegou a passar de 900% de CPU. Sintaxe própria: o
+  // prefixo "-" exclui o diretório a partir da raiz do workspace.
+  "gopls": {
+    "build.directoryFilters": [
+      "-build",
+      "-.flatpak-builder",
+      "-vendor",
+      "-python",
+      "-testes"
+    ]
+  }
 }

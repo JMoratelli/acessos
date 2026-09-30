@@ -20,3 +20,8 @@
 /vendor/
 # bytecode do Python, gerado por quem roda os scripts de build
 __pycache__/
+# go.work junta o módulo raiz e os dois de third_party/ para o gopls não
+# recarregar o build a cada troca de módulo. É conveniência local do
+# editor: o build.sh e o manifesto do Flatpak o ignoram (GOWORK=off).
+/go.work
+/go.work.sum
