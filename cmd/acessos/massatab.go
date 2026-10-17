@@ -691,6 +691,17 @@ func carregarSnippets(caminho string) ([]model.Snippet, error) {
 // caixaEditor é o campo de texto padrão desta aba. altura 0 = uma linha.
 func caixaEditor(gtx layout.Context, th *material.Theme, ed *widget.Editor, dica string, altura unit.Dp) layout.Dimensions {
 	marcarFoco(gtx.Focused(ed))
+	// Campo de uma linha trata Enter como ENVIAR (SubmitEvent), nunca
+	// como texto. Sem Submit o widget.Editor troca o '\n' por um ESPAÇO
+	// (ver processKey em widget/editor.go) — era o "Enter literal" no
+	// campo de host, de usuário, de senha: a pessoa digitava, dava Enter
+	// e ganhava um espaço no fim em vez de confirmar. Quem quer reagir ao
+	// Enter lê o SubmitEvent (ver enterConfirma, em dialogos.go); quem
+	// não quer, só deixa de ganhar o espaço. Colar não passa por aqui:
+	// vai por Insert, que só troca a quebra por espaço.
+	if ed.SingleLine {
+		ed.Submit = true
+	}
 	return layout.Background{}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			superficie(gtx, gtx.Constraints.Min, tema.Campo, tema.Borda2, 7)

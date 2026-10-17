@@ -57,6 +57,19 @@ func (c *comboGrupo) iniciar(todos []string, valor string) {
 	c.lista.Axis = layout.Vertical
 }
 
+// escolherPrimeira aplica a primeira sugestão que casa com o que está
+// digitado, se houver, e diz se aplicou. É o Enter no campo: com o balão
+// aberto ele completa; sem sugestão nenhuma, quem chamou decide (no
+// formulário de conexão, salva).
+func (c *comboGrupo) escolherPrimeira() bool {
+	achados := filtrarGrupos(c.todos, c.ed.Text())
+	if len(achados) == 0 {
+		return false
+	}
+	c.escolhido, c.temEscolha = achados[0], true
+	return true
+}
+
 // gruposDoArquivo tira da lista de conexões os caminhos de grupo que
 // existem, em ordem e sem repetir.
 //

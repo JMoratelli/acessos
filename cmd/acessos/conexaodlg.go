@@ -175,6 +175,19 @@ func (d *dlgConexao) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 			d.escolherDoChaveiro(i)
 		}
 	}
+	// Enter em qualquer campo salva — é o que se espera de um formulário,
+	// e era o que faltava: colar o host e dar Enter punha um espaço no
+	// campo. No grupo, Enter com sugestão aberta escolhe a PRIMEIRA
+	// sugestão em vez de salvar (ver comboGrupo.escolherPrimeira).
+	if enterConfirma(gtx, &d.grupo.ed) && !d.grupo.escolherPrimeira() {
+		d.salvar()
+	}
+	if enterConfirma(gtx, &d.nome, &d.host, &d.descricao,
+		&d.vncPorta, &d.vncUser, &d.vncSenha,
+		&d.sshPorta, &d.sshUser, &d.sshSenha,
+		&d.rdpPorta, &d.rdpUser, &d.rdpSenha, &d.rdpDom, &d.rdpExtras) {
+		d.salvar()
+	}
 	if d.btnSalvar.Clicked(gtx) {
 		d.salvar()
 	}

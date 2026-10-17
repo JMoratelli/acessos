@@ -118,7 +118,8 @@ func (d *dlgChaveiro) Corpo(gtx layout.Context, th *material.Theme) layout.Dimen
 		}
 		fecharDialogo()
 	}
-	if d.btnSalvar.Clicked(gtx) {
+	// Enter em nome, usuário ou senha vale por "Salvar" — ver enterConfirma.
+	if enterConfirma(gtx, &d.nome, &d.usuario, &d.senha) || d.btnSalvar.Clicked(gtx) {
 		d.salvar()
 	}
 

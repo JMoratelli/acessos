@@ -121,7 +121,8 @@ func (d *dlgAjustes) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 	if d.btnCanc.Clicked(gtx) {
 		fecharDialogo()
 	}
-	if d.btnOk.Clicked(gtx) {
+	// Enter no caminho do .ini vale por "Aplicar" — ver enterConfirma.
+	if enterConfirma(gtx, &d.ini) || d.btnOk.Clicked(gtx) {
 		d.aplicar()
 	}
 	if d.atalho.Clicked(gtx) {

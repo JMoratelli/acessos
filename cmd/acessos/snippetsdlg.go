@@ -139,7 +139,9 @@ func (d *dlgSnippets) Corpo(gtx layout.Context, th *material.Theme) layout.Dimen
 		d.comando.SetText("")
 		d.usaRoot = false
 	}
-	if d.btnSalvar.Clicked(gtx) {
+	// Enter na descrição salva; no comando, que tem várias linhas, Enter
+	// continua sendo quebra de linha.
+	if enterConfirma(gtx, &d.descricao) || d.btnSalvar.Clicked(gtx) {
 		d.salvar()
 	}
 	if d.root.Clicked(gtx) {

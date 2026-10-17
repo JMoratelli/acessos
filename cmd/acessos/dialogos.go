@@ -94,6 +94,29 @@ func (d *dlgConflito) Corpo(gtx layout.Context, th *material.Theme) layout.Dimen
 //
 // pediu é o estado do diálogo; alvo é quem deve começar com o foco;
 // focaveis são todos os alvos que contam como "o foco já chegou".
+// enterConfirma esvazia os eventos dos editores dados e diz se algum
+// deles recebeu Enter. É o "Enter envia o formulário" de todo diálogo
+// com campo de uma linha: o campo já nasce com Submit (ver caixaEditor),
+// e aqui o SubmitEvent vira a mesma ação do botão principal.
+//
+// Tem de ser chamado ANTES de desenhar os editores no quadro: o Layout
+// deles também consome os eventos, e o que ele consumir some.
+func enterConfirma(gtx layout.Context, eds ...*widget.Editor) bool {
+	confirmou := false
+	for _, ed := range eds {
+		for {
+			ev, ok := ed.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, sub := ev.(widget.SubmitEvent); sub {
+				confirmou = true
+			}
+		}
+	}
+	return confirmou
+}
+
 func focoInicial(gtx layout.Context, pediu *bool, alvo event.Tag, focaveis ...event.Tag) {
 	if *pediu {
 		return

@@ -126,6 +126,15 @@ func layoutTrocarHost(gtx layout.Context, th *material.Theme) layout.Dimensions 
 	}
 
 	idxs := d.filtrados()
+	// Enter no filtro abre a primeira máquina da lista filtrada — digitar
+	// "5202" e dar Enter, sem ir ao mouse.
+	if enterConfirma(gtx, &d.filtro) && len(idxs) > 0 {
+		cx := d.porNome[d.nomes[idxs[0]]]
+		aoEscolher := d.aoEscolher
+		fecharTrocarHost()
+		aoEscolher(cx)
+		return layout.Dimensions{}
+	}
 	larg := gtx.Dp(trocarHostLargura)
 	gtx.Constraints.Min.X, gtx.Constraints.Max.X = larg, larg
 	gtx.Constraints.Min.Y = 0

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -68,6 +69,22 @@ func layoutModal(gtx layout.Context, th *material.Theme) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	size := gtx.Constraints.Max
+
+	// Esc fecha QUALQUER diálogo, aqui, uma vez só — antes só cofre e
+	// credenciais efêmeras tinham a própria saída, e o resto (conexão,
+	// chaveiro, snippets, ajustes) prendia a pessoa até ela achar o
+	// Cancelar. Os que já tratam Esc continuam tratando: fecharDialogo
+	// duas vezes no mesmo quadro é inofensivo (a segunda não acha nada).
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if ke, isKey := ev.(key.Event); isKey && ke.State == key.Press {
+			fecharDialogo()
+			return layout.Dimensions{}
+		}
+	}
 
 	veu := tema.Palco
 	veu.A = 150
