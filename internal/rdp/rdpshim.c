@@ -179,6 +179,11 @@ typedef struct {
     /* clipboard: canal CLIPRDR, so texto (CF_UNICODETEXT). NULL enquanto o
      * canal nao conectou (servidor pode nao anunciar RedirectClipboard). */
     CliprdrClientContext *cliprdr;
+    /* 1 depois do MonitorReady (capacidades trocadas). Antes disso o canal
+     * existe mas o servidor ainda nao aceita FormatList: anunciar texto
+     * nessa janela era descartado em silencio, e o texto so saia na
+     * PROXIMA copia do host. Protegido por canais_lock, como o ponteiro. */
+    int clip_pronto;
     rdpshim_mutex_t clip_lock;
     /* texto do HOST, pronto para responder um ServerFormatDataRequest —
      * guardado ja convertido para UTF-16LE, formato que o CF_UNICODETEXT
@@ -192,6 +197,10 @@ typedef struct {
     DispClientContext *disp;
     int disp_caps_ok;
     uint32_t disp_max_monitores, disp_fator_a, disp_fator_b;
+
+    /* resolucao pedida ANTES de conectar (rs_definir_tamanho); 0 = padrao
+     * da libfreerdp. */
+    uint32_t tam_w, tam_h;
 
     /* PROTEGE gdi->primary_buffer (+ width/height/stride) contra a corrida
      * entre um resize (hook_desktop_resize, na thread de rede, que REALOCA
@@ -297,6 +306,8 @@ static BOOL hook_desktop_resize(rdpContext *context) {
     if (s) MUTEX_LOCK(&s->fb_lock);
     BOOL ok = gdi_resize(gdi, w, h);
     if (s) MUTEX_UNLOCK(&s->fb_lock);
+    if (getenv("RS_LOG"))
+        fprintf(stderr, "[rdp] desktop resize: %ux%u %s\n", w, h, ok ? "ok" : "FALHOU");
     if (!ok) return FALSE;
 
     if (s && s->ao_redimensionar) s->ao_redimensionar(s->pyctx, (int)w, (int)h);
@@ -326,7 +337,6 @@ typedef struct {
 } MeuPonteiro;
 
 static BOOL hook_pointer_new(rdpContext *context, rdpPointer *ptr) {
-    (void)context;
     MeuPonteiro *mp = (MeuPonteiro *)ptr;
     mp->mascara = NULL;
     mp->w = ptr->width;
@@ -336,10 +346,15 @@ static BOOL hook_pointer_new(rdpContext *context, rdpPointer *ptr) {
     size_t n = (size_t)mp->w * (size_t)mp->h;
     BYTE *rgba = (BYTE *)malloc(n * 4);
     if (!rgba) return TRUE;
+    /* A paleta do gdi, e nao NULL: cursor de 8 bpp ou menos (tema classico,
+     * servidor antigo, alguns cursores animados) precisa dela para
+     * decodificar, e sem paleta a funcao devolve FALSE — e dai o cursor
+     * "voltava ao padrao" em vez de mudar. O xfreerdp passa a mesma. */
     BOOL ok = freerdp_image_copy_from_pointer_data(
         rgba, PIXEL_FORMAT_BGRA32, 0, 0, 0, mp->w, mp->h,
         ptr->xorMaskData, ptr->lengthXorMask, ptr->andMaskData,
-        ptr->lengthAndMask, ptr->xorBpp, NULL);
+        ptr->lengthAndMask, ptr->xorBpp,
+        context->gdi ? &context->gdi->palette : NULL);
     if (ok) {
         mp->mascara = (uint8_t *)malloc(n);
         if (mp->mascara) {
@@ -347,9 +362,13 @@ static BOOL hook_pointer_new(rdpContext *context, rdpPointer *ptr) {
                 mp->mascara[i] = rgba[i * 4 + 3]; /* BGRA: alfa é o 4o byte */
         }
     }
-    if (getenv("RS_LOG"))
-        fprintf(stderr, "[rdp] pointer new: %ux%u xorBpp=%u decode=%s\n",
-                mp->w, mp->h, ptr->xorBpp, ok ? "ok" : "falhou");
+    /* Falha de decodificacao sai SEMPRE no log, nao so com RS_LOG: e rara,
+     * e e o unico sinal de que um cursor que o servidor mandou virou "seta
+     * padrao" por culpa nossa, e nao dele. */
+    if (!ok || getenv("RS_LOG"))
+        fprintf(stderr, "[rdp] pointer new: %ux%u xorBpp=%u xor=%u and=%u decode=%s\n",
+                mp->w, mp->h, ptr->xorBpp, ptr->lengthXorMask, ptr->lengthAndMask,
+                ok ? "ok" : "FALHOU");
     free(rgba);
     return TRUE;
 }
@@ -550,6 +569,11 @@ static UINT hook_clip_monitor_ready(CliprdrClientContext *ctx,
                                     const CLIPRDR_MONITOR_READY *mr) {
     (void)mr;
     Sessao *s = (Sessao *)ctx->custom;
+    if (s) {
+        MUTEX_LOCK(&s->canais_lock);
+        s->clip_pronto = 1;
+        MUTEX_UNLOCK(&s->canais_lock);
+    }
 
     CLIPRDR_GENERAL_CAPABILITY_SET gcs;
     memset(&gcs, 0, sizeof(gcs));
@@ -682,6 +706,12 @@ static UINT hook_disp_caps(DispClientContext *ctx, UINT32 max_monitores,
         s->disp_fator_b = fator_b;
         s->disp_caps_ok = 1;
         MUTEX_UNLOCK(&s->canais_lock);
+        /* Uma linha por sessao, sempre: e a unica medida que existe do
+         * que os servidores daqui anunciam (ver BACKLOG.md, varias
+         * telas), e diz na hora se "preso numa resolucao" e falta de
+         * canal ou pedido ignorado. */
+        fprintf(stderr, "[rdp] Display Control pronto: ate %u monitor(es), area max %ux%u\n",
+                max_monitores, fator_a, fator_b);
         /* o aviso sai FORA da trava: ele atravessa para o Go */
         if (s->ao_disp_pronto) s->ao_disp_pronto(s->pyctx);
     }
@@ -750,6 +780,7 @@ static void hook_canal_desconectou(void *context,
     if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         MUTEX_LOCK(&s->canais_lock);
         s->cliprdr = NULL;
+        s->clip_pronto = 0;
         MUTEX_UNLOCK(&s->canais_lock);
         return;
     }
@@ -860,7 +891,6 @@ Sessao *rs_criar(void *pyctx,
     freerdp *inst = freerdp_new();
     if (!inst) {
         MUTEX_DESTROY(&s->clip_lock);
-    MUTEX_DESTROY(&s->canais_lock);
         MUTEX_DESTROY(&s->canais_lock);
         MUTEX_DESTROY(&s->fb_lock);
         free(s);
@@ -923,7 +953,10 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam) {
      * nunca protegeu esse ponteiro (o hook de desconexao nao o toma). */
     if (utf16) {
         MUTEX_LOCK(&s->canais_lock);
-        if (s->cliprdr) {
+        /* so depois do MonitorReady: antes dele o anuncio e descartado pelo
+         * servidor e o texto ficava guardado ate a proxima copia. O proprio
+         * hook_clip_monitor_ready anuncia o que estiver guardado. */
+        if (s->cliprdr && s->clip_pronto) {
             CLIPRDR_FORMAT fmt;
             memset(&fmt, 0, sizeof(fmt));
             fmt.formatId = CF_UNICODETEXT;
@@ -938,12 +971,37 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam) {
     }
 }
 
+/* ajustar_tamanho poe o tamanho dentro do que o Display Control aceita
+ * (200..8192 em cada eixo) e com largura par — largura impar confunde
+ * alguns servidores. Vale tanto para o pedido em sessao quanto para a
+ * resolucao inicial: os dois chegam ao mesmo servidor. */
+static void ajustar_tamanho(uint32_t *w, uint32_t *h) {
+    if (*w < DISPLAY_CONTROL_MIN_MONITOR_WIDTH) *w = DISPLAY_CONTROL_MIN_MONITOR_WIDTH;
+    if (*w > DISPLAY_CONTROL_MAX_MONITOR_WIDTH) *w = DISPLAY_CONTROL_MAX_MONITOR_WIDTH;
+    if (*h < DISPLAY_CONTROL_MIN_MONITOR_HEIGHT) *h = DISPLAY_CONTROL_MIN_MONITOR_HEIGHT;
+    if (*h > DISPLAY_CONTROL_MAX_MONITOR_HEIGHT) *h = DISPLAY_CONTROL_MAX_MONITOR_HEIGHT;
+    if (*w % 2) (*w)--;
+}
+
+/* Resolucao com que a sessao nasce. So vale antes de rs_conectar: e la
+ * que vai para FreeRDP_DesktopWidth/Height. 0 em qualquer eixo = fica o
+ * padrao da libfreerdp. */
+void rs_definir_tamanho(Sessao *s, int largura, int altura) {
+    if (!s) return;
+    if (largura <= 0 || altura <= 0) { s->tam_w = s->tam_h = 0; return; }
+    uint32_t w = (uint32_t)largura, h = (uint32_t)altura;
+    ajustar_tamanho(&w, &h);
+    s->tam_w = w;
+    s->tam_h = h;
+}
+
 /* Pede ao servidor que redimensione a area remota — canal Display Control,
  * portado de frdp_channel_display_control_resize_display (gtk-frdp).
  * Devolve 1 se o pedido foi enviado, 0 se ainda nao da (canal nao
- * conectado, caps nao chegaram, ou area maior que o permitido). */
-int rs_pedir_resize(Sessao *s, int largura, int altura) {
-    if (!s) return 0;
+ * conectado, caps nao chegaram, ou area maior que o permitido).
+ * largura/altura voltam com o valor ajustado que foi de fato pedido. */
+int rs_pedir_resize(Sessao *s, int *largura, int *altura) {
+    if (!s || !largura || !altura) return 0;
 
     /* A trava cobre o TESTE e o USO. Testar "s->disp != NULL" e chamar
      * SendMonitorLayout algumas linhas depois deixava uma janela em que o
@@ -954,16 +1012,16 @@ int rs_pedir_resize(Sessao *s, int largura, int altura) {
         return 0;
     }
 
-    uint32_t lw = (uint32_t)largura, lh = (uint32_t)altura;
-    if (lw < DISPLAY_CONTROL_MIN_MONITOR_WIDTH) lw = DISPLAY_CONTROL_MIN_MONITOR_WIDTH;
-    if (lw > DISPLAY_CONTROL_MAX_MONITOR_WIDTH) lw = DISPLAY_CONTROL_MAX_MONITOR_WIDTH;
-    if (lh < DISPLAY_CONTROL_MIN_MONITOR_HEIGHT) lh = DISPLAY_CONTROL_MIN_MONITOR_HEIGHT;
-    if (lh > DISPLAY_CONTROL_MAX_MONITOR_HEIGHT) lh = DISPLAY_CONTROL_MAX_MONITOR_HEIGHT;
-    if (lw % 2) lw--;      /* largura impar confunde alguns servidores */
+    uint32_t lw = *largura > 0 ? (uint32_t)*largura : 0;
+    uint32_t lh = *altura > 0 ? (uint32_t)*altura : 0;
+    ajustar_tamanho(&lw, &lh);
+    *largura = (int)lw;
+    *altura = (int)lh;
 
     /* limite de area que o servidor aceita, informado no DisplayControlCaps */
     if ((uint64_t)lw * lh >
         (uint64_t)s->disp_max_monitores * s->disp_fator_a * s->disp_fator_b) {
+        fprintf(stderr, "[rdp] resize %ux%u recusado: acima da area maxima do servidor\n", lw, lh);
         MUTEX_UNLOCK(&s->canais_lock);
         return 0;
     }
@@ -979,6 +1037,8 @@ int rs_pedir_resize(Sessao *s, int largura, int altura) {
 
     int ok = s->disp->SendMonitorLayout(s->disp, 1, &layout) == CHANNEL_RC_OK;
     MUTEX_UNLOCK(&s->canais_lock);
+    if (getenv("RS_LOG"))
+        fprintf(stderr, "[rdp] SendMonitorLayout %ux%u: %s\n", lw, lh, ok ? "enviado" : "FALHOU");
     return ok;
 }
 
@@ -1015,6 +1075,15 @@ int rs_conectar(Sessao *s, const char *host, int porta) {
                                 ENCRYPTION_LEVEL_CLIENT_COMPATIBLE);
     freerdp_settings_set_bool(settings, FreeRDP_NegotiateSecurityLayer, TRUE);
 
+    /* Resolucao inicial, quando o app ja sabe o tamanho da area (ver
+     * rs_definir_tamanho). Sem isto a sessao nasce em 1024x768 e so se
+     * ajusta pelo Display Control depois — um RESET_GRAPHICS a mais, e
+     * uma sessao presa no tamanho errado quando o servidor ignora o
+     * pedido ou nem abre o canal. */
+    if (s->tam_w > 0 && s->tam_h > 0) {
+        freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, s->tam_w);
+        freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, s->tam_h);
+    }
     freerdp_settings_set_bool(settings, FreeRDP_DesktopResize, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, TRUE);
@@ -1308,6 +1377,7 @@ void rs_destruir(Sessao *s) {
     free(s->dominio);
     free(s->clip_local_utf16);
     MUTEX_DESTROY(&s->clip_lock);
+    MUTEX_DESTROY(&s->canais_lock);
     MUTEX_DESTROY(&s->fb_lock);
     free(s);
 }

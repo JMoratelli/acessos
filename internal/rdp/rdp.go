@@ -275,11 +275,30 @@ func (s *Session) PointerButton(x, y, button int, down bool) {
 // RequestResize pede ao servidor que redimensione a área remota (canal
 // Display Control). Sem efeito e sem erro se o canal ainda não anunciou
 // suporte (ex.: logo após conectar, antes do DisplayControlCaps chegar) —
-// devolve false nesse caso, chame de novo mais tarde se quiser confirmar.
-func (s *Session) RequestResize(w, h int) bool {
+// devolve ok=false nesse caso, chame de novo mais tarde se quiser
+// confirmar.
+//
+// Devolve também o tamanho que FOI pedido: o shim ajusta o que recebe
+// (mínimo e máximo do protocolo, largura par), e é contra esse valor —
+// não contra o que se pediu — que o resize precisa ser conferido quando
+// o servidor responde com DesktopResize.
+func (s *Session) RequestResize(w, h int) (ok bool, pedidoW, pedidoH int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return C.rs_pedir_resize(s.s, C.int(w), C.int(h)) != 0
+	cw, ch := C.int(w), C.int(h)
+	ok = C.rs_pedir_resize(s.s, &cw, &ch) != 0
+	return ok, int(cw), int(ch)
+}
+
+// SetDesktopSize define a resolução com que a sessão NASCE. Só tem
+// efeito antes de Connect. Sem isto a sessão sobe no padrão da
+// libfreerdp (1024x768) e depende de um resize por Display Control logo
+// depois — um RESET_GRAPHICS a mais, e uma sessão presa no tamanho
+// errado quando o servidor ignora o pedido.
+func (s *Session) SetDesktopSize(w, h int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	C.rs_definir_tamanho(s.s, C.int(w), C.int(h))
 }
 
 // axis: 0=vertical 1=horizontal.

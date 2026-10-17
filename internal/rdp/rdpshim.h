@@ -40,7 +40,11 @@ Sessao *rs_criar(void *pyctx,
                   cb_cursor ao_cursor);
 
 void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam);
-int rs_pedir_resize(Sessao *s, int largura, int altura);
+/* largura/altura sao ENTRADA E SAIDA: devolvem o valor ajustado (limites
+ * do protocolo, largura par) que de fato foi pedido ao servidor. */
+int rs_pedir_resize(Sessao *s, int *largura, int *altura);
+/* resolucao inicial da sessao; so vale ANTES de rs_conectar. 0 = padrao. */
+void rs_definir_tamanho(Sessao *s, int largura, int altura);
 
 void rs_definir_credenciais(Sessao *s, const char *usuario, const char *senha,
                             const char *dominio);

@@ -162,7 +162,12 @@
   (capturas simultâneas e desmonte), `cmd/fantasma` (conta descritores do
   processo para achar janela que não morreu, e mede o que o compositor
   responde sobre decoração) e `cmd/cursorcap` (máscaras de cursor de
-  sessão real).
+  sessão real). O cursorcap não clica, de propósito, então nunca vê o
+  cursor que só aparece depois de um clique (seta + anel do "abrindo
+  programa"); para esses, rodar o app com `ACESSOS_CURSOR_DUMP=<dir>` —
+  o processo-filho grava cada forma distinta no mesmo PGM do cursorcap,
+  com a classificação no nome e uma linha de medida no stderr (ver
+  `despejoCursor`, em cmd/acessos/telaworker.go).
 
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:

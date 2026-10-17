@@ -86,6 +86,12 @@ type Ligacao struct {
 	Usuario string `json:"usuario"`
 	Senha   string `json:"senha"`
 	Dominio string `json:"dominio"`
+	// Largura/Altura (só RDP): tamanho da área da aba ao conectar, para a
+	// sessão já nascer nessa resolução em vez de na padrão do servidor e
+	// precisar de um resize logo em seguida. 0 = ainda não se sabe; fica
+	// o padrão e o Display Control ajusta depois.
+	Largura int `json:"largura,omitempty"`
+	Altura  int `json:"altura,omitempty"`
 }
 
 // Falha diz por que a conexão não subiu (EvtFalha).

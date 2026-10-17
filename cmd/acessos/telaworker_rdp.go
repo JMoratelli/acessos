@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"acessos-go/internal/rdp"
 	"acessos-go/internal/telaproc"
@@ -23,6 +24,9 @@ type workerRDP struct {
 	// classCursor roda só na thread de callbacks da libfreerdp — é ela
 	// que entrega forma de cursor —, então não precisa de trava.
 	classCursor classificadorCursor
+	// despejo grava as formas de cursor quando ACESSOS_CURSOR_DUMP está
+	// definido (ver telaworker.go); nil fora disso.
+	despejo *despejoCursor
 
 	certResp chan int // resposta do diálogo de certificado
 
@@ -51,7 +55,25 @@ type workerRDP struct {
 	resizePendW   int
 	resizePendH   int
 	resizeAvisado bool
+	// alvoW/alvoH é o último tamanho ACEITO pelo shim (já ajustado por
+	// ele), atualW/atualH o que o servidor entregou por último
+	// (OnResize), tentativas quantas vezes o mesmo alvo foi pedido e
+	// confere o prazo para comparar os dois — ver conferirResize.
+	alvoW, alvoH   int
+	atualW, atualH int
+	tentativas     int
+	confere        *time.Timer
 }
+
+// resizeConfere é quanto tempo o servidor tem para responder a um
+// SendMonitorLayout com o DesktopResize correspondente antes de o pedido
+// ser repetido; resizeTentativas, quantas vezes insistir no MESMO tamanho
+// antes de desistir (servidor que recusa a resolução de vez — Terminal
+// Server com tamanho fixo — não é para ficar sendo cutucado para sempre).
+const (
+	resizeConfere    = 3 * time.Second
+	resizeTentativas = 3
+)
 
 // pedirResize manda o tamanho ao servidor e, quando o canal Display
 // Control ainda não está pronto, GUARDA o pedido em vez de perdê-lo.
@@ -73,11 +95,30 @@ type workerRDP struct {
 // Server com resolução fixa, por exemplo) deixaria a sessão presa na
 // resolução da conexão SEM UMA LINHA dizendo por quê — que era
 // exatamente a queixa "fica só numa resolução".
+//
+// E CONFERE: o servidor pode aceitar o pedido no canal e simplesmente não
+// redimensionar (durante o logon, com a sessão trocando de dono, ou em
+// servidor que ignora o primeiro layout). Antes o pedido saía uma vez e
+// pronto — a aba só reenviava se o TAMANHO mudasse, e com a janela
+// parada ele nunca mudava: sessão presa no tamanho que o servidor
+// quis. Agora, se em resizeConfere o DesktopResize não trouxe o tamanho
+// pedido, o mesmo pedido sai de novo, até resizeTentativas vezes.
 func (wk *workerRDP) pedirResize(w, h int) {
-	if wk.sess.RequestResize(w, h) {
+	if ok, pw, ph := wk.sess.RequestResize(w, h); ok {
 		wk.resizeMu.Lock()
 		wk.resizePendW, wk.resizePendH = 0, 0
+		if pw != wk.alvoW || ph != wk.alvoH {
+			wk.tentativas = 0
+		}
+		wk.alvoW, wk.alvoH = pw, ph
+		wk.tentativas++
+		n := wk.tentativas
+		if wk.confere != nil {
+			wk.confere.Stop()
+		}
+		wk.confere = time.AfterFunc(resizeConfere, wk.conferirResize)
 		wk.resizeMu.Unlock()
+		fmt.Fprintf(os.Stderr, "[filho rdp] resize %dx%d pedido (tentativa %d)\n", pw, ph, n)
 		return
 	}
 	wk.resizeMu.Lock()
@@ -89,6 +130,28 @@ func (wk *workerRDP) pedirResize(w, h int) {
 		fmt.Fprintf(os.Stderr,
 			"[filho rdp] resize %dx%d adiado: canal Display Control ainda não pronto\n", w, h)
 	}
+}
+
+// conferirResize roda resizeConfere depois de um pedido aceito: se o
+// servidor não entregou o tamanho pedido, insiste — ver pedirResize.
+func (wk *workerRDP) conferirResize() {
+	wk.resizeMu.Lock()
+	alvoW, alvoH := wk.alvoW, wk.alvoH
+	atualW, atualH := wk.atualW, wk.atualH
+	n := wk.tentativas
+	wk.resizeMu.Unlock()
+	if alvoW == 0 || (atualW == alvoW && atualH == alvoH) {
+		return
+	}
+	if n >= resizeTentativas {
+		fmt.Fprintf(os.Stderr,
+			"[filho rdp] servidor ficou em %dx%d depois de %d pedidos de %dx%d; desistindo\n",
+			atualW, atualH, n, alvoW, alvoH)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[filho rdp] servidor ainda em %dx%d; repetindo o pedido de %dx%d\n",
+		atualW, atualH, alvoW, alvoH)
+	wk.pedirResize(alvoW, alvoH)
 }
 
 // resizeGuardado devolve o pedido pendente (0,0 quando não há).
@@ -109,6 +172,7 @@ func rodarWorkerRDP(c *telaproc.Conn) {
 		certResp:   make(chan int, 1),
 		enviosFora: make(chan func(), 8),
 		dispPronto: make(chan struct{}, 1),
+		despejo:    novoDespejoCursor("rdp"),
 	}
 	wk.ligarCallbacks()
 	go wk.bomba.rodar()
@@ -173,6 +237,13 @@ func (wk *workerRDP) ligarCallbacks() {
 		wk.bomba.sinalizar()
 	}
 	s.OnResize = func(w, h int) {
+		// O que o servidor entregou, para conferirResize comparar com o
+		// que foi pedido. Uma linha no log por resize: é raro (debounce
+		// do lado do pai) e é a prova de que o servidor obedeceu.
+		wk.resizeMu.Lock()
+		wk.atualW, wk.atualH = w, h
+		wk.resizeMu.Unlock()
+		fmt.Fprintf(os.Stderr, "[filho rdp] área remota agora %dx%d\n", w, h)
 		wk.bomba.dano.tudo()
 		wk.bomba.sinalizar()
 	}
@@ -187,6 +258,12 @@ func (wk *workerRDP) ligarCallbacks() {
 	s.OnCursor = func(xhot, yhot, w, h int, mask []byte) {
 		forma := uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask))
 		wk.enviarForaDoProcessamento(func() { _ = wk.c.EnviarCursor(forma) })
+		// Diagnóstico (ACESSOS_CURSOR_DUMP): goroutine própria, e não a
+		// fila de envios — a fila descarta quando enche, e uma amostra
+		// perdida é justamente a que faltava.
+		if grava := wk.despejo.registrar(xhot, yhot, w, h, mask, forma); grava != nil {
+			go grava()
+		}
 	}
 	s.OnClipboardText = func(texto string) {
 		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto)) })
@@ -283,6 +360,12 @@ func (wk *workerRDP) lacoComandos() {
 
 func (wk *workerRDP) conectar(l telaproc.Ligacao) {
 	wk.sess.SetCredentials(l.Usuario, l.Senha, l.Dominio)
+	// A resolução de nascimento, quando o pai já sabe o tamanho da aba:
+	// ver Ligacao.Largura e rdp.Session.SetDesktopSize.
+	if l.Largura > 0 && l.Altura > 0 {
+		wk.sess.SetDesktopSize(l.Largura, l.Altura)
+		fmt.Fprintf(os.Stderr, "[filho rdp] conectando já em %dx%d\n", l.Largura, l.Altura)
+	}
 	if err := wk.sess.Connect(l.Host, l.Porta); err != nil {
 		ce := err.(*rdp.ConnectError)
 		_ = wk.c.EnviarJSON(telaproc.EvtFalha, telaproc.Falha{

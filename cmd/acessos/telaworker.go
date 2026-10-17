@@ -3,12 +3,103 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"acessos-go/internal/telaproc"
+
+	"gioui.org/io/pointer"
 )
+
+// ---------------------------------------------------------------- cursor
+//
+// despejoCursor grava em disco cada forma DISTINTA de cursor que o servidor
+// manda, quando ACESSOS_CURSOR_DUMP aponta para um diretório. É o
+// cmd/cursorcap embutido na sessão de verdade: o cursorcap só passeia o
+// ponteiro e, de propósito, não clica em nada — então nunca vê o cursor
+// que só aparece DEPOIS de um clique (seta + anel do "abrindo programa",
+// o que mais faltou na prática). Aqui a pessoa usa a sessão normalmente e
+// o que o servidor mandar vira amostra, no mesmo PGM que cursorcap grava e
+// que cursorreal_test.go lê — a amostra vai direto para testdata/cursores.
+//
+// Cada forma sai uma linha no stderr com a medida e a classificação, que
+// é o que diz se o defeito está na decodificação (forma vazia), no
+// classificador (forma boa, cursor errado) ou depois dele.
+type despejoCursor struct {
+	dir, proto string
+	mu         sync.Mutex
+	vistas     map[string]bool
+	n          int
+}
+
+// novoDespejoCursor devolve nil quando a variável não está definida — e
+// nil é seguro de usar: registrar devolve nil sem olhar nada.
+func novoDespejoCursor(proto string) *despejoCursor {
+	dir := os.Getenv("ACESSOS_CURSOR_DUMP")
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[filho %s] ACESSOS_CURSOR_DUMP: %v\n", proto, err)
+		return nil
+	}
+	return &despejoCursor{dir: dir, proto: proto, vistas: map[string]bool{}}
+}
+
+// registrar roda na thread de callback da biblioteca C: só decide se a
+// forma é nova e devolve o que gravar, para o chamador rodar FORA dela
+// (I/O ali dentro segura o protocolo inteiro — ver
+// enviarForaDoProcessamento). mask já é cópia nossa (ver goRdpAoCursor e
+// goAoCursor), então pode viver no fechamento.
+func (d *despejoCursor) registrar(xhot, yhot, w, h int, mask []byte, forma uint32) func() {
+	if d == nil {
+		return nil
+	}
+	soma := sha256.New()
+	fmt.Fprintf(soma, "%d|%d|%d|%d|", w, h, xhot, yhot)
+	soma.Write(mask)
+	chave := fmt.Sprintf("%x", soma.Sum(nil))
+
+	d.mu.Lock()
+	if d.vistas[chave] {
+		d.mu.Unlock()
+		return nil
+	}
+	d.vistas[chave] = true
+	d.n++
+	ordem := d.n
+	d.mu.Unlock()
+
+	return func() {
+		nome := fmt.Sprintf("%02d-%dx%d-hot%dx%d-%s.pgm", ordem, w, h, xhot, yhot,
+			pointer.Cursor(forma).String())
+		caminho := filepath.Join(d.dir, nome)
+		var zero, meio, cheio int
+		for _, v := range mask {
+			switch {
+			case v == 0:
+				zero++
+			case v == 255:
+				cheio++
+			default:
+				meio++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[filho %s] cursor %2d: %dx%d hot=(%d,%d) alfa %d nulos/%d parciais/%d cheios -> %s (%s)\n",
+			d.proto, ordem, w, h, xhot, yhot, zero, meio, cheio,
+			pointer.Cursor(forma).String(), nome)
+		if w <= 0 || h <= 0 || len(mask) < w*h {
+			return // "voltou ao padrão": não há bitmap para gravar
+		}
+		cab := fmt.Sprintf("P5\n# hot %d %d\n# origem %s sessao\n%d %d\n255\n", xhot, yhot, d.proto, w, h)
+		if err := os.WriteFile(caminho, append([]byte(cab), mask[:w*h]...), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "[filho %s] gravar %s: %v\n", d.proto, nome, err)
+		}
+	}
+}
 
 // Este arquivo é o app rodando como PROCESSO-FILHO de uma sessão remota:
 // sem janela, sem interface, só a biblioteca C da sessão de um lado e o

@@ -33,6 +33,9 @@ type workerVNC struct {
 	// (mesmo risco aqui: OnCursor/OnCutText rodam na thread de eventos
 	// da libvncclient, que é a mesma que processa a sessão inteira).
 	enviosFora chan func()
+	// despejo grava as formas de cursor quando ACESSOS_CURSOR_DUMP está
+	// definido (ver telaworker.go); nil fora disso. Irmão do RDP.
+	despejo *despejoCursor
 }
 
 func rodarWorkerVNC(c *telaproc.Conn) {
@@ -47,6 +50,7 @@ func rodarWorkerVNC(c *telaproc.Conn) {
 			return buf, w, h, w * 4
 		}),
 		enviosFora: make(chan func(), 8),
+		despejo:    novoDespejoCursor("vnc"),
 	}
 	wk.ligarCallbacks()
 	go wk.bomba.rodar()
@@ -88,6 +92,10 @@ func (wk *workerVNC) ligarCallbacks() {
 	s.OnCursor = func(xhot, yhot, w, h int, mask []byte) {
 		forma := uint32(wk.classCursor.classificar(xhot, yhot, w, h, mask))
 		wk.enviarForaDoProcessamento(func() { _ = wk.c.EnviarCursor(forma) })
+		// Diagnóstico (ACESSOS_CURSOR_DUMP) — mesmo trecho do irmão RDP.
+		if grava := wk.despejo.registrar(xhot, yhot, w, h, mask, forma); grava != nil {
+			go grava()
+		}
 	}
 	s.OnCutText = func(texto string) {
 		wk.enviarForaDoProcessamento(func() { _ = wk.c.Enviar(telaproc.EvtClipboard, []byte(texto)) })
