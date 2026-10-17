@@ -111,6 +111,41 @@ type State struct {
 	// tela ainda existe. historia[0] é a mais antiga.
 	historia    []line
 	historiaMax int
+
+	// patch acessos: conjuntos de caracteres G0/G1 (true = desenho de
+	// linha), qual está ativo (SO/SI) e qual o próximo ESC ( / ESC )
+	// vai definir. DECSC/DECRC guardam e devolvem os dois junto com o
+	// cursor, como o xterm.
+	trantbl      [2]bool
+	charset      int
+	charsetAlvo  int
+	trantblSaved [2]bool
+	charsetSaved int
+	// ultimoChar é o último caractere gráfico escrito, para o REP (CSI b).
+	ultimoChar rune
+}
+
+// aplicarCharset traduz o conjunto ativo para o bit attrGfx do cursor, que
+// é o que setChar consulta (patch acessos).
+func (t *State) aplicarCharset() {
+	if t.trantbl[t.charset] {
+		t.cur.Attr.Mode |= attrGfx
+	} else {
+		t.cur.Attr.Mode &^= attrGfx
+	}
+}
+
+// repetirUltimo é o REP: reescreve o último caractere gráfico n vezes,
+// pelo mesmo caminho de um caractere digitado (quebra de linha, modo de
+// inserção e tudo o mais valem igual) (patch acessos).
+func (t *State) repetirUltimo(n int) {
+	if t.ultimoChar == 0 {
+		return
+	}
+	c := t.ultimoChar
+	for i := 0; i < n && i < t.cols*t.rows; i++ {
+		t.parse(c)
+	}
 }
 
 // historiaPadrao é usado quando ninguém pediu WithScrollback: gera algo
@@ -236,10 +271,13 @@ func (t *State) resetChanges() {
 
 func (t *State) saveCursor() {
 	t.curSaved = t.cur
+	t.trantblSaved, t.charsetSaved = t.trantbl, t.charset
 }
 
 func (t *State) restoreCursor() {
 	t.cur = t.curSaved
+	t.trantbl, t.charset = t.trantblSaved, t.charsetSaved
+	t.aplicarCharset()
 	t.moveTo(t.cur.X, t.cur.Y)
 }
 
@@ -333,7 +371,10 @@ func (t *State) reset() {
 	t.top = 0
 	t.bottom = t.rows - 1
 	t.mode = ModeWrap
-	t.clear(0, 0, t.rows-1, t.cols-1)
+	// patch acessos: era clear(0, 0, rows-1, cols-1), com x e y trocados —
+	// num 80x24 o RIS limpava só as 24 primeiras colunas.
+	t.clear(0, 0, t.cols-1, t.rows-1)
+	t.trantbl, t.charset, t.ultimoChar = [2]bool{}, 0, 0
 	t.moveTo(0, 0)
 }
 
@@ -371,12 +412,15 @@ func (t *State) resize(cols, rows int) bool {
 	}
 	copy(t.tabs, tabs)
 	if cols > t.cols {
+		// patch acessos: as paradas novas eram gravadas em `tabs` (a
+		// fatia VELHA, já copiada), nunca em t.tabs — alargar o terminal
+		// deixava as colunas novas sem tabulação.
 		i := t.cols - 1
-		for i > 0 && !tabs[i] {
+		for i > 0 && !t.tabs[i] {
 			i--
 		}
-		for i += tabspaces; i < len(tabs); i += tabspaces {
-			tabs[i] = true
+		for i += tabspaces; i < len(t.tabs); i += tabspaces {
+			t.tabs[i] = true
 		}
 	}
 
@@ -638,9 +682,8 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 			case 0: // Error (ignored)
 			case 2: // KAM - keyboard action
 				t.modMode(set, ModeKeyboardLock)
-			case 4: // IRM - insertion-replacement
+			case 4: // IRM - insertion-replacement (patch acessos: implementado em parse)
 				t.modMode(set, ModeInsert)
-				t.logln("insert mode not implemented")
 			case 12: // SRM - send/receive
 				t.modMode(set, ModeEcho)
 			case 20: // LNM - linefeed/newline

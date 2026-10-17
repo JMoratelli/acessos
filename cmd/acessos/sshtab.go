@@ -1089,12 +1089,20 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 			}
 		}
 
+		// Um trecho é uma sequência de células da mesma cor cujos glifos
+		// a Plex Mono tem e que ocupam UMA célula: dentro dele o shaper
+		// avança no passo da grade. Caractere que ela não tem (vai cair
+		// numa fonte do sistema, com outro avanço) ou que é largo (CJK,
+		// emoji) sai SOZINHO, recortado à própria célula — senão o
+		// deslocamento dele empurrava todo o resto da linha. Ver
+		// glifoNaGrade, em sshglifos.go.
 		x = 0
 		for x < cols {
 			g := cel(x, y)
 			fg := corDeTexto(g.FG)
 			var sb strings.Builder
 			inicio := x
+			sozinho := false
 			for x < cols {
 				g2 := cel(x, y)
 				if corDeTexto(g2.FG) != fg {
@@ -1104,6 +1112,15 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 				if c == 0 {
 					c = ' '
 				}
+				if !glifoNaGrade(c) {
+					if x > inicio {
+						break
+					}
+					sb.WriteRune(c)
+					x++
+					sozinho = true
+					break
+				}
 				sb.WriteRune(c)
 				x++
 			}
@@ -1112,10 +1129,17 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 				continue
 			}
 			st := op.Offset(image.Pt(px(inicio), y*ch)).Push(gtx.Ops)
+			var rec clip.Stack
+			if sozinho {
+				rec = clip.Rect{Max: image.Pt(px(inicio+1)-px(inicio), ch)}.Push(gtx.Ops)
+			}
 			gtxL := gtx
 			gtxL.Constraints.Min = image.Point{}
 			gtxL.Constraints.Max = image.Pt(1<<20, ch)
 			txt(t.th, fonteMono, t.corpoAtual(), s, fg).Layout(gtxL)
+			if sozinho {
+				rec.Pop()
+			}
 			st.Pop()
 		}
 	}

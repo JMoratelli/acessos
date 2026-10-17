@@ -5,7 +5,9 @@ func isControlCode(c rune) bool {
 }
 
 func (t *State) parse(c rune) {
-	t.logf("%q", string(c))
+	if t.DebugLogger != nil { // patch acessos: string(c) alocava por rune mesmo sem logger
+		t.logf("%q", string(c))
+	}
 	if isControlCode(c) {
 		if t.handleControlCodes(c) || t.cur.Attr.Mode&attrGfx == 0 {
 			return
@@ -19,10 +21,12 @@ func (t *State) parse(c rune) {
 	}
 
 	if t.mode&ModeInsert != 0 && t.cur.X+1 < t.cols {
-		// TODO: move shiz, look at st.c:2458
-		t.logln("insert mode not implemented")
+		// patch acessos: IRM (CSI 4 h). Empurra o resto da linha uma
+		// coluna à direita antes de escrever, como st.c faz.
+		t.insertBlanks(1)
 	}
 
+	t.ultimoChar = c
 	t.setChar(c, &t.cur.Attr, t.cur.X, t.cur.Y)
 	if t.cur.X+1 < t.cols {
 		t.moveTo(t.cur.X+1, t.cur.Y)
@@ -51,9 +55,12 @@ func (t *State) parseEsc(c rune) {
 		t.str.typ = c
 		next = t.parseEscStr
 	case '(': // set primary charset G0
+		t.charsetAlvo = 0
 		next = t.parseEscAltCharset
-	case ')', // set secondary charset G1 (ignored)
-		'*', // set tertiary charset G2 (ignored)
+	case ')': // set secondary charset G1 (patch acessos: era ignorado)
+		t.charsetAlvo = 1
+		next = t.parseEscAltCharset
+	case '*', // set tertiary charset G2 (ignored)
 		'+': // set quaternary charset G3 (ignored)
 	case 'D': // IND - linefeed
 		if t.cur.Y == t.bottom {
@@ -130,19 +137,24 @@ func (t *State) parseEscAltCharset(c rune) {
 		return
 	}
 	t.logf("%q", string(c))
+	// patch acessos: o conjunto vai para a tabela G0/G1 (charsetAlvo) em
+	// vez de direto no atributo do cursor — SO/SI escolhem qual das duas
+	// vale, e aplicarCharset traduz isso para o attrGfx que setChar lê.
 	switch c {
 	case '0': // line drawing set
-		t.cur.Attr.Mode |= attrGfx
+		t.trantbl[t.charsetAlvo] = true
 	case 'B': // USASCII
-		t.cur.Attr.Mode &^= attrGfx
+		t.trantbl[t.charsetAlvo] = false
 	case 'A', // UK (ignored)
 		'<', // multinational (ignored)
 		'5', // Finnish (ignored)
 		'C', // Finnish (ignored)
 		'K': // German (ignored)
+		t.trantbl[t.charsetAlvo] = false
 	default:
 		t.logf("unknown alt. charset '%c'\n", c)
 	}
+	t.aplicarCharset()
 	t.state = t.parse
 }
 
@@ -187,10 +199,14 @@ func (t *State) handleControlCodes(c rune) bool {
 	case 033:
 		t.csi.reset()
 		t.state = t.parseEsc
-	// SO, SI
-	case 016, 017:
-		// different charsets not supported. apps should use the correct
-		// alt charset escapes, probably for line drawing
+	// SO, SI — patch acessos: escolhem G1/G0 (terminfo `linux`/`screen`
+	// desenha borda com `smacs=^N`, e um `)0` antes disso)
+	case 016:
+		t.charset = 1
+		t.aplicarCharset()
+	case 017:
+		t.charset = 0
+		t.aplicarCharset()
 	// SUB, CAN
 	case 032, 030:
 		t.csi.reset()

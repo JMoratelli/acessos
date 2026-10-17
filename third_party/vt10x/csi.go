@@ -13,6 +13,12 @@ type csiEscape struct {
 	args []int
 	mode byte
 	priv bool
+	// marker é o byte de prefixo privado da sequência ('?', '>', '=' ou
+	// '<'), ou 0 (patch acessos). Antes só o '?' era reconhecido: um
+	// "\x1b[>4;2m" (modifyOtherKeys, que o vim manda ao abrir) caía no
+	// Atoi, perdia os argumentos e virava um SGR 0 — zerava as cores no
+	// meio da tela.
+	marker byte
 }
 
 func (c *csiEscape) reset() {
@@ -20,6 +26,7 @@ func (c *csiEscape) reset() {
 	c.args = c.args[:0]
 	c.mode = 0
 	c.priv = false
+	c.marker = 0
 }
 
 func (c *csiEscape) put(b byte) bool {
@@ -38,8 +45,13 @@ func (c *csiEscape) parse() {
 	}
 	s := string(c.buf)
 	c.args = c.args[:0]
-	if s[0] == '?' {
+	switch s[0] {
+	case '?':
 		c.priv = true
+		c.marker = s[0]
+		s = s[1:]
+	case '>', '=', '<': // patch acessos: ver o campo marker
+		c.marker = s[0]
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
@@ -68,18 +80,37 @@ func (c *csiEscape) maxarg(i, def int) int {
 
 func (t *State) handleCSI() {
 	c := &t.csi
+	// patch acessos: sequência com prefixo '>', '=' ou '<' é outra família
+	// (DA2, modifyOtherKeys, DECSET de teclado...). A única que vale
+	// responder é a DA2 — o vim espera por ela; as demais são ignoradas
+	// em vez de cair no comando homônimo sem prefixo.
+	if c.marker != 0 && c.marker != '?' {
+		if c.marker == '>' && c.mode == 'c' {
+			t.w.Write([]byte("\033[>0;0;0c"))
+		}
+		return
+	}
 	switch c.mode {
 	default:
 		goto unknown
 	case '@': // ICH - insert <n> blank char
 		t.insertBlanks(c.arg(0, 1))
+	case 'b': // REP - repeat the last graphic character <n> times
+		// patch acessos: o terminfo do xterm-256color anuncia `rep`, e o
+		// ncurses usa para qualquer trecho repetido (bordas, linhas de
+		// '─', preenchimento). Sem isto cada borda saía com UM caractere
+		// e tudo à direita dela ficava fora do lugar.
+		t.repetirUltimo(c.arg(0, 1))
 	case 'A': // CUU - cursor <n> up
 		t.moveTo(t.cur.X, t.cur.Y-c.maxarg(0, 1))
 	case 'B', 'e': // CUD, VPR - cursor <n> down
 		t.moveTo(t.cur.X, t.cur.Y+c.maxarg(0, 1))
 	case 'c': // DA - device attributes
 		if c.arg(0, 0) == 0 {
-			// TODO: write vt102 id
+			// patch acessos: VT102 com cores (62 = VT220-level, 22 = cor).
+			// Programa que pergunta e não ouve resposta espera o timeout
+			// (vim, neovim) ou assume terminal burro.
+			t.w.Write([]byte("\033[?62;22c"))
 		}
 	case 'C', 'a': // CUF, HPR - cursor <n> forward
 		t.moveTo(t.cur.X+c.maxarg(0, 1), t.cur.Y)
@@ -120,12 +151,17 @@ func (t *State) handleCSI() {
 				t.clear(0, t.cur.Y+1, t.cols-1, t.rows-1)
 			}
 		case 1: // above
-			if t.cur.Y > 1 {
+			// patch acessos: era `> 1`, e com o cursor na linha 1 a
+			// linha 0 ficava sem limpar.
+			if t.cur.Y > 0 {
 				t.clear(0, 0, t.cols-1, t.cur.Y-1)
 			}
 			t.clear(0, t.cur.Y, t.cur.X, t.cur.Y)
 		case 2: // all
 			t.clear(0, 0, t.cols-1, t.rows-1)
+		case 3: // all + scrollback (xterm) — patch acessos
+			t.clear(0, 0, t.cols-1, t.rows-1)
+			t.historia = t.historia[:0]
 		default:
 			goto unknown
 		}

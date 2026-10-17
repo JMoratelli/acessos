@@ -43,3 +43,44 @@ como o scrollback precisou.
 Ligado ao build pelo `replace github.com/hinshun/vt10x => ./third_party/vt10x`
 no `go.mod`. Ao subir a versão do vt10x: recopiar do module cache e
 reaplicar este trecho (procure por "patch acessos" nos arquivos).
+
+## Terceira rodada (2026-10-17): telas de ncurses fora do lugar
+
+Sintoma: programa de tela cheia (mc, htop, dialog, telas do PDV) abria
+com bordas curtas e tudo à direita delas deslocado, ou perdia a cor no
+meio. Cada item abaixo é uma sequência que o terminfo do
+`xterm-256color` (que o sshtab pede) anuncia e o vt10x ignorava. Os
+casos estão em `acessos_test.go`.
+
+- **REP (`CSI n b`)**: o ncurses usa `rep` para qualquer trecho
+  repetido (bordas, linhas de `─`, preenchimento). Sem ele cada borda
+  saía com UM caractere. `repetirUltimo` reescreve `ultimoChar` pelo
+  mesmo caminho de um caractere comum (`parse`).
+- **Modo de inserção (IRM, `CSI 4 h`)**: era só um log "not
+  implemented"; agora `parse` empurra a linha com `insertBlanks(1)`.
+- **G0/G1 + SO/SI**: `ESC ) 0` era ignorado e `^N`/`^O` também, então
+  terminfo que desenha borda com `smacs=^N` (`linux`, `screen`) saía
+  em letras. `trantbl[2]`/`charset` guardam os dois conjuntos,
+  `aplicarCharset` traduz o ativo para o `attrGfx` que `setChar` lê, e
+  DECSC/DECRC salvam/devolvem os dois junto com o cursor.
+- **Prefixos `>`, `=`, `<` no CSI**: só o `?` era reconhecido. Um
+  `CSI > 4;2 m` (modifyOtherKeys, que o vim manda ao abrir) perdia os
+  argumentos no `Atoi` e virava `SGR 0` — zerava a cor no meio da
+  tela. Agora `csiEscape.marker` guarda o prefixo, e sequência com
+  prefixo diferente de `?` é ignorada — exceto DA2 (`CSI > c`), que
+  recebe `\e[>0;0;0c`.
+- **DA1 (`CSI c`)**: respondido com `\e[?62;22c`. Programa que
+  pergunta e não ouve resposta espera o timeout.
+- **`ED 3`** (limpar com scrollback, xterm): limpa a tela e a `historia`.
+
+Bugs do próprio vt10x achados de passagem, corrigidos no mesmo patch:
+
+- `reset()` chamava `clear(0, 0, rows-1, cols-1)` com x e y trocados:
+  num 80x24 o RIS limpava só as 24 primeiras colunas.
+- `resize()` gravava as paradas de tabulação novas na fatia VELHA
+  (`tabs`), nunca em `t.tabs`: alargar o terminal deixava as colunas
+  novas sem tab.
+- `ED 1` testava `cur.Y > 1` em vez de `> 0`: com o cursor na linha 1 a
+  linha 0 ficava sem limpar.
+- `parse` fazia `t.logf("%q", string(c))` por rune, alocando a string
+  mesmo sem logger; agora só com `DebugLogger`.
