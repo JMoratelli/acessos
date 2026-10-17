@@ -13,6 +13,10 @@ type csiEscape struct {
 	args []int
 	mode byte
 	priv bool
+	// inter é o byte intermediário (0x20..0x2F) antes do final, ou 0
+	// (patch acessos): "CSI 2 SP q" é o DECSCUSR, e sem isto o " q" caía
+	// no Atoi e a sequência inteira era descartada.
+	inter byte
 	// marker é o byte de prefixo privado da sequência ('?', '>', '=' ou
 	// '<'), ou 0 (patch acessos). Antes só o '?' era reconhecido: um
 	// "\x1b[>4;2m" (modifyOtherKeys, que o vim manda ao abrir) caía no
@@ -27,6 +31,7 @@ func (c *csiEscape) reset() {
 	c.mode = 0
 	c.priv = false
 	c.marker = 0
+	c.inter = 0
 }
 
 func (c *csiEscape) put(b byte) bool {
@@ -55,6 +60,10 @@ func (c *csiEscape) parse() {
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
+	if n := len(s); n > 0 && s[n-1] >= 0x20 && s[n-1] <= 0x2F {
+		c.inter = s[n-1]
+		s = strings.TrimRight(s[:n-1], " ")
+	}
 	ss := strings.Split(s, ";")
 	for _, p := range ss {
 		i, err := strconv.Atoi(p)
@@ -212,6 +221,20 @@ func (t *State) handleCSI() {
 		} else {
 			t.setScroll(c.arg(0, 1)-1, c.arg(1, t.rows)-1)
 			t.moveAbsTo(0, 0)
+		}
+	case 'q': // DECSCUSR - cursor style (patch acessos)
+		if c.inter != ' ' {
+			goto unknown
+		}
+		switch c.arg(0, 0) {
+		case 0:
+			t.cursorStyle = CursorDefault
+		case 1, 2:
+			t.cursorStyle = CursorBlock
+		case 3, 4:
+			t.cursorStyle = CursorUnderline
+		case 5, 6:
+			t.cursorStyle = CursorBar
 		}
 	case 's': // DECSC - save cursor position (ANSI.SYS)
 		t.saveCursor()

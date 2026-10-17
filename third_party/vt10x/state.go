@@ -18,6 +18,32 @@ const (
 	attrItalic
 	attrBlink
 	attrWrap
+	// patch acessos: caractere de duas colunas e a célula "sombra" à
+	// direita dele, que não desenha nada.
+	attrWide
+	attrWideDummy
+)
+
+// Bits de Glyph.Mode que quem desenha precisa ler (patch acessos). Os
+// nomes minúsculos são os do vt10x; estes só os exportam.
+const (
+	AttrReverse   = attrReverse
+	AttrUnderline = attrUnderline
+	AttrBold      = attrBold
+	AttrItalic    = attrItalic
+	AttrBlink     = attrBlink
+	AttrWide      = attrWide
+	AttrWideDummy = attrWideDummy
+)
+
+// Estilos de cursor do DECSCUSR (CSI Ps SP q), patch acessos.
+// CursorDefault é "ninguém pediu nada" (ou pediu 0): quem desenha usa o
+// próprio padrão.
+const (
+	CursorDefault   = 0
+	CursorBlock     = 1 // 1 (piscando) e 2
+	CursorUnderline = 2 // 3 e 4
+	CursorBar       = 3 // 5 e 6
 )
 
 const (
@@ -123,6 +149,36 @@ type State struct {
 	charsetSaved int
 	// ultimoChar é o último caractere gráfico escrito, para o REP (CSI b).
 	ultimoChar rune
+	// cursorStyle é o que o DECSCUSR pediu (ver as constantes Cursor*).
+	cursorStyle int
+}
+
+// CursorStyle devolve o formato de cursor pedido pelo programa (DECSCUSR):
+// CursorBlock, CursorUnderline ou CursorBar (patch acessos).
+func (t *State) CursorStyle() int { return t.cursorStyle }
+
+// larguraDupla aproxima a classe "wide" do East Asian Width pelos blocos
+// que importam num terminal: CJK, Hangul, formas de largura inteira e
+// emojis (patch acessos).
+func larguraDupla(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x115F,
+		r >= 0x2E80 && r <= 0x303E,
+		r >= 0x3041 && r <= 0x33FF,
+		r >= 0x3400 && r <= 0x4DBF,
+		r >= 0x4E00 && r <= 0x9FFF,
+		r >= 0xA000 && r <= 0xA4CF,
+		r >= 0xAC00 && r <= 0xD7A3,
+		r >= 0xF900 && r <= 0xFAFF,
+		r >= 0xFE30 && r <= 0xFE4F,
+		r >= 0xFF00 && r <= 0xFF60,
+		r >= 0xFFE0 && r <= 0xFFE6,
+		r >= 0x1F300 && r <= 0x1F64F,
+		r >= 0x1F900 && r <= 0x1F9FF,
+		r >= 0x20000 && r <= 0x3FFFD:
+		return true
+	}
+	return false
 }
 
 // aplicarCharset traduz o conjunto ativo para o bit attrGfx do cursor, que
@@ -332,6 +388,24 @@ var gfxCharTable = [62]rune{
 	'│', '≤', '≥', 'π', '≠', '£', '·', // x - ~
 }
 
+// celula monta o Glyph gravado na tela a partir do atributo corrente: é
+// aqui que negrito vira cor viva e reverso troca frente e fundo. Usada
+// por setChar E por clear (patch acessos): antes o clear gravava o
+// atributo cru, então uma área limpa em vídeo reverso ficava com as cores
+// sem trocar — a linha selecionada de um menu saía com o fim "apagado".
+func celula(attr *Glyph, c rune) Glyph {
+	g := *attr
+	g.Char = c
+	g.Mode &^= attrWide | attrWideDummy
+	if attr.Mode&attrBold != 0 && attr.FG < 8 {
+		g.FG = attr.FG + 8
+	}
+	if attr.Mode&attrReverse != 0 {
+		g.FG, g.BG = attr.BG, g.FG
+	}
+	return g
+}
+
 func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	if attr.Mode&attrGfx != 0 {
 		if c >= 0x41 && c <= 0x7e && gfxCharTable[c-0x41] != 0 {
@@ -340,16 +414,7 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	}
 	t.changed |= ChangedScreen
 	t.dirty[y] = true
-	t.lines[y][x] = *attr
-	t.lines[y][x].Char = c
-	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
-	if attr.Mode&attrBold != 0 && attr.FG < 8 {
-		t.lines[y][x].FG = attr.FG + 8
-	}
-	if attr.Mode&attrReverse != 0 {
-		t.lines[y][x].FG = attr.BG
-		t.lines[y][x].BG = attr.FG
-	}
+	t.lines[y][x] = celula(attr, c)
 }
 
 func (t *State) defaultCursor() Cursor {
@@ -375,6 +440,7 @@ func (t *State) reset() {
 	// num 80x24 o RIS limpava só as 24 primeiras colunas.
 	t.clear(0, 0, t.cols-1, t.rows-1)
 	t.trantbl, t.charset, t.ultimoChar = [2]bool{}, 0, 0
+	t.cursorStyle = CursorDefault
 	t.moveTo(0, 0)
 }
 
@@ -452,11 +518,11 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	y0 = clamp(y0, 0, t.rows-1)
 	y1 = clamp(y1, 0, t.rows-1)
 	t.changed |= ChangedScreen
+	vazio := celula(&t.cur.Attr, ' ')
 	for y := y0; y <= y1; y++ {
 		t.dirty[y] = true
 		for x := x0; x <= x1; x++ {
-			t.lines[y][x] = t.cur.Attr
-			t.lines[y][x].Char = ' '
+			t.lines[y][x] = vazio
 		}
 	}
 }

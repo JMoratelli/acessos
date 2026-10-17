@@ -56,6 +56,9 @@ type View interface {
 	// antiga), coluna x (patch acessos).
 	HistoryCell(x, idx int) Glyph
 
+	// CursorStyle é o formato pedido pelo DECSCUSR (patch acessos).
+	CursorStyle() int
+
 	// Lock locks the state object's mutex.
 	Lock()
 

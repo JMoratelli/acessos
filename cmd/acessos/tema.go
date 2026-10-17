@@ -247,6 +247,10 @@ var tema = temaClaro
 // do nada. Fira Sans é o substituto humanista mais próximo que carrega.
 var (
 	fonteMono = font.Font{Typeface: "IBM Plex Mono, DejaVu Sans Mono, monospace"}
+	// fonteMonoNegrito é o negrito do terminal SSH (SGR 1): a Plex Mono
+	// SemiBold já vem embutida (ver fontes.go), então o avanço é o mesmo
+	// da regular e a grade não se mexe.
+	fonteMonoNegrito = font.Font{Typeface: "IBM Plex Mono, DejaVu Sans Mono, monospace", Weight: font.SemiBold}
 	fonteSans = font.Font{Typeface: "IBM Plex Sans, Inter, Fira Sans, DejaVu Sans, sans-serif"}
 	fonteCond = font.Font{Typeface: "IBM Plex Sans Condensed, Fira Sans Condensed, Fira Sans, DejaVu Sans, sans-serif"}
 )

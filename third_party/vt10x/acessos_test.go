@@ -104,3 +104,42 @@ func TestED1LimpaLinhaZero(t *testing.T) {
 		t.Fatalf("ED 1 deixou a linha 0: %q", got)
 	}
 }
+
+func TestLargoOcupaDuasColunas(t *testing.T) {
+	st, _ := novoTeste(6, 2)
+	escrever(st, "a日b")
+	if st.lines[0][1].Char != '日' || st.lines[0][1].Mode&attrWide == 0 ||
+		st.lines[0][2].Mode&attrWideDummy == 0 || st.lines[0][3].Char != 'b' {
+		t.Fatalf("largo: %q", linha(st, 0))
+	}
+	// não cabe na última coluna: quebra antes
+	escrever(st, "\x1b[1;6H日")
+	if st.lines[1][0].Char != '日' {
+		t.Fatalf("largo na borda não quebrou: %q / %q", linha(st, 0), linha(st, 1))
+	}
+}
+
+func TestReversoEmAreaLimpa(t *testing.T) {
+	st, _ := novoTeste(6, 1)
+	escrever(st, "\x1b[7m\x1b[K")
+	g := st.lines[0][0]
+	if g.FG != DefaultBG || g.BG != DefaultFG {
+		t.Fatalf("clear em reverso não trocou as cores: FG=%v BG=%v", g.FG, g.BG)
+	}
+}
+
+func TestDECSCUSR(t *testing.T) {
+	st, _ := novoTeste(6, 1)
+	escrever(st, "\x1b[5 q")
+	if st.CursorStyle() != CursorBar {
+		t.Fatalf("estilo: %d", st.CursorStyle())
+	}
+	escrever(st, "\x1b[2 q")
+	if st.CursorStyle() != CursorBlock {
+		t.Fatalf("bloco: %d", st.CursorStyle())
+	}
+	escrever(st, "\x1b[0 q")
+	if st.CursorStyle() != CursorDefault {
+		t.Fatalf("estilo padrão: %d", st.CursorStyle())
+	}
+}

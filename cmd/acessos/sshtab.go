@@ -1096,33 +1096,54 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 		// emoji) sai SOZINHO, recortado à própria célula — senão o
 		// deslocamento dele empurrava todo o resto da linha. Ver
 		// glifoNaGrade, em sshglifos.go.
+		//
+		// O trecho também quebra quando muda o negrito ou o sublinhado
+		// (SGR 1 e 4): negrito sai na Plex Mono SemiBold, que tem o mesmo
+		// avanço; sublinhado é um traço no pé do trecho. Reverso não
+		// aparece aqui porque o vt10x já troca frente e fundo ao gravar
+		// a célula. Caractere de duas colunas (AttrWide) sai sozinho com
+		// o recorte de duas células, e a célula-sombra à direita dele
+		// (AttrWideDummy) é pulada.
+		const estilos = vt10x.AttrBold | vt10x.AttrUnderline
 		x = 0
 		for x < cols {
 			g := cel(x, y)
+			if g.Mode&vt10x.AttrWideDummy != 0 {
+				x++
+				continue
+			}
 			fg := corDeTexto(g.FG)
+			estilo := g.Mode & estilos
 			var sb strings.Builder
 			inicio := x
-			sozinho := false
+			sozinho, largo := false, false
 			for x < cols {
 				g2 := cel(x, y)
-				if corDeTexto(g2.FG) != fg {
+				if g2.Mode&vt10x.AttrWideDummy != 0 || corDeTexto(g2.FG) != fg || g2.Mode&estilos != estilo {
 					break
 				}
 				c := g2.Char
 				if c == 0 {
 					c = ' '
 				}
-				if !glifoNaGrade(c) {
+				if g2.Mode&vt10x.AttrWide != 0 || !glifoNaGrade(c) {
 					if x > inicio {
 						break
 					}
 					sb.WriteRune(c)
 					x++
-					sozinho = true
+					sozinho, largo = true, g2.Mode&vt10x.AttrWide != 0
 					break
 				}
 				sb.WriteRune(c)
 				x++
+			}
+			if estilo&vt10x.AttrUnderline != 0 {
+				esp := max(gtx.Dp(1), 1)
+				paint.FillShape(gtx.Ops, fg, clip.Rect{
+					Min: image.Pt(px(inicio), (y+1)*ch-esp),
+					Max: image.Pt(px(x), (y+1)*ch),
+				}.Op())
 			}
 			s := strings.TrimRight(sb.String(), " ")
 			if s == "" {
@@ -1131,12 +1152,20 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 			st := op.Offset(image.Pt(px(inicio), y*ch)).Push(gtx.Ops)
 			var rec clip.Stack
 			if sozinho {
-				rec = clip.Rect{Max: image.Pt(px(inicio+1)-px(inicio), ch)}.Push(gtx.Ops)
+				celulas := 1
+				if largo {
+					celulas = 2
+				}
+				rec = clip.Rect{Max: image.Pt(px(inicio+celulas)-px(inicio), ch)}.Push(gtx.Ops)
+			}
+			fonte := fonteMono
+			if estilo&vt10x.AttrBold != 0 {
+				fonte = fonteMonoNegrito
 			}
 			gtxL := gtx
 			gtxL.Constraints.Min = image.Point{}
 			gtxL.Constraints.Max = image.Pt(1<<20, ch)
-			txt(t.th, fonteMono, t.corpoAtual(), s, fg).Layout(gtxL)
+			txt(t.th, fonte, t.corpoAtual(), s, fg).Layout(gtxL)
 			if sozinho {
 				rec.Pop()
 			}
@@ -1162,12 +1191,24 @@ func (t *sshTab) desenharGrade(gtx layout.Context, cols, rows int, avanco float6
 	if rolagem == 0 && t.term.CursorVisible() && t.cursorAceso() {
 		c := t.term.Cursor()
 		if c.X < cols && c.Y < rows {
+			// O programa pode pedir o formato (DECSCUSR): bloco no vim
+			// em modo normal, barra em modo de inserção, sublinhado em
+			// alguns editores. Sem pedido, fica a barra de sempre. O
+			// bloco é translúcido para o caractere embaixo continuar
+			// legível.
 			larg := max(gtx.Dp(2), 1)
-			r := clip.Rect{
-				Min: image.Pt(px(c.X), c.Y*ch),
-				Max: image.Pt(px(c.X)+larg, (c.Y+1)*ch),
+			var r clip.Rect
+			cor := tema.Azul
+			switch t.term.CursorStyle() {
+			case vt10x.CursorBlock:
+				r = clip.Rect{Min: image.Pt(px(c.X), c.Y*ch), Max: image.Pt(px(c.X+1), (c.Y+1)*ch)}
+				cor = comAlfa(tema.Azul, 0.5)
+			case vt10x.CursorUnderline:
+				r = clip.Rect{Min: image.Pt(px(c.X), (c.Y+1)*ch-larg), Max: image.Pt(px(c.X+1), (c.Y+1)*ch)}
+			default:
+				r = clip.Rect{Min: image.Pt(px(c.X), c.Y*ch), Max: image.Pt(px(c.X)+larg, (c.Y+1)*ch)}
 			}
-			paint.FillShape(gtx.Ops, tema.Azul, r.Op())
+			paint.FillShape(gtx.Ops, cor, r.Op())
 		}
 	}
 }

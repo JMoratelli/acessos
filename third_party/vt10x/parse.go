@@ -27,6 +27,34 @@ func (t *State) parse(c rune) {
 	}
 
 	t.ultimoChar = c
+
+	// patch acessos: caractere de duas colunas. Ocupa a célula e a
+	// vizinha (marcada attrWideDummy, que não desenha nada), e se não
+	// cabe nas duas últimas colunas, quebra a linha antes — como o xterm.
+	if larguraDupla(c) {
+		if t.cur.X+1 >= t.cols {
+			if t.mode&ModeWrap == 0 {
+				return // sem lugar e sem quebra: descarta, como o xterm
+			}
+			t.lines[t.cur.Y][t.cur.X].Mode |= attrWrap
+			t.newline(true)
+		}
+		x, y := t.cur.X, t.cur.Y
+		t.setChar(c, &t.cur.Attr, x, y)
+		t.lines[y][x].Mode |= attrWide
+		if x+1 < t.cols {
+			t.lines[y][x+1] = celula(&t.cur.Attr, 0)
+			t.lines[y][x+1].Mode |= attrWideDummy
+		}
+		if x+2 < t.cols {
+			t.moveTo(x+2, y)
+		} else {
+			t.moveTo(t.cols-1, y)
+			t.cur.State |= cursorWrapNext
+		}
+		return
+	}
+
 	t.setChar(c, &t.cur.Attr, t.cur.X, t.cur.Y)
 	if t.cur.X+1 < t.cols {
 		t.moveTo(t.cur.X+1, t.cur.Y)
