@@ -185,9 +185,21 @@
   anterior às falhas, então "estamos na versão mais nova" e "estamos sem
   as correções" eram verdade ao mesmo tempo.
 
-  - **Última checagem: 2026-09-17.** Próxima: a partir de 2026-10-17.
-  - Resultado: FreeRDP 3.31.1, Gio v0.10.2, vt10x e dependências Go
-    diretas — todos na última versão disponível. libvncserver 0.9.15 é a
-    última release existente (dez/2024) e continua sendo: as correções das
-    CVEs do `libvncclient` saíram só no master, e por isso viraram patches
-    locais no manifesto (ver `flatpak/patches/libvncserver/PATCH.md`).
+  - **Última checagem: 2026-10-17.** Próxima: a partir de 2026-11-17.
+  - Resultado: **FreeRDP tem 3.32.0 (23/09), 3.32.1 (28/09) e 3.32.2
+    (12/10)**, e o manifesto Flatpak e o sysroot MSYS2 estão em 3.31.1.
+    As três são rodadas de endurecimento contra servidor malicioso, com
+    dezenas de CVEs — várias do lado CLIENTE (use-after-free numa PDU
+    no 3.32.0→3.32.1, leitura fora dos limites no pipeline gráfico, no
+    clipboard PNG→CF_DIB, no canal de vídeo). Vale subir, com teste
+    contra host real (a 3.32.0 introduziu regressões que a 3.32.1
+    corrige; ir direto para a 3.32.2). Gio v0.10.3 saiu (IME no
+    Wayland/ibus, DPI por monitor no Windows, correção do restore da
+    decoração custom em monitor secundário no Windows, cancelamento de
+    ponteiro ao perder foco) — rebase do fork pede reaplicar os 13+
+    patches; sem urgência. libvncserver 0.9.15 continua a última
+    release; as três CVEs do `libvncclient` de 2026 já estão nos patches
+    locais (ver `flatpak/patches/libvncserver/PATCH.md`), sem advisory
+    nova desde maio. vt10x sem commit novo desde 2022.
+  - Checagem anterior (2026-09-17): FreeRDP 3.31.1, Gio v0.10.2, tudo na
+    última versão então disponível.
