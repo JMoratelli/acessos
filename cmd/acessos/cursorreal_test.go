@@ -118,24 +118,28 @@ func TestMascarasReaisTemSilhueta(t *testing.T) {
 // falha se as amostras do RDP forem trocadas por outras sem borda
 // suavizada: elas são a única prova, neste repositório, de que o corte
 // tem o que separar. As do VNC são o contrário — duras de propósito.
+//
+// Não é TODA amostra RDP: o Windows manda o I-beam (rdp-texto.pgm) como
+// máscara dura, 0/255, e ele é real do mesmo jeito. O que o teste prende é
+// que o CONJUNTO de amostras RDP continue tendo borda suavizada — trocar
+// todas por duras é que esvaziaria o corte.
 func TestMascarasRDPTemAlfaParcial(t *testing.T) {
+	var comAlfa, rdp int
 	for _, caso := range casosReais {
 		if !bytes.HasPrefix([]byte(caso.arquivo), []byte("rdp-")) {
 			continue
 		}
-		t.Run(caso.arquivo, func(t *testing.T) {
-			_, _, _, _, mask := lerPGM(t, caso.arquivo)
-			var parciais int
-			for _, v := range mask {
-				if v != 0 && v != 255 {
-					parciais++
-				}
+		rdp++
+		_, _, _, _, mask := lerPGM(t, caso.arquivo)
+		for _, v := range mask {
+			if v != 0 && v != 255 {
+				comAlfa++
+				break
 			}
-			if parciais == 0 {
-				t.Errorf("%s: só 0/255 — amostra sem borda suavizada não exercita alfaOpaco",
-					caso.arquivo)
-			}
-		})
+		}
+	}
+	if rdp == 0 || comAlfa == 0 {
+		t.Fatalf("%d amostras RDP, nenhuma com alfa parcial — nada exercita alfaOpaco", rdp)
 	}
 }
 
