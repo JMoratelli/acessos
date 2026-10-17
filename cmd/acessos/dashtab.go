@@ -725,7 +725,7 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 					fundo, borda = tema.Vidro3, tema.Borda2
 				}
 				sombra(gtx, size, cardRaio)
-				superficie(gtx, size, fundo, borda, cardRaio)
+				superficieRelevo(gtx, size, fundo, borda, cardRaio)
 				// Trilho da categoria na borda esquerda, recortado pelo
 				// MOLDE do card: sem esse recorte a faixa passava por fora
 				// do canto arredondado — era o vazamento da borda.
@@ -822,7 +822,7 @@ func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensio
 				// borda na cor do assunto (e não a borda neutra dos cards
 				// salvos): é o que diz, sem legenda, que este card não
 				// está no inventário.
-				superficie(gtx, size, tema.Vidro2, tema.Azul, cardRaio)
+				superficieRelevo(gtx, size, tema.Vidro2, tema.Azul, cardRaio)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {

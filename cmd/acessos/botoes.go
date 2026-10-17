@@ -81,7 +81,7 @@ func caixaBotao(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
 	conteudo := func(gtx layout.Context) layout.Dimensions {
 		return layout.Background{}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
-				superficie(gtx, gtx.Constraints.Min, fundo, borda, 8)
+				superficieRelevo(gtx, gtx.Constraints.Min, fundo, borda, 8)
 				return layout.Dimensions{Size: gtx.Constraints.Min}
 			},
 			func(gtx layout.Context) layout.Dimensions {

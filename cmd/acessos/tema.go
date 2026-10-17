@@ -86,7 +86,10 @@ var temaClaro = Tema{
 	// acentuado que o tema escuro já tinha.
 	Fundo1: hex(0xeef2f9), Fundo2: hex(0xd9e2ee), Fundo3: hex(0x9aabc4),
 	Luz1: rgba(0x4c6ef5, 0.10), Luz2: rgba(0x0ca678, 0.07),
-	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.86), Vidro3: rgba(0xffffff, 1.00),
+	// Vidro2 (card em repouso) desceu de 0,86 para 0,78: com 0,86 o card
+	// era praticamente branco opaco e o degradê da janela não passava —
+	// o painel inteiro lia como blocos chapados sobre um fundo bonito.
+	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.78), Vidro3: rgba(0xffffff, 1.00),
 	BuscaVidro: rgba(0xf4f7fb, 0.82),
 	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
 	// ver o relato de bordas "dissolvendo" no tema claro.
@@ -251,8 +254,8 @@ var (
 	// SemiBold já vem embutida (ver fontes.go), então o avanço é o mesmo
 	// da regular e a grade não se mexe.
 	fonteMonoNegrito = font.Font{Typeface: "IBM Plex Mono, DejaVu Sans Mono, monospace", Weight: font.SemiBold}
-	fonteSans = font.Font{Typeface: "IBM Plex Sans, Inter, Fira Sans, DejaVu Sans, sans-serif"}
-	fonteCond = font.Font{Typeface: "IBM Plex Sans Condensed, Fira Sans Condensed, Fira Sans, DejaVu Sans, sans-serif"}
+	fonteSans        = font.Font{Typeface: "IBM Plex Sans, Inter, Fira Sans, DejaVu Sans, sans-serif"}
+	fonteCond        = font.Font{Typeface: "IBM Plex Sans Condensed, Fira Sans Condensed, Fira Sans, DejaVu Sans, sans-serif"}
 )
 
 // Tamanhos, um por classe do CSS original — assim o que muda aqui muda no
@@ -597,17 +600,62 @@ func superficie(gtx layout.Context, size image.Point, fundo, borda color.NRGBA, 
 	}
 }
 
+// superficieRelevo é a superficie com um pouco de luz: um brilho que
+// desce do topo e some antes do meio, e um fio de 1px de luz na borda
+// de cima. É o que tira o "chapado" de cartão, diálogo, menu e botão —
+// a cor base continua a mesma (o alfa do brilho é baixo), só deixa de
+// ser um bloco de cor único. Campo de texto, chip e item de lista não
+// usam: neles o brilho vira ruído.
+func superficieRelevo(gtx layout.Context, size image.Point, fundo, borda color.NRGBA, raioDp unit.Dp) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	superficie(gtx, size, fundo, borda, raioDp)
+	rr := clip.UniformRRect(image.Rectangle{Max: size}, gtx.Dp(raioDp))
+	molde := rr.Push(gtx.Ops)
+	luz := rgba(0xffffff, 0.09)
+	if tema.Escuro {
+		// Bem mais baixo que no claro: o Gio compõe em linear e branco
+		// translúcido sobre fundo escuro sai muito mais claro que a
+		// conta em sRGB (mesmo aviso de Vidro2, acima) — a 0,05 o card
+		// virava um bloco cinza lavado.
+		luz = rgba(0xffffff, 0.018)
+	}
+	alt := size.Y / 2
+	if alt < gtx.Dp(12) {
+		alt = size.Y
+	}
+	paint.LinearGradientOp{
+		Stop1: f32.Pt(0, 0), Color1: luz,
+		Stop2: f32.Pt(0, float32(alt)), Color2: transparente,
+	}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+	fio := rgba(0xffffff, 0.45)
+	if tema.Escuro {
+		fio = rgba(0xffffff, 0.05)
+	}
+	paint.FillShape(gtx.Ops, fio, clip.Rect{
+		Min: image.Pt(gtx.Dp(raioDp), 0), Max: image.Pt(size.X-gtx.Dp(raioDp), 1),
+	}.Op())
+	molde.Pop()
+}
+
 // sombra desenha uma sombra suave sob um retângulo arredondado. O Gio não
 // tem primitiva de sombra nem blur, então empilhamos algumas camadas
 // arredondadas cada vez maiores e mais fracas — de perto é degradê, de
 // longe é sombra, e é o suficiente pra levantar o cartão do fundo.
+//
+// Cinco camadas e um deslocamento para baixo: com três e coladas na
+// caixa, a sombra lia como borda escura; mais aberta e caindo, lê como
+// luz vindo de cima.
 func sombra(gtx layout.Context, size image.Point, raioDp unit.Dp) {
 	raio := gtx.Dp(raioDp)
-	for i := 3; i >= 1; i-- {
+	const camadas = 5
+	for i := camadas; i >= 1; i-- {
 		d := gtx.Dp(unit.Dp(float32(i)))
-		r := image.Rect(-d/2, 0, size.X+d/2, size.Y+d)
+		r := image.Rect(-d/2, d/4, size.X+d/2, size.Y+d)
 		rr := clip.UniformRRect(r, raio+d)
-		alfa := int(tema.SombraBase) + int(tema.SombraPasso)*(3-i)
+		alfa := (int(tema.SombraBase) + int(tema.SombraPasso)*(camadas-i)) * 3 / 5
 		if alfa > 255 {
 			alfa = 255
 		}

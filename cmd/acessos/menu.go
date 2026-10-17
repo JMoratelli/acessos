@@ -135,7 +135,7 @@ func layoutMenu(gtx layout.Context, th *material.Theme, janela *app.Window) layo
 	}
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	sombra(gtx, dims.Size, 10)
-	superficie(gtx, dims.Size, tema.Cartao, tema.Borda, 10)
+	superficieRelevo(gtx, dims.Size, tema.Cartao, tema.Borda, 10)
 	conteudo.Add(gtx.Ops)
 	return dims
 }
