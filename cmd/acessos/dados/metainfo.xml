@@ -64,6 +64,15 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.8.1" date="2026-10-17">
+      <description>
+        <p>A interface ganhou relevo. Cartões, diálogos, menus e botões têm uma luz suave vinda de cima e uma sombra que cai para baixo, em vez de blocos de cor chapados; no tema claro os cartões ficaram mais translúcidos e deixam o fundo aparecer, e a barra das sessões deixou de ser uma faixa sólida.</p>
+        <p>O terminal SSH passou a mostrar negrito e sublinhado, e a linha selecionada dos menus em vídeo reverso deixou de sair com o fim apagado. O cursor muda de formato quando o programa pede (bloco no vim em modo normal, por exemplo), e caracteres de duas colunas ocupam o espaço certo.</p>
+        <p>No Linux, a seta do mouse dentro do aplicativo agora é a do tema configurado no sistema, e o cursor de carregando anima em vez de ficar parado no primeiro quadro.</p>
+        <p>Sessões RDP em monitores com escala (150%, por exemplo) chegam ao Windows remoto já com a escala certa: o texto sai nítido e no tamanho normal, em vez de miúdo.</p>
+        <p>A barra da sessão mostra quantos quadros e quantos dados por segundo estão chegando, o que ajuda a separar lentidão da rede de lentidão da máquina remota, e avisa por dois segundos quando um texto copiado na sessão chega à área de transferência do computador.</p>
+      </description>
+    </release>
     <release version="2.8.0" date="2026-10-17">
       <description>
         <p>O terminal SSH deixou de mostrar telas fora do lugar. Programas de tela cheia (menus de PDV, htop, mc, editores) desenham bordas e linhas repetidas com um atalho que o terminal não entendia, e cada borda saía com um caractere só, empurrando tudo à direita dela. Outras sequências que esses programas usam também passaram a ser entendidas, entre elas a que o vim manda ao abrir e que zerava as cores no meio da tela. Caracteres que a fonte do terminal não tem, ou que ocupam duas colunas, deixaram de deslocar o resto da linha.</p>
