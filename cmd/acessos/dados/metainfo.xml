@@ -64,6 +64,17 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.8.0" date="2026-10-17">
+      <description>
+        <p>O terminal SSH deixou de mostrar telas fora do lugar. Programas de tela cheia (menus de PDV, htop, mc, editores) desenham bordas e linhas repetidas com um atalho que o terminal não entendia, e cada borda saía com um caractere só, empurrando tudo à direita dela. Outras sequências que esses programas usam também passaram a ser entendidas, entre elas a que o vim manda ao abrir e que zerava as cores no meio da tela. Caracteres que a fonte do terminal não tem, ou que ocupam duas colunas, deixaram de deslocar o resto da linha.</p>
+        <p>Colar passou a funcionar em qualquer campo do aplicativo no Linux. Um único Ctrl+V dado com o clipboard vazio, ou antes de a área de transferência ficar pronta, deixava aquele campo sem colar até a janela ser fechada, sem nenhum aviso.</p>
+        <p>Enter nos campos de uma linha agora envia: salva a conexão, destranca o cofre, conecta na caixa de usuário e senha, aplica nos ajustes. Antes ele deixava um espaço no fim do texto e nada acontecia. Esc fecha qualquer diálogo.</p>
+        <p>O clipboard entre o computador e as sessões ficou previsível. Copiar com uma aba na frente e colar dentro de outra não funcionava, porque só a aba à vista no instante da cópia ficava sabendo; agora a aba que vem para a frente, e a sessão que acaba de conectar ou reconectar, recebem o que estiver copiado. No RDP, texto copiado logo depois de conectar também não chegava ao servidor.</p>
+        <p>A sessão RDP nasce já na resolução da aba, em vez de nascer numa resolução padrão e pedir o ajuste depois. Quando o servidor aceita o pedido e não o cumpre, o aplicativo insiste algumas vezes antes de desistir, e deixou de pedir resoluções minúsculas durante a abertura da janela, que viravam um quadrado pequeno no meio da aba.</p>
+        <p>Cursores de poucas cores vindos de servidores RDP mais antigos voltam a ser reconhecidos, em vez de aparecerem sempre como a seta comum.</p>
+        <p>Bibliotecas atualizadas: FreeRDP 3.32.2, com três rodadas de correções de segurança contra servidores maliciosos, e a interface na versão mais nova.</p>
+      </description>
+    </release>
     <release version="2.7.4" date="2026-09-25">
       <description>
         <p>As máquinas ganharam uma descrição. É um campo de texto livre e opcional no cadastro, para o que o nome não conta: "CAIXA5201" não diz que aquela é a caixa 3, que tem impressora fiscal ou que troca em outubro — e costuma ser por esse detalhe que se procura quando o nome não vem à cabeça. A descrição aparece no balão ao passar o mouse, na caixa de busca do atalho global, e o filtro do Painel também procura dentro dela. Quem não preencher não ganha nada de novo no inventário.</p>
