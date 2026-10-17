@@ -1199,6 +1199,27 @@ func (w *window) ReadClipboard() {
 	w.disp.readClipClose = make(chan struct{})
 	r, err := w.disp.readClipboard()
 	if r == nil || err != nil {
+		// --- patch acessos (ver third_party/gio/PATCH.md) ---
+		// Sem oferta de texto (clipboard vazio, com imagem, ou antes de a
+		// seleção chegar) o pedido morria em silêncio, e isso matava o
+		// colar DUAS vezes: o readClipClose ficava armado para sempre
+		// (nenhuma goroutine ia entregar em clipReads) e, pior, o
+		// roteador do Gio mantém a tag do pedinte em `receivers` até um
+		// DataEvent chegar — ProcessReadClipboard não pede de novo para
+		// uma tag que já está lá. Um único Ctrl+V nessas condições deixava
+		// aquele campo sem colar até fechar a janela. Entregar um
+		// DataEvent VAZIO fecha as duas pontas: o editor não insere nada
+		// e o roteador solta a tag.
+		w.disp.readClipClose = nil
+		vazio := transfer.DataEvent{
+			Type: "application/text",
+			Open: func() io.ReadCloser { return io.NopCloser(bytes.NewReader(nil)) },
+		}
+		select {
+		case w.clipReads <- vazio:
+			w.disp.wakeup()
+		default:
+		}
 		return
 	}
 	// Don't let slow clipboard transfers block event loop.

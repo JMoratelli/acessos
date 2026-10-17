@@ -174,7 +174,13 @@
   programa"); para esses, rodar o app com `ACESSOS_CURSOR_DUMP=<dir>` —
   o processo-filho grava cada forma distinta no mesmo PGM do cursorcap,
   com a classificação no nome e uma linha de medida no stderr (ver
-  `despejoCursor`, em cmd/acessos/telaworker.go).
+  `despejoCursor`, em cmd/acessos/telaworker.go). E `cmd/colartest`
+  (2026-10-17): lê o clipboard pelo caminho do `widget.Editor`
+  (`clipboard.ReadCmd`) com o grab ligado na mesma janela e imprime o que
+  chega — foi o que mostrou que colar em campo do Gio estava morto no
+  Linux (ver o último patch em `third_party/gio/PATCH.md`). Para mudar o
+  clipboard de fora durante o teste, no KDE: `qdbus6 org.kde.klipper
+  /klipper setClipboardContents "texto"`.
 
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:

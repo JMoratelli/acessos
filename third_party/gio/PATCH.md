@@ -263,3 +263,20 @@ O jeito canônico (`SetWindowPos` no retângulo do monitor, sem maximizar)
 foi medido e funciona igual, mas exigiria mexer no `Configure`, no
 `update()` e em guardar/restaurar o `WINDOWPLACEMENT` — três lugares
 contra uma condição, para o mesmo pixel.
+
+Patch do rebase para v0.10.3 (2026-10-17), em `app/os_wayland.go`
+(`(*window).ReadClipboard`): **colar em campo do Gio morria no primeiro
+Ctrl+V sem clipboard legível**. Quando `readClipboard()` não tem o que
+ler (seleção ainda não chegou, clipboard vazio ou com imagem) o Gio de
+origem só retornava — e isso deixava DUAS coisas presas: o
+`readClipClose`, que a guarda do começo da função usa para descartar
+pedidos enquanto há um em andamento (nenhuma goroutine ia fechá-lo), e a
+tag do pedinte no `receivers` do roteador (`io/input/clipboard.go`,
+`ProcessReadClipboard`), que só é solta por um `DataEvent` e sem isso
+nunca mais gera pedido. Resultado medido com `cmd/colartest` nesta
+máquina (KDE/KWin): 19 pedidos, zero entregas, mesmo com o clipboard
+mudando — o grab do app via as mudanças, o Gio não. O patch zera o
+`readClipClose` e entrega um `DataEvent` vazio pelo mesmo `clipReads`,
+o que solta a tag; depois disso cada pedido volta a ler o clipboard de
+verdade (mesmo teste: 16 de 16 entregas, inclusive após limpar o
+clipboard no meio).
