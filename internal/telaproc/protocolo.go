@@ -92,6 +92,11 @@ type Ligacao struct {
 	// o padrão e o Display Control ajusta depois.
 	Largura int `json:"largura,omitempty"`
 	Altura  int `json:"altura,omitempty"`
+	// Escala (só RDP): a escala da janela em porcento (150 num monitor a
+	// 150%). Vai no Display Control como DesktopScaleFactor, e aí é o
+	// Windows remoto que aplica o DPI — texto nítido no tamanho certo,
+	// em vez de miúdo. 0 = 100%.
+	Escala int `json:"escala,omitempty"`
 }
 
 // Falha diz por que a conexão não subiu (EvtFalha).

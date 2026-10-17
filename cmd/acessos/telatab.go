@@ -3,7 +3,10 @@
 package main
 
 import (
+	"fmt"
 	"image"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -168,6 +171,72 @@ func rodarSessaoRemota(
 // Session pro SSH) — só o hook aoTerminar limpa isso, o que é o que
 // permite os três protocolos compartilharem o mesmo laço apesar de terem
 // formas de conexão completamente diferentes.
+// medidorTaxa conta quadros e bytes recebidos do processo-filho e dá a
+// taxa do último segundo, para a barra da sessão: "12 q/s · 1,8 MB/s"
+// diz na hora se a lentidão é a rede ou a máquina do outro lado. Contar
+// é no laço de eventos da aba; ler é no desenho — daí a trava.
+type medidorTaxa struct {
+	mu            sync.Mutex
+	quadros, byts int
+	desde         time.Time
+	qps, mbps     float64
+}
+
+func (m *medidorTaxa) contar(bytes int) {
+	m.mu.Lock()
+	m.quadros++
+	m.byts += bytes
+	m.mu.Unlock()
+}
+
+// texto devolve a taxa do último segundo fechado, ou "" antes do
+// primeiro segundo e quando nada chegou.
+func (m *medidorTaxa) texto() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agora := time.Now()
+	if m.desde.IsZero() {
+		m.desde = agora
+	}
+	if el := agora.Sub(m.desde); el >= time.Second {
+		m.qps = float64(m.quadros) / el.Seconds()
+		m.mbps = float64(m.byts) / el.Seconds() / 1e6
+		m.quadros, m.byts, m.desde = 0, 0, agora
+	}
+	if m.qps == 0 && m.mbps == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.0f q/s · %s MB/s", m.qps,
+		strings.Replace(fmt.Sprintf("%.1f", m.mbps), ".", ",", 1))
+}
+
+// avisoPassageiro guarda uma nota com prazo para a barra da sessão.
+type avisoPassageiro struct {
+	ate   atomic.Int64 // unix nano
+	texto atomic.Pointer[string]
+}
+
+const avisoDuracao = 2 * time.Second
+
+func (a *avisoPassageiro) mostrar(texto string, w *app.Window) {
+	a.texto.Store(&texto)
+	a.ate.Store(time.Now().Add(avisoDuracao).UnixNano())
+	if w != nil {
+		w.Invalidate()
+		time.AfterFunc(avisoDuracao+50*time.Millisecond, w.Invalidate)
+	}
+}
+
+func (a *avisoPassageiro) atual() string {
+	if time.Now().UnixNano() >= a.ate.Load() {
+		return ""
+	}
+	if p := a.texto.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
 type sessaoRemotaCfg struct {
 	title   string
 	stop    <-chan struct{}

@@ -201,6 +201,8 @@ typedef struct {
     /* resolucao pedida ANTES de conectar (rs_definir_tamanho); 0 = padrao
      * da libfreerdp. */
     uint32_t tam_w, tam_h;
+    /* escala da janela em porcento (DesktopScaleFactor); 0 = 100 */
+    uint32_t escala;
 
     /* PROTEGE gdi->primary_buffer (+ width/height/stride) contra a corrida
      * entre um resize (hook_desktop_resize, na thread de rede, que REALOCA
@@ -983,6 +985,19 @@ static void ajustar_tamanho(uint32_t *w, uint32_t *h) {
     if (*w % 2) (*w)--;
 }
 
+/* DeviceScaleFactor so aceita 100, 140 e 180 (MS-RDPEDISP 2.2.2.2.1);
+ * DesktopScaleFactor aceita 100..500. O xfreerdp faz a mesma conta. */
+static uint32_t escala_dispositivo(uint32_t e) {
+    return e <= 100 ? 100 : (e <= 140 ? 140 : 180);
+}
+
+void rs_definir_escala(Sessao *s, int porcento) {
+    if (!s) return;
+    if (porcento <= 100) { s->escala = 0; return; }
+    if (porcento > 500) porcento = 500;
+    s->escala = (uint32_t)porcento;
+}
+
 /* Resolucao com que a sessao nasce. So vale antes de rs_conectar: e la
  * que vai para FreeRDP_DesktopWidth/Height. 0 em qualquer eixo = fica o
  * padrao da libfreerdp. */
@@ -1032,8 +1047,8 @@ int rs_pedir_resize(Sessao *s, int *largura, int *altura) {
     layout.Width = lw;
     layout.Height = lh;
     layout.Orientation = 0;              /* ORIENTATION_LANDSCAPE (DMDO_DEFAULT) */
-    layout.DesktopScaleFactor = 100;
-    layout.DeviceScaleFactor = 100;
+    layout.DesktopScaleFactor = s->escala ? s->escala : 100;
+    layout.DeviceScaleFactor = escala_dispositivo(layout.DesktopScaleFactor);
 
     int ok = s->disp->SendMonitorLayout(s->disp, 1, &layout) == CHANNEL_RC_OK;
     MUTEX_UNLOCK(&s->canais_lock);
@@ -1083,6 +1098,10 @@ int rs_conectar(Sessao *s, const char *host, int porta) {
     if (s->tam_w > 0 && s->tam_h > 0) {
         freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, s->tam_w);
         freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, s->tam_h);
+    }
+    if (s->escala > 100) {
+        freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, s->escala);
+        freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, escala_dispositivo(s->escala));
     }
     freerdp_settings_set_bool(settings, FreeRDP_DesktopResize, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, TRUE);

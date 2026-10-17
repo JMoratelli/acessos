@@ -280,3 +280,20 @@ mudando — o grab do app via as mudanças, o Gio não. O patch zera o
 o que solta a tag; depois disso cada pedido volta a ler o clipboard de
 verdade (mesmo teste: 16 de 16 entregas, inclusive após limpar o
 clipboard no meio).
+
+Dois patches de cursor, em `app/os_wayland.go` (2026-10-17):
+
+- **Tema do cursor do desktop.** `XCURSOR_THEME` raramente chega ao
+  processo de um app Wayland (KDE guarda o tema em `kcminputrc`, o GTK em
+  `settings.ini`, nenhum exporta a variável), e sem nome a
+  libwayland-cursor carrega o "default" do sistema (Adwaita aqui) — a
+  seta do app saía diferente da do resto do desktop.
+  `temaCursorDoAmbiente` lê `gtk-cursor-theme-name` do settings.ini e,
+  na falta, `cursorTheme` do kcminputrc; só então cai no padrão.
+- **Cursor animado.** `setCursor` mostrava só `images[0]`, então o
+  "carregando" (seta com anel/ampulheta) ficava parado no primeiro
+  quadro. Agora `wl_cursor_frame_and_duration` escolhe o quadro pelo
+  tempo desde que o cursor foi posto (`cursor.inicio`) e, quando o
+  quadro tem duração, um `time.AfterFunc` por display acorda o laço
+  (`cursorTick` + `wakeup`) e o `dispatch` troca o quadro na thread
+  certa. Cursor estático não arma timer nenhum.

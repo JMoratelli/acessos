@@ -111,6 +111,8 @@ type vncTab struct {
 	viewMu    sync.Mutex
 	view      vncView
 	clip      clipboardSync
+	taxa      medidorTaxa
+	aviso     avisoPassageiro
 
 	// tela é o último quadro PRONTO para desenhar. Quem monta troca o
 	// ponteiro por uma imagem nova e nunca mexe na anterior — é o que
@@ -299,6 +301,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 				return false
 			}
 			acum = aplicarQuadro(acum, q, pix)
+			t.taxa.contar(len(corpo))
 			t.fw.Store(q.TotalW)
 			t.fh.Store(q.TotalH)
 			publicarTela(&t.tela, acum)
@@ -326,6 +329,7 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 				continue
 			}
 			publicarClipboard(t.w, texto)
+			t.aviso.mostrar("clipboard recebido da sessão", t.w)
 
 		case telaproc.EvtCursor:
 			if c, ok := telaproc.LerCursor(corpo); ok {
@@ -510,7 +514,11 @@ func (t *vncTab) EstadoSessao() estadoSessao {
 		}
 		t.viewMu.Unlock()
 		e.Geo = fmt.Sprintf("%dx%d %s", fw, fh, escala)
+		if taxa := t.taxa.texto(); taxa != "" {
+			e.Geo += " · " + taxa
+		}
 	}
+	e.Aviso = t.aviso.atual()
 	return e
 }
 

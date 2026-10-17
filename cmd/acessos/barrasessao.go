@@ -26,6 +26,9 @@ type estadoSessao struct {
 	Tipo  string // ok | atencao | erro | neutro
 	Texto string // destino: 192.168.8.132:5900
 	Geo   string // "1920x1080 1:1", "80x24"…
+	// Aviso é uma nota passageira ("clipboard recebido da sessão"),
+	// vazia quase sempre. Sai ao lado do destino, em verde.
+	Aviso string
 }
 
 // abaSessao é implementada pelas abas que têm sessão remota. As que não
@@ -86,6 +89,13 @@ func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao,
 			// operador procura para fechar. Ver barrasessao_test.go.
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return txt(th, fonteMono, spSecundario, e.Texto, tema.Sec).Layout(gtx)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if e.Aviso == "" {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Right: 10}.Layout(gtx,
+					txt(th, fonteMono, spSecundario, e.Aviso, tema.OkFg).Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return a.ControlesSessao(gtx, th)

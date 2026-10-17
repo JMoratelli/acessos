@@ -87,6 +87,8 @@ type rdpTab struct {
 	viewMu            sync.Mutex
 	view              rdpView
 	clip              clipboardSync
+	taxa              medidorTaxa
+	aviso             avisoPassageiro
 	mu                sync.Mutex // protege lastSizeRequested/resize* entre a rede e o desenho
 	lastSizeRequested image.Point
 	// resizeAlvo/resizeArmado formam o debounce do resize dinâmico: ver
@@ -124,7 +126,10 @@ type rdpTab struct {
 	// na conexão, em vez de nascer no padrão dele e corrigir por Display
 	// Control logo depois — que é um RESET_GRAPHICS a mais e, quando o
 	// servidor ignora o pedido, uma sessão presa na resolução errada.
-	tamAba    atomic.Int64
+	tamAba atomic.Int64
+	// escala é a escala (DPI) da janela em porcento, medida no desenho;
+	// vai com a Ligacao para o Windows remoto aplicar o mesmo DPI.
+	escala    atomic.Int32
 	btnRec    widget.Clickable
 	btnTeclas widget.Clickable
 	btnAuto   widget.Clickable
@@ -315,6 +320,7 @@ func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 				Host: t.host, Porta: t.port,
 				Usuario: user, Senha: pass, Dominio: domain,
 				Largura: w, Altura: h,
+				Escala: int(t.escala.Load()),
 			})
 			if err != nil {
 				t.splash.setErro(err.Error())
@@ -387,6 +393,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 				return false
 			}
 			acum = aplicarQuadro(acum, q, pix)
+			t.taxa.contar(len(corpo))
 			t.fw.Store(q.TotalW)
 			t.fh.Store(q.TotalH)
 			publicarTela(&t.tela, acum)
@@ -414,6 +421,7 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 				continue
 			}
 			publicarClipboard(t.janela(), texto)
+			t.aviso.mostrar("clipboard recebido da sessão", t.janela())
 
 		case telaproc.EvtCursor:
 			if c, ok := telaproc.LerCursor(corpo); ok {
@@ -495,6 +503,7 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	t.viewMu.Unlock()
 	if size.X > 0 && size.Y > 0 {
 		t.tamAba.Store(int64(size.X)<<32 | int64(size.Y))
+		t.escala.Store(int32(gtx.Metric.PxPerDp*100 + 0.5))
 	}
 
 	// Resolução dinâmica: acompanha o tamanho da área da aba (canal
@@ -630,7 +639,11 @@ func (t *rdpTab) EstadoSessao() estadoSessao {
 		}
 		t.viewMu.Unlock()
 		e.Geo = fmt.Sprintf("%dx%d %s", fw, fh, escala)
+		if taxa := t.taxa.texto(); taxa != "" {
+			e.Geo += " · " + taxa
+		}
 	}
+	e.Aviso = t.aviso.atual()
 	return e
 }
 

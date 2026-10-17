@@ -366,6 +366,10 @@ func (wk *workerRDP) conectar(l telaproc.Ligacao) {
 		wk.sess.SetDesktopSize(l.Largura, l.Altura)
 		fmt.Fprintf(os.Stderr, "[filho rdp] conectando já em %dx%d\n", l.Largura, l.Altura)
 	}
+	if l.Escala > 100 {
+		wk.sess.SetScale(l.Escala)
+		fmt.Fprintf(os.Stderr, "[filho rdp] escala da janela: %d%%\n", l.Escala)
+	}
 	if err := wk.sess.Connect(l.Host, l.Porta); err != nil {
 		ce := err.(*rdp.ConnectError)
 		_ = wk.c.EnviarJSON(telaproc.EvtFalha, telaproc.Falha{

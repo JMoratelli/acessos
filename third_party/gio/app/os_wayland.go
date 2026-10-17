@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"sync"
 	"time"
 	"unsafe"
@@ -108,6 +109,9 @@ type wlDisplay struct {
 	repeat        repeatState
 	poller        poller
 	readClipClose chan struct{}
+	// --- patch acessos: cursor animado (ver PATCH.md) ---
+	cursorTimer *time.Timer
+	cursorTick  atomic.Bool
 }
 
 type wlSeat struct {
@@ -194,6 +198,11 @@ type window struct {
 	cursor struct {
 		theme  *C.struct_wl_cursor_theme
 		cursor *C.struct_wl_cursor
+		// --- patch acessos: cursor animado (ver PATCH.md) ---
+		// inicio marca quando o cursor atual foi posto, para escolher
+		// o quadro; anim diz se ele tem mais de um quadro.
+		inicio time.Time
+		anim   bool
 		// system is the active cursor for system gestures
 		// such as border resizes and window moves. It
 		// is nil if the pointer is not in a system gesture
@@ -400,7 +409,17 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
 	defer C.free(unsafe.Pointer(id))
 	C.xdg_toplevel_set_app_id(w.topLvl, id)
 
-	cursorTheme := C.CString(os.Getenv("XCURSOR_THEME"))
+	// --- patch acessos (ver PATCH.md) ---
+	// XCURSOR_THEME raramente está no ambiente de um app Wayland: KDE
+	// guarda o tema em kcminputrc e o GTK em settings.ini, e nenhum dos
+	// dois exporta a variável. Sem nome a libwayland-cursor carrega o
+	// tema "default" do sistema, e a seta do app saía diferente da do
+	// resto do desktop.
+	nomeTema := os.Getenv("XCURSOR_THEME")
+	if nomeTema == "" {
+		nomeTema = temaCursorDoAmbiente()
+	}
+	cursorTheme := C.CString(nomeTema)
 	defer C.free(unsafe.Pointer(cursorTheme))
 	// --- patch acessos (ver third_party/gio/PATCH.md) ---
 	// 32 não é um tamanho "neutro": é maior que o padrão de praticamente
@@ -1422,8 +1441,46 @@ func (w *window) resize(serial, edge C.uint32_t) {
 }
 
 func (w *window) SetCursor(cursor pointer.Cursor) {
-	w.cursor.cursor = w.loadCursor(cursor)
+	c := w.loadCursor(cursor)
+	if c != w.cursor.cursor {
+		w.cursor.inicio = time.Now() // patch acessos: animação recomeça
+	}
+	w.cursor.cursor = c
 	w.updateCursor()
+}
+
+// temaCursorDoAmbiente devolve o nome do tema de cursor configurado no
+// desktop, lendo gtk-cursor-theme-name de ~/.config/gtk-3.0/settings.ini
+// e, na falta, cursorTheme de ~/.config/kcminputrc (KDE). Vazio quando
+// nenhum existe — e aí vale o "default" do sistema, como antes
+// (patch acessos).
+func temaCursorDoAmbiente() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	if v := chaveDeINI(filepath.Join(home, ".config", "gtk-3.0", "settings.ini"), "gtk-cursor-theme-name"); v != "" {
+		return v
+	}
+	return chaveDeINI(filepath.Join(home, ".config", "kcminputrc"), "cursorTheme")
+}
+
+// chaveDeINI devolve o valor da primeira linha "chave=valor" do arquivo,
+// em qualquer seção (patch acessos).
+func chaveDeINI(caminho, chave string) string {
+	f, err := os.Open(caminho)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
+		if ok && strings.TrimSpace(k) == chave {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func (w *window) updateCursor() {
@@ -1444,8 +1501,17 @@ func (w *window) setCursor(pointer *C.struct_wl_pointer, serial C.uint32_t) {
 		C.wl_pointer_set_cursor(pointer, serial, nil, 0, 0)
 		return
 	}
-	// Get images[0].
-	img := *c.images
+	// --- patch acessos (ver PATCH.md) ---
+	// O Gio de origem mostrava só images[0]: o "carregando" (seta com
+	// ampulheta/anel) ficava parado no primeiro quadro. A libwayland-cursor
+	// diz qual quadro vale agora e quanto ele dura; quando dura, um timer
+	// acorda o laço (cursorTick) para trocar para o seguinte.
+	var dur C.uint32_t
+	idx := C.wl_cursor_frame_and_duration(c, C.uint32_t(time.Since(w.cursor.inicio).Milliseconds()), &dur)
+	if idx < 0 || C.uint(idx) >= c.image_count {
+		idx = 0
+	}
+	img := (*[1 << 16]*C.struct_wl_cursor_image)(unsafe.Pointer(c.images))[idx]
 	buf := C.wl_cursor_image_get_buffer(img)
 	if buf == nil {
 		return
@@ -1454,6 +1520,23 @@ func (w *window) setCursor(pointer *C.struct_wl_pointer, serial C.uint32_t) {
 	C.wl_surface_attach(w.cursor.surf, buf, 0, 0)
 	C.wl_surface_damage(w.cursor.surf, 0, 0, C.int32_t(img.width), C.int32_t(img.height))
 	C.wl_surface_commit(w.cursor.surf)
+	w.cursor.anim = dur > 0
+	if w.cursor.anim {
+		w.disp.agendarCursor(time.Duration(dur) * time.Millisecond)
+	}
+}
+
+// agendarCursor acorda o laço de eventos daqui a d para trocar o quadro
+// do cursor animado (patch acessos). Um timer só por display: o quadro
+// seguinte é sempre do cursor que estiver valendo na hora.
+func (d *wlDisplay) agendarCursor(dur time.Duration) {
+	if d.cursorTimer != nil {
+		d.cursorTimer.Stop()
+	}
+	d.cursorTimer = time.AfterFunc(dur, func() {
+		d.cursorTick.Store(true)
+		d.wakeup()
+	})
 }
 
 func (w *window) resetFling() {
@@ -1770,6 +1853,12 @@ func (d *wlDisplay) dispatch() error {
 		}
 	}
 	d.repeat.Repeat(d)
+	// patch acessos: quadro seguinte do cursor animado, na thread certa.
+	if d.cursorTick.Swap(false) {
+		if s := d.seat; s != nil && s.pointerFocus != nil && s.pointerFocus.cursor.anim {
+			s.pointerFocus.updateCursor()
+		}
+	}
 	return nil
 }
 

@@ -45,6 +45,9 @@ void rs_clipboard_definir_texto(Sessao *s, const char *utf8, int tam);
 int rs_pedir_resize(Sessao *s, int *largura, int *altura);
 /* resolucao inicial da sessao; so vale ANTES de rs_conectar. 0 = padrao. */
 void rs_definir_tamanho(Sessao *s, int largura, int altura);
+/* escala (DPI) da janela em porcento, 100..500; vale antes de conectar e
+ * em todo pedido de resize. 0 = 100. */
+void rs_definir_escala(Sessao *s, int porcento);
 
 void rs_definir_credenciais(Sessao *s, const char *usuario, const char *senha,
                             const char *dominio);

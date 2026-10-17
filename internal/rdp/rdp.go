@@ -301,6 +301,15 @@ func (s *Session) SetDesktopSize(w, h int) {
 	C.rs_definir_tamanho(s.s, C.int(w), C.int(h))
 }
 
+// SetScale define a escala (DPI) da janela em porcento: vai como
+// DesktopScaleFactor na conexão e em todo pedido de resize, e é o
+// Windows remoto que aplica o DPI. 100 ou menos = sem escala.
+func (s *Session) SetScale(porcento int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	C.rs_definir_escala(s.s, C.int(porcento))
+}
+
 // axis: 0=vertical 1=horizontal.
 func (s *Session) PointerWheel(axis, steps int) {
 	s.mu.RLock()
