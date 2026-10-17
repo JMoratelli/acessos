@@ -284,3 +284,59 @@ func matarAFerro(pid int) error {
 // este arquivo passou a rodar nos DOIS sistemas quando saiu da tag linux,
 // e o telaworker_filho_test.go, que também a usa, sempre rodou nos dois —
 // por isso ela não pode morar aqui dentro.
+
+// A sessão nasce na resolução da aba (Ligacao.Largura/Altura) e obedece a
+// um pedido de resize depois — os dois caminhos que o "quadrado na
+// resolução mínima" tinha quebrado. Conferido contra servidor real: a
+// primeira tela TEM de vir no tamanho pedido, e o CmdResize tem de
+// produzir um quadro no tamanho novo dentro do prazo da conferência.
+func TestAoVivoResolucaoDaAba(t *testing.T) {
+	lig := ligacaoAoVivo(t)
+	lig.Largura, lig.Altura = 1280, 720
+	proc, err := telaproc.Iniciar("rdp")
+	if err != nil {
+		t.Fatalf("Iniciar: %v", err)
+	}
+	defer proc.Encerrar()
+	if err := proc.Conectar(lig); err != nil {
+		t.Fatalf("Conectar: %v", err)
+	}
+	msgs := lerAoVivo(proc)
+
+	esperarTela := func(quer int32, prazoMax time.Duration, etapa string) {
+		prazo := time.After(prazoMax)
+		for {
+			select {
+			case <-prazo:
+				t.Fatalf("%s: nenhum quadro de %d de largura em %s", etapa, quer, prazoMax)
+			case m, aberto := <-msgs:
+				if !aberto || m.err != nil {
+					t.Fatalf("%s: canal caiu: %v", etapa, m.err)
+				}
+				switch m.tipo {
+				case telaproc.EvtCertPedido:
+					_ = proc.CertResposta(rdp.CertAceitarUmaVez)
+				case telaproc.EvtFalha, telaproc.EvtDesconectado:
+					t.Fatalf("%s: servidor encerrou: %s", etapa, string(m.corpo))
+				case telaproc.EvtConectado:
+					_ = proc.Credito()
+				case telaproc.EvtQuadro:
+					q, _, err := telaproc.DecodificarQuadro(m.corpo)
+					if err != nil {
+						t.Fatalf("%s: quadro inválido: %v", etapa, err)
+					}
+					t.Logf("%s: quadro %dx%d", etapa, q.TotalW, q.TotalH)
+					_ = proc.Credito()
+					if q.TotalW == quer {
+						return
+					}
+				}
+			}
+		}
+	}
+	esperarTela(1280, 60*time.Second, "nascimento em 1280x720")
+	if err := proc.Resize(1600, 900); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	esperarTela(1600, 20*time.Second, "resize para 1600x900")
+}

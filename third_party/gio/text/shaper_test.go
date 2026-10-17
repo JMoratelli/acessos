@@ -45,11 +45,9 @@ func TestWrappingTruncation(t *testing.T) {
 			}, textInput)
 			lineCount := 0
 			lastGlyphWasLineBreak := false
-			glyphs := []Glyph{}
 			untruncatedRunes := 0
 			truncatedRunes := 0
 			for g, ok := cache.NextGlyph(); ok; g, ok = cache.NextGlyph() {
-				glyphs = append(glyphs, g)
 				if g.Flags&FlagTruncator != 0 && g.Flags&FlagClusterBreak != 0 {
 					truncatedRunes += int(g.Runes)
 				} else {
@@ -111,11 +109,9 @@ func TestWrappingForcedTruncation(t *testing.T) {
 				Locale:    english,
 			}, textInput)
 			lineCount := 0
-			glyphs := []Glyph{}
 			untruncatedRunes := 0
 			truncatedRunes := 0
 			for g, ok := cache.NextGlyph(); ok; g, ok = cache.NextGlyph() {
-				glyphs = append(glyphs, g)
 				if g.Flags&FlagTruncator != 0 && g.Flags&FlagClusterBreak != 0 {
 					truncatedRunes += int(g.Runes)
 				} else {
@@ -184,7 +180,7 @@ func TestShapingNewlineHandling(t *testing.T) {
 			ltrFace, _ := opentype.Parse(goregular.TTF)
 			collection := []FontFace{{Face: ltrFace}}
 			cache := NewShaper(NoSystemFonts(), WithCollection(collection))
-			checkGlyphs := func() {
+			checkGlyphs := func(t *testing.T) {
 				glyphs := []Glyph{}
 				runes := 0
 				truncated := 0
@@ -243,17 +239,21 @@ func TestShapingNewlineHandling(t *testing.T) {
 				Locale:    english,
 				MaxLines:  tc.maxLines,
 			}
-			cache.LayoutString(params, tc.textInput)
-			if lineCount := len(cache.txt.lines); lineCount > tc.expectedLines {
-				t.Errorf("shaping string %q created %d lines", tc.textInput, lineCount)
-			}
-			checkGlyphs()
+			t.Run("string API", func(t *testing.T) {
+				cache.LayoutString(params, tc.textInput)
+				if lineCount := len(cache.txt.lines); lineCount > tc.expectedLines {
+					t.Errorf("shaping string %q created %d lines", tc.textInput, lineCount)
+				}
+				checkGlyphs(t)
+			})
 
-			cache.Layout(params, strings.NewReader(tc.textInput))
-			if lineCount := len(cache.txt.lines); lineCount > tc.expectedLines {
-				t.Errorf("shaping reader %q created %d lines", tc.textInput, lineCount)
-			}
-			checkGlyphs()
+			t.Run("reader API", func(t *testing.T) {
+				cache.Layout(params, strings.NewReader(tc.textInput))
+				if lineCount := len(cache.txt.lines); lineCount > tc.expectedLines {
+					t.Errorf("shaping reader %q created %d lines", tc.textInput, lineCount)
+				}
+				checkGlyphs(t)
+			})
 		})
 	}
 }

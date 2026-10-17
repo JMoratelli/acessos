@@ -124,8 +124,8 @@ modules:
       - -DWITH_KRB5=OFF
     sources:
       - type: archive
-        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.31.1.tar.gz
-        sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
+        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.32.2.tar.gz
+        sha256: 9ccb8357bf0188044a460de775c7ea289ca7d2a2a917eca0f0a7c4dc9c8b08ea
 
   # ---------------------------------------------------------- app
   - name: acessos-go

@@ -48,6 +48,12 @@ var casosReais = []casoReal{
 	{"rdp-ocupado-b.pgm", pointer.CursorWait, "anel de ocupado, quadro 2 de 4 (41x39, com sombra)"},
 	{"rdp-ocupado-c.pgm", pointer.CursorWait, "anel de ocupado, quadro 3 de 4 (32x32)"},
 	{"rdp-ocupado-d.pgm", pointer.CursorWait, "anel de ocupado, quadro 4 de 4 (41x39, com sombra)"},
+	// Colhidas em 2026-10-17 numa área de trabalho Windows 10 por RDP
+	// (cursorcap passeando sobre o VS Code): o I-beam que faltava — até
+	// aqui o limiar de larguraTopo só tinha a seta dupla do outro lado —
+	// e a mão com a sombra do tema, que o VNC entrega sem sombra.
+	{"rdp-texto.pgm", pointer.CursorText, "I-beam por RDP (32x32, máscara dura, hotspot no meio)"},
+	{"rdp-mao.pgm", pointer.CursorPointer, "mão por RDP, com sombra, hotspot na ponta do dedo"},
 	{"vnc-seta.pgm", pointer.CursorDefault, "seta pelo VNC, máscara dura, hotspot (0,0)"},
 	{"vnc-mao.pgm", pointer.CursorPointer, "mão pelo VNC — o par da 'mão presa' que o classificador tem de separar da seta"},
 

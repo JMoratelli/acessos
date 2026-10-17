@@ -1,4 +1,15 @@
-# Cópia do gioui.org v0.10.2 com um patch
+# Cópia do gioui.org v0.10.3 com um patch
+
+(Rebase em 2026-10-17: era v0.10.2. O patch inteiro — diff da cópia
+contra o módulo limpo em `~/go/pkg/mod/gioui.org@v0.10.2` — aplicou em
+cima do v0.10.3 com deslocamento de linhas e um único hunk à mão, em
+`app/os_windows.go` (`WM_NCCALCSIZE`): o upstream passou a achar o
+monitor pelo retângulo com `MONITOR_DEFAULTTONULL` em vez de pelo hwnd, e
+o patch da tela cheia só troca o que vai para `Rgrc[0]`. Receita para a
+próxima: `diff -ruN -x PATCH.md <módulo limpo da versão atual>
+third_party/gio > fork.patch`, copiar a versão nova do module cache,
+`patch -p1`, resolver os `.rej`, trocar a versão em `go.mod`, `go mod
+tidy`, `go mod vendor`.)
 
 Vendorizado por causa de UMA mudança, em `app/os_wayland.go`, função
 `(*window).Configure`: o Gio de origem cria o objeto
