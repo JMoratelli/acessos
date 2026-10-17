@@ -131,11 +131,22 @@ var abasAtivas struct {
 // ser DESENHADA — que é a definição certa de "aba à vista".
 func marcarAbaAtiva(w *app.Window, t Tab) {
 	abasAtivas.mu.Lock()
-	defer abasAtivas.mu.Unlock()
 	if abasAtivas.por == nil {
 		abasAtivas.por = map[*app.Window]Tab{}
 	}
+	anterior := abasAtivas.por[w]
 	abasAtivas.por[w] = t
+	abasAtivas.mu.Unlock()
+
+	// Aba que acabou de vir para a frente recebe o clipboard do sistema:
+	// o aviso de "mudou" só foi dado a quem estava na frente na hora da
+	// cópia (ver oferecerClipboard). Fora do laço de quadro, porque é
+	// escrita no socket do filho.
+	if anterior != t {
+		if h, ok := t.(clipboardReceiver); ok {
+			go oferecerClipboard(h)
+		}
+	}
 }
 
 // esquecerJanela apaga a marca ao fechar a janela. Sem isto o mapa

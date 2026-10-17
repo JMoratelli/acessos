@@ -30,6 +30,37 @@ func (c *clipboardSync) checkAndSet(text string) bool {
 	return true
 }
 
+// esquecer apaga o último texto conhecido. Chamado quando a sessão
+// (re)conecta: o processo-filho novo não sabe de nada, e sem isto o texto
+// já sincronizado com o filho ANTERIOR nunca mais era reenviado — o
+// checkAndSet o tomava por eco. Era uma das caras do "colar às vezes não
+// funciona": depois de uma queda e religada, colar no remoto devolvia o
+// que estava lá antes da queda.
+func (c *clipboardSync) esquecer() {
+	c.mu.Lock()
+	c.last = ""
+	c.mu.Unlock()
+}
+
+// oferecerClipboard entrega à aba o que o clipboard do sistema tem AGORA.
+//
+// O aviso de "clipboard mudou" só chega para a aba que estava à vista no
+// instante da cópia (ver entrada_linux.go e entrada_outros.go). Copiar
+// no host com a aba 101 na frente e colar dentro da 102 nunca funcionava:
+// a 102 não tinha recebido nada. A outra cara do mesmo defeito é a aba
+// que acabou de conectar, que também perdeu tudo o que foi copiado antes
+// dela existir. Nos dois casos quem sabe o texto é o cache global
+// (clipboardSistema), e aqui ele é oferecido à aba; o checkAndSet dela
+// descarta se já for o que ela tem.
+//
+// Pode ser chamada de qualquer goroutine: OnLocalClipboard só escreve no
+// socket do processo-filho.
+func oferecerClipboard(h clipboardReceiver) {
+	if txt := clipboardSistema(); txt != "" {
+		h.OnLocalClipboard(txt)
+	}
+}
+
 // ---- publicação no clipboard do sistema ----
 //
 // O clipboard do Wayland (internal/grab) é do laço de quadro, e só dele:

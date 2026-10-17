@@ -266,6 +266,13 @@ func (t *vncTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.splash.avancar(2)
 			t.w.Invalidate()
 			_ = proc.Credito()
+			// Filho novo não sabe o que o sistema tem no clipboard — ver
+			// esquecer e oferecerClipboard, em clipboard.go. Irmão do
+			// mesmo trecho em rdptab.go.
+			t.clip.esquecer()
+			if ehAbaAtiva(t) {
+				go oferecerClipboard(t)
+			}
 
 		case telaproc.EvtFalha:
 			var f telaproc.Falha

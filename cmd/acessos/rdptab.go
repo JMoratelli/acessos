@@ -119,11 +119,17 @@ type rdpTab struct {
 	fw, fh      atomic.Int32
 	nomeConexao string
 	cursorAtual atomic.Uint32
-	btnRec      widget.Clickable
-	btnTeclas   widget.Clickable
-	btnAuto     widget.Clickable
-	btnClip     widget.Clickable
-	btnModo     [3]widget.Clickable
+	// tamAba é o último tamanho desenhado da área da aba (X<<32 | Y). É
+	// com ele que a sessão nasce: pedir ao servidor a resolução certa JÁ
+	// na conexão, em vez de nascer no padrão dele e corrigir por Display
+	// Control logo depois — que é um RESET_GRAPHICS a mais e, quando o
+	// servidor ignora o pedido, uma sessão presa na resolução errada.
+	tamAba    atomic.Int64
+	btnRec    widget.Clickable
+	btnTeclas widget.Clickable
+	btnAuto   widget.Clickable
+	btnClip   widget.Clickable
+	btnModo   [3]widget.Clickable
 
 	splash    *splash
 	btnSplash widget.Clickable
@@ -241,6 +247,11 @@ func (t *rdpTab) esquecerTamanho() {
 	t.mu.Unlock()
 }
 
+// tamanhoMinimoResize: abaixo disto, em qualquer eixo, o tamanho é de um
+// quadro de transição e não vai para o servidor (ver
+// pedirResizeComDebounce). Nenhuma área de sessão útil é tão pequena.
+const tamanhoMinimoResize = 64
+
 // resizeDebounce é quanto tempo o tamanho tem que ficar PARADO antes do
 // CmdResize sair de verdade. 200ms é curto o bastante pra sentir
 // instantâneo depois de soltar a borda, e longo o bastante pra um
@@ -259,6 +270,13 @@ const resizeDebounce = 200 * time.Millisecond
 // deixando a tela preta/lixo durante o arrasto e, num caso pior, caindo
 // a sessão no meio do caminho.
 func (t *rdpTab) pedirResizeComDebounce(size image.Point) {
+	// Tamanho de quadro de transição (janela nascendo, trocando de modo)
+	// não é pedido: o shim grampeia em 200x200, que é o mínimo do Display
+	// Control, e a sessão vira um quadrado minúsculo até o próximo quadro
+	// com tamanho de verdade — e se nenhum vier, fica assim.
+	if size.X < tamanhoMinimoResize || size.Y < tamanhoMinimoResize {
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if size == t.lastSizeRequested {
@@ -292,9 +310,11 @@ func (t *rdpTab) dispararResize() {
 func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 	return rodarSessaoRemota("rdp", t.title, t.host, t.port, t.stop, t.religar,
 		func(proc *telaproc.Processo) error {
+			w, h := t.tamanhoAba()
 			err := proc.Conectar(telaproc.Ligacao{
 				Host: t.host, Porta: t.port,
 				Usuario: user, Senha: pass, Dominio: domain,
+				Largura: w, Altura: h,
 			})
 			if err != nil {
 				t.splash.setErro(err.Error())
@@ -305,6 +325,18 @@ func (t *rdpTab) rodarSessao(user, pass, domain string) fimSessao {
 		},
 		t.lacoEventos,
 	)
+}
+
+// tamanhoAba devolve o último tamanho desenhado da área da aba, ou 0,0
+// antes do primeiro quadro (sessão aberta por atalho antes de a aba
+// aparecer): aí o filho fica com o padrão e o Display Control ajusta.
+func (t *rdpTab) tamanhoAba() (int, int) {
+	v := t.tamAba.Load()
+	w, h := int(v>>32), int(v&0xffffffff)
+	if w < tamanhoMinimoResize || h < tamanhoMinimoResize {
+		return 0, 0
+	}
+	return w, h
 }
 
 // lacoEventos é o único leitor do canal do filho. Sai quando o filho fecha
@@ -331,6 +363,12 @@ func (t *rdpTab) lacoEventos(proc *telaproc.Processo, inicio time.Time) (falhou 
 			t.splash.avancar(2)
 			t.janela().Invalidate()
 			_ = proc.Credito()
+			// Filho novo não sabe o que o sistema tem no clipboard — ver
+			// esquecer e oferecerClipboard, em clipboard.go.
+			t.clip.esquecer()
+			if ehAbaAtiva(t) {
+				go oferecerClipboard(t)
+			}
 
 		case telaproc.EvtFalha:
 			var f telaproc.Falha
@@ -455,6 +493,9 @@ func (t *rdpTab) Layout(gtx layout.Context) layout.Dimensions {
 	t.viewMu.Lock()
 	t.view = v
 	t.viewMu.Unlock()
+	if size.X > 0 && size.Y > 0 {
+		t.tamAba.Store(int64(size.X)<<32 | int64(size.Y))
+	}
 
 	// Resolução dinâmica: acompanha o tamanho da área da aba (canal
 	// Display Control) — só reenvia quando muda, mesma razão do rdpview,
