@@ -96,8 +96,17 @@ def ler_banco(cache):
     O banco traz um diretório por pacote, cada um com um 'desc' em blocos
     %CHAVE% seguidos de linhas. Interessam %NAME%, %FILENAME%, %DEPENDS% e
     %PROVIDES% (há pacote que depende de um nome "virtual")."""
-    dados = abrir_zst(baixar(f"{espelho()}/{banco()}",
-                             os.path.join(cache, banco())))
+    # O banco NÃO fica no cache entre execuções: ele diz qual versão de
+    # cada pacote existe, e reaproveitá-lo congelava o sysroot na data da
+    # primeira montagem — em 2026-10-17 um sysroot refeito do zero saiu
+    # com FreeRDP 3.30.0 enquanto o MSYS2 já servia 3.32.2, porque o
+    # ucrt64.db.tar.zst de setembro continuava aqui. Os pacotes em si
+    # podem ficar: têm a versão no nome, então um banco novo pede
+    # arquivos novos.
+    caminho_banco = os.path.join(cache, banco())
+    if os.path.exists(caminho_banco):
+        os.remove(caminho_banco)
+    dados = abrir_zst(baixar(f"{espelho()}/{banco()}", caminho_banco))
     import io
     pacotes, provedores = {}, {}
     with tarfile.open(fileobj=io.BytesIO(dados)) as tf:

@@ -102,6 +102,13 @@
     importa existem na 3.30.0 (conferido com `objdump -p`), então
     carregaria — mas é variável solta num "só troca o exe". **Para
     substituir só o binário, gerar pelo script, no Linux.**
+
+    E apagar `build/win/sysroot` NÃO bastava para subir de versão: o
+    banco de pacotes do MSYS2 (`build/win/.cache/ucrt64.db.tar.zst`)
+    também era reaproveitado, e um sysroot refeito em 2026-10-17 saiu de
+    novo com FreeRDP 3.30.0. Desde então `scripts/sysroot-msys2.py` baixa
+    o banco a cada montagem; para trocar de versão basta apagar o
+    sysroot. Conferir com `grep Version build/win/sysroot/*/lib/pkgconfig/freerdp3.pc`.
   - **O `PATH` daqui acha o `gcc` e o `pkg-config` do Strawberry Perl
     antes do MSYS2** — o `pkg-config` é um stub que nem existe
     (`Can't find C:\Strawberry\perl\bin\pkg-config.bat`) e o `gcc` é
