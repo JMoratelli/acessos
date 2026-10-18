@@ -181,7 +181,7 @@ func (s *sidebar) layout(gtx layout.Context, th *material.Theme, ativo string,
 
 	// translúcida sobre o gradiente da janela (.barra do tema.py), não o
 	// cromo opaco: é o que dá o vidro.
-	paint.FillShape(gtx.Ops, tema.Barra, clip.Rect{Max: image.Pt(w, alt)}.Op())
+	faixaFosca(gtx, th, image.Pt(w, alt))
 	// fio de separação à direita, como a borda do cromo no original
 	paint.FillShape(gtx.Ops, tema.Borda2,
 		clip.Rect{Min: image.Pt(w-1, 0), Max: image.Pt(w, alt)}.Op())

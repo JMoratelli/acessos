@@ -195,7 +195,12 @@
   tem, e mostrariam o fundo "por trás" deles. Sombra fica fora do
   `Clickable` (ele recorta a pintura no tamanho da área de clique — a
   sombra dos cards nunca tinha aparecido por isso) e é `sombraVazada` em
-  superfície translúcida.
+  superfície translúcida. Azul como FUNDO de conteúdo branco (botão
+  primário, caixinha marcada) é `AzulCheio`, não `Azul` — no escuro o
+  `Azul` é claro demais para isso. `faixaFosca` (lateral, rodapé, barra
+  da sessão) só usa o fundo fosco na janela principal, reconhecida pelo
+  Theme (`temaApp`): a barra da sessão também é desenhada na janela
+  destacada, que não tem fundo fosco e roda em outra goroutine.
 
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:

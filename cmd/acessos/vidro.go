@@ -10,6 +10,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget/material"
 )
 
 // VIDRO FOSCO
@@ -106,21 +107,66 @@ func pintarVidro(gtx layout.Context, size image.Point, tinta, borda color.NRGBA,
 	molde.Pop()
 	brilhoRelevo(gtx, size, raioDp)
 
+	cima, baixo := rgba(0xffffff, 0.85), rgba(0x11161a, 0.10)
+	if tema.Escuro {
+		cima, baixo = rgba(0xffffff, 0.11), rgba(0xffffff, 0.03)
+	}
+	bordaDeLuz(gtx, rr, size, cima, baixo, borda)
+}
+
+// bordaDeLuz: traço de 1px em degradê (cima → baixo), com uma borda
+// chapada opcional por cima — é assim que o hover do card ACRESCENTA a
+// Borda2 aos poucos sem a borda de luz sumir de uma vez.
+func bordaDeLuz(gtx layout.Context, rr clip.RRect, size image.Point, cima, baixo, borda color.NRGBA) {
 	traco := clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op().Push(gtx.Ops)
+	paint.LinearGradientOp{
+		Stop1: f32.Pt(0, 0), Color1: cima,
+		Stop2: f32.Pt(0, float32(size.Y)), Color2: baixo,
+	}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
 	if borda.A > 0 {
 		paint.ColorOp{Color: borda}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+	}
+	traco.Pop()
+}
+
+// superficieCartao: superfície OPACA (diálogo, menu, dica, splash) com a
+// mesma linguagem do vidro — brilho do topo e borda de luz —, mas sem
+// fundo desfocado: ela fica por cima de outros cards, e o fundo fosco
+// mostraria a janela "por trás" deles. No claro a borda é a Borda que
+// escurece para baixo (branco sobre branco não teria quina); no escuro,
+// luz no topo apagando.
+func superficieCartao(gtx layout.Context, size image.Point, raioDp unit.Dp) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	rr := clip.UniformRRect(image.Rectangle{Max: size}, gtx.Dp(raioDp))
+	paint.FillShape(gtx.Ops, tema.Cartao, rr.Op(gtx.Ops))
+	brilhoRelevo(gtx, size, raioDp)
+	cima, baixo := comAlfa(tema.Borda, 0.55), tema.Borda2
+	if tema.Escuro {
+		cima, baixo = rgba(0xffffff, 0.14), rgba(0xffffff, 0.05)
+	}
+	bordaDeLuz(gtx, rr, size, cima, baixo, transparente)
+}
+
+// faixaFosca: barra retangular translúcida (lateral, rodapé, barra da
+// sessão) com o fundo desfocado por baixo. Só na janela PRINCIPAL — é a
+// única que tem o fundo fosco, e ela é reconhecida pelo Theme (um por
+// janela; temaApp é o dela). A barra da sessão também é desenhada na
+// janela destacada, sobre a cor sólida dela: lá vai só a tinta de sempre.
+func faixaFosca(gtx layout.Context, th *material.Theme, size image.Point) {
+	r := clip.Rect{Max: size}.Push(gtx.Ops)
+	defer r.Pop()
+	if th == temaApp && fosco.ok {
+		fosco.img.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+		paint.ColorOp{Color: tema.BarraFosca}.Add(gtx.Ops)
 	} else {
-		cima, baixo := rgba(0xffffff, 0.85), rgba(0x11161a, 0.10)
-		if tema.Escuro {
-			cima, baixo = rgba(0xffffff, 0.11), rgba(0xffffff, 0.03)
-		}
-		paint.LinearGradientOp{
-			Stop1: f32.Pt(0, 0), Color1: cima,
-			Stop2: f32.Pt(0, float32(size.Y)), Color2: baixo,
-		}.Add(gtx.Ops)
+		paint.ColorOp{Color: tema.Barra}.Add(gtx.Ops)
 	}
 	paint.PaintOp{}.Add(gtx.Ops)
-	traco.Pop()
 }
 
 // ------------------------------------------------------------ CPU

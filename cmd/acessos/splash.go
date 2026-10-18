@@ -289,7 +289,7 @@ func desenharSplash(gtx layout.Context, th *material.Theme, s *splash,
 		})
 		conteudo := macro.Stop()
 		sombraElev(gtx, dims.Size, 14, &elevDialogo)
-		superficie(gtx, dims.Size, tema.Cartao, tema.Borda, 14)
+		superficieCartao(gtx, dims.Size, 14)
 		conteudo.Add(gtx.Ops)
 		return dims
 	})

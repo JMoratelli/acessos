@@ -48,8 +48,10 @@ func TestContrasteDosTokens(t *testing.T) {
 		// ou sobre uma faixa diagonal (escuro, onde a faixa clareia).
 		faixa := faixasCanto(1000, 1000)[0].cor
 		cardPior := composta(tema.Fundo3, tema.VidroTinta)
+		barraPior := composta(tema.Fundo3, tema.BarraFosca)
 		if tema.Escuro {
 			cardPior = composta(tema.Fundo1, faixa, tema.VidroTinta)
+			barraPior = composta(tema.Fundo1, faixa, tema.BarraFosca)
 		}
 
 		casos := []struct {
@@ -72,11 +74,14 @@ func TestContrasteDosTokens(t *testing.T) {
 			// ErroFg para o texto de erro não pode apagar o rótulo branco.
 			{"rótulo do botão destrutivo", hex(0xffffff), tema.ErroFg, 4.5},
 			{"destrutivo na contagem", tema.ErroFg, tema.ErroBg, 3},
-			// Rótulo branco do botão primário: 4,4:1 no claro, mas 2,97:1
-			// no escuro (Azul #748ffc é claro demais para texto branco).
-			// Pendente para a próxima rodada visual, com prévia; o mínimo
-			// aqui só impede que piore.
-			{"rótulo do botão primário", hex(0xffffff), tema.Azul, 2.9},
+			// O primário pinta AzulCheio, não Azul: no escuro o Azul
+			// (#748ffc) dava 2,97:1 com o rótulo branco.
+			{"rótulo do botão primário", hex(0xffffff), tema.AzulCheio, 4.3},
+			{"rótulo do primário no hover", hex(0xffffff), tema.AzulCheioH, 4.3},
+			// Barras foscas (lateral, rodapé, barra da sessão) no pior
+			// ponto do fundo.
+			{"Sec na barra fosca", tema.Sec, barraPior, 4.5},
+			{"TopoSec na barra fosca", tema.TopoSec, barraPior, 4.5},
 			// Hover tem de se ver contra a superfície em que acontece.
 			{"hover contra o diálogo", tema.Hover, tema.Cartao, 1.15},
 		}

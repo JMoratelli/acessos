@@ -735,7 +735,7 @@ func caixaMarcar(gtx layout.Context, th *material.Theme, btn *widget.Clickable, 
 				gtx.Constraints.Min = image.Pt(lado, lado)
 				fundo, borda := transparente, tema.LuzB
 				if marcado {
-					fundo, borda = tema.Azul, tema.Azul
+					fundo, borda = tema.AzulCheio, tema.AzulCheio
 				}
 				superficie(gtx, image.Pt(lado, lado), fundo, borda, 4)
 				if marcado {

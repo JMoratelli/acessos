@@ -86,9 +86,7 @@ func layoutModal(gtx layout.Context, th *material.Theme) layout.Dimensions {
 		}
 	}
 
-	veu := tema.Palco
-	veu.A = 150
-	paint.FillShape(gtx.Ops, veu, clip.Rect{Max: size}.Op())
+	veuVinheta(gtx, size)
 
 	area := clip.Rect{Max: size}.Push(gtx.Ops)
 	event.Op(gtx.Ops, tagModal)
@@ -127,7 +125,7 @@ func layoutModal(gtx layout.Context, th *material.Theme) layout.Dimensions {
 
 		// peso vem da SOMBRA, não de vidro: o cartão é opaco.
 		sombraElev(gtx, dims.Size, 12, &elevDialogo)
-		superficieRelevo(gtx, dims.Size, tema.Cartao, tema.Borda, 12)
+		superficieCartao(gtx, dims.Size, 12)
 		conteudo.Add(gtx.Ops)
 		return dims
 	})
@@ -164,3 +162,21 @@ func espaco(h unit.Dp) layout.FlexChild {
 }
 
 var _ = image.Point{}
+
+// veuVinheta: o véu atrás do diálogo, mais fechado nas bordas que no
+// meio. Escurecimento chapado lia como uma película por cima do app; com
+// a vinheta o olho vai sozinho para o centro, onde o diálogo está, e o
+// app atrás continua reconhecível.
+func veuVinheta(gtx layout.Context, size image.Point) {
+	veu := tema.Palco
+	veu.A = 120
+	paint.FillShape(gtx.Ops, veu, clip.Rect{Max: size}.Op())
+	borda := tema.Palco
+	borda.A = 80
+	// gradCSS usa a convenção de ângulo do CSS: 180° desce do topo, 0°
+	// sobe da base, 90° vai da esquerda, 270° vem da direita.
+	gradCSS(gtx, size, 180, borda, 0, transparente, 0.4)
+	gradCSS(gtx, size, 0, borda, 0, transparente, 0.4)
+	gradCSS(gtx, size, 90, borda, 0, transparente, 0.3)
+	gradCSS(gtx, size, 270, borda, 0, transparente, 0.3)
+}

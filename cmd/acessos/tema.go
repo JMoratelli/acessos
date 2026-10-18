@@ -50,7 +50,7 @@ type Tema struct {
 	// que atravessa é só cor, sem forma.
 	BuscaFosco                                  color.NRGBA
 	LuzB                                        color.NRGBA
-	Barra                                       color.NRGBA
+	Barra, BarraFosca                           color.NRGBA
 	HeroLuz1, HeroLuz2                          color.NRGBA
 	Topo1, Topo2, Titulo1, Titulo2, TituloBorda color.NRGBA
 	Abas1, Abas2                                color.NRGBA
@@ -69,10 +69,15 @@ type Tema struct {
 	ErroBg, ErroFg, ErroH    color.NRGBA
 	AtencaoBg, AtencaoFg     color.NRGBA
 	Azul, AzulH, Verde, Roxo color.NRGBA
-	AzulFraco, VerdeFraco    color.NRGBA
-	RoxoFraco                color.NRGBA
-	Hero1, Hero2, HeroTxt    color.NRGBA
-	HeroSec                  color.NRGBA
+	// AzulCheio/AzulCheioH: o azul quando ele é FUNDO de algo com conteúdo
+	// branco por cima (botão primário, caixinha marcada). No claro é o
+	// próprio Azul; no escuro o Azul (#748ffc) é claro demais para isso —
+	// rótulo branco dava 2,97:1.
+	AzulCheio, AzulCheioH color.NRGBA
+	AzulFraco, VerdeFraco color.NRGBA
+	RoxoFraco             color.NRGBA
+	Hero1, Hero2, HeroTxt color.NRGBA
+	HeroSec               color.NRGBA
 	// Escuro diz qual paleta é esta — fundoCanto usa pra saber que o
 	// Gio compõe overlay translúcido mais forte sobre fundo escuro
 	// (espaço linear, não sRGB) e precisa de alfa bem mais baixo ali.
@@ -104,9 +109,12 @@ var temaClaro = Tema{
 	BuscaVidro: rgba(0xf4f7fb, 0.82), BuscaFosco: rgba(0xf4f7fb, 0.62),
 	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
 	// ver o relato de bordas "dissolvendo" no tema claro.
-	LuzB:     rgba(0x11161a, 0.17),
-	Barra:    rgba(0xe8edf3, 0.86),
-	HeroLuz1: rgba(0x748ffc, 0.30), HeroLuz2: rgba(0x38d9a9, 0.20),
+	LuzB:  rgba(0x11161a, 0.17),
+	Barra: rgba(0xe8edf3, 0.86),
+	// BarraFosca: a mesma barra quando o fundo desfocado vai por baixo
+	// (faixaFosca) — o que atravessa é só cor, então afina um pouco.
+	BarraFosca: rgba(0xe8edf3, 0.78),
+	HeroLuz1:   rgba(0x748ffc, 0.30), HeroLuz2: rgba(0x38d9a9, 0.20),
 	Topo1: hex(0xf2f5f9), Topo2: hex(0xe6ecf3),
 	// A faixa de janela (minimizar/maximizar/fechar) é MAIS ESCURA que a
 	// tira de abas de propósito: são duas faixas coladas, e sem diferença
@@ -142,6 +150,7 @@ var temaClaro = Tema{
 	ErroBg: hex(0xfde4e4), ErroFg: hex(0xb02a37), ErroH: hex(0x8d1f2a),
 	AtencaoBg: hex(0xfdf1d8), AtencaoFg: hex(0x8a5a00),
 	Azul: hex(0x4c6ef5), AzulH: hex(0x3b5bdb), Verde: hex(0x0ca678), Roxo: hex(0x6b40d0),
+	AzulCheio: hex(0x4c6ef5), AzulCheioH: hex(0x3b5bdb),
 	AzulFraco: rgba(0x4c6ef5, 0.13), VerdeFraco: rgba(0x0ca678, 0.13), RoxoFraco: rgba(0x6b40d0, 0.13),
 	Hero1: hex(0x171c22), Hero2: hex(0x2b3a4a), HeroTxt: hex(0xffffff),
 	// O hero é escuro NOS DOIS temas (é ele que ancora a página), então o
@@ -184,9 +193,10 @@ var temaEscuro = Tema{
 	// quase preto isso lê como BRILHO, não como borda de material. Um
 	// azul-acinzentado neutro em vez de branco resolve isso sem mudar o
 	// matiz frio do resto da paleta escura.
-	LuzB:     rgba(0x8fa0b8, 0.16),
-	Barra:    rgba(0x10141a, 0.86),
-	HeroLuz1: rgba(0x748ffc, 0.13), HeroLuz2: rgba(0x38d9a9, 0.08),
+	LuzB:       rgba(0x8fa0b8, 0.16),
+	Barra:      rgba(0x10141a, 0.86),
+	BarraFosca: rgba(0x10141a, 0.76),
+	HeroLuz1:   rgba(0x748ffc, 0.13), HeroLuz2: rgba(0x38d9a9, 0.08),
 	Topo1: hex(0x080a0d), Topo2: hex(0x12171d),
 	Titulo1: hex(0x0e131b), Titulo2: hex(0x03050a), TituloBorda: rgba(0x000000, 0.75),
 	Abas1: hex(0x18202b), Abas2: hex(0x1e2733),
@@ -208,6 +218,7 @@ var temaEscuro = Tema{
 	ErroBg: hex(0x341a1e), ErroFg: hex(0xc9414d), ErroH: hex(0xe05561),
 	AtencaoBg: hex(0x332810), AtencaoFg: hex(0xe0b458),
 	Azul: hex(0x748ffc), AzulH: hex(0x91a7ff), Verde: hex(0x38d9a9), Roxo: hex(0xb197fc),
+	AzulCheio: hex(0x4263eb), AzulCheioH: hex(0x4c6ef5),
 	AzulFraco: rgba(0x748ffc, 0.16), VerdeFraco: rgba(0x38d9a9, 0.16), RoxoFraco: rgba(0xb197fc, 0.16),
 	Hero1: hex(0x0b0e12), Hero2: hex(0x1c2733), HeroTxt: hex(0xffffff),
 	HeroSec: hex(0x9aa6b2),

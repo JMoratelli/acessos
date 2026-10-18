@@ -66,10 +66,10 @@ func layoutBarraSessao(gtx layout.Context, th *material.Theme, a abaSessao,
 	gtx.Constraints.Max.Y = h
 	larg := gtx.Constraints.Max.X
 
-	// Translúcida (tema.Barra) e não a cor sólida da tira de abas: o
+	// Translúcida (faixaFosca) e não a cor sólida da tira de abas: o
 	// degradê da janela passa por baixo e a barra deixa de ser uma faixa
 	// chapada entre as abas e a sessão.
-	paint.FillShape(gtx.Ops, tema.Barra, clip.Rect{Max: image.Pt(larg, h)}.Op())
+	faixaFosca(gtx, th, image.Pt(larg, h))
 	paint.FillShape(gtx.Ops, tema.Borda, clip.Rect{Min: image.Pt(0, h-1), Max: image.Pt(larg, h)}.Op())
 
 	e := a.EstadoSessao()

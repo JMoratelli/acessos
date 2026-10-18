@@ -131,7 +131,7 @@ func dicaCorpo(gtx layout.Context, th *material.Theme, texto string) layout.Dime
 			sombra(gtx, gtx.Constraints.Min, 7)
 			// Opaco: a dica flutua sobre os cards de vidro do Painel, e
 			// texto sobre texto não se lê.
-			superficie(gtx, gtx.Constraints.Min, tema.Cartao, tema.Borda2, 7)
+			superficieCartao(gtx, gtx.Constraints.Min, 7)
 			return layout.Dimensions{Size: gtx.Constraints.Min}
 		},
 		func(gtx layout.Context) layout.Dimensions {

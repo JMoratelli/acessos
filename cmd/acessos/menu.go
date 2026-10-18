@@ -95,8 +95,11 @@ func layoutMenu(gtx layout.Context, th *material.Theme, janela *app.Window) layo
 				return it.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Background{}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
-							if it.btn.Hovered() && it.acao != nil {
-								superficie(gtx, gtx.Constraints.Min, tema.Hover, transparente, 0)
+							h := progressoHover(gtx, &it.btn, it.btn.Hovered() && it.acao != nil)
+							if h > 0 {
+								f := tema.Hover
+								f.A = uint8(float32(f.A)*h + 0.5)
+								superficie(gtx, gtx.Constraints.Min, f, transparente, 0)
 							}
 							return layout.Dimensions{Size: gtx.Constraints.Min}
 						},
@@ -140,7 +143,7 @@ func layoutMenu(gtx layout.Context, th *material.Theme, janela *app.Window) layo
 	}
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	sombra(gtx, dims.Size, 10)
-	superficieRelevo(gtx, dims.Size, tema.Cartao, tema.Borda, 10)
+	superficieCartao(gtx, dims.Size, 10)
 	conteudo.Add(gtx.Ops)
 	return dims
 }

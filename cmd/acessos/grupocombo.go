@@ -173,7 +173,7 @@ func (c *comboGrupo) balao(gtx layout.Context, th *material.Theme) layout.Dimens
 	// Opaco, e não vidro: o balão cobre campos do próprio formulário, e
 	// texto por trás de texto é o que faz uma lista de sugestão virar
 	// borrão. O menu de contexto usa a mesma superfície pela mesma razão.
-	superficie(gtx, size, tema.Cartao, tema.Borda2, 7)
+	superficieCartao(gtx, size, 7)
 	return layout.UniformInset(4).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return material.List(th, &c.lista).Layout(gtx, len(c.achados),
 			func(gtx layout.Context, i int) layout.Dimensions {

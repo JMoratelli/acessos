@@ -529,7 +529,7 @@ func (d *dashTab) rodape(gtx layout.Context) layout.Dimensions {
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Min
-			paint.FillShape(gtx.Ops, tema.Barra, clip.Rect{Max: size}.Op())
+			faixaFosca(gtx, d.th, size)
 			paint.FillShape(gtx.Ops, tema.Borda, clip.Rect{Max: image.Pt(size.X, 1)}.Op())
 			return layout.Dimensions{Size: size}
 		}),
@@ -542,17 +542,20 @@ func (d *dashTab) rodape(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return d.btnSobre.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							cor := tema.Fraco
+							// Sec, não Fraco: o rodapé mora na base da janela,
+							// onde o fundo claro é mais escuro, e o Fraco ali
+							// ficava abaixo de 3:1 sobre a barra fosca.
+							cor := tema.Sec
 							if d.btnSobre.Hovered() {
-								cor = tema.Sec
+								cor = tema.Texto
 							}
 							return rotulo(d.th, fonteMono, spRodape, "Acessos "+versaoInstalada(), cor)(gtx)
 						})
 					}),
 					layout.Rigid(layout.Spacer{Width: 12}.Layout),
-					layout.Flexed(1, rotulo(d.th, fonteMono, spRodape, d.caminho, tema.Fraco)),
+					layout.Flexed(1, rotulo(d.th, fonteMono, spRodape, d.caminho, tema.Sec)),
 					layout.Rigid(rotulo(d.th, fonteMono, spRodape,
-						fmt.Sprintf("%d máquinas", len(d.arq.Conexoes)), tema.Fraco)),
+						fmt.Sprintf("%d máquinas", len(d.arq.Conexoes)), tema.Sec)),
 				)
 			})
 		}),
@@ -726,11 +729,12 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
-				fundo, borda := tema.VidroTinta, transparente
-				if hov.Hovered() {
-					fundo, borda = tema.VidroTintaH, tema.Borda2
-				}
-				superficieVidro(gtx, size, fundo, borda, cardRaio)
+				// Hover em transição (anima.go): a tinta engrossa e a
+				// Borda2 aparece por cima da borda de luz aos poucos.
+				h := progressoHover(gtx, hov, hov.Hovered())
+				borda := tema.Borda2
+				borda.A = uint8(float32(borda.A)*h + 0.5)
+				superficieVidro(gtx, size, misturarCor(tema.VidroTinta, tema.VidroTintaH, h), borda, cardRaio)
 				// Trilho da categoria na borda esquerda, recortado pelo
 				// MOLDE do card: sem esse recorte a faixa passava por fora
 				// do canto arredondado — era o vazamento da borda.
@@ -1134,7 +1138,7 @@ func (d *dashTab) caixaSelecao(gtx layout.Context, cx conexoes.Conexao) layout.D
 			borda = tema.Borda2
 		}
 		if marcada {
-			fundo, borda = tema.Azul, tema.Azul
+			fundo, borda = tema.AzulCheio, tema.AzulCheio
 		}
 		superficie(gtx, image.Pt(lado, lado), fundo, borda, 4)
 		if marcada {
@@ -1203,7 +1207,7 @@ func (d *dashTab) caixaGrupo(gtx layout.Context, g *conexoes.Grupo) layout.Dimen
 			borda = tema.Borda2
 		}
 		if marcadas > 0 {
-			fundo, borda = tema.Azul, tema.Azul
+			fundo, borda = tema.AzulCheio, tema.AzulCheio
 		}
 		superficie(gtx, image.Pt(lado, lado), fundo, borda, 4)
 		switch {

@@ -36,9 +36,9 @@ const (
 func (p pesoBotao) cores(hover bool) (fundo, borda, texto color.NRGBA) {
 	switch p {
 	case pesoPrimario:
-		f := tema.Azul
+		f := tema.AzulCheio
 		if hover {
-			f = tema.AzulH
+			f = tema.AzulCheioH
 		}
 		return f, transparente, hex(0xffffff)
 	case pesoPerigo:
@@ -79,8 +79,10 @@ func botao(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
 		}
 		return caixaBotao(gtx, th, nil, rot, tema.Vidro2, tema.LuzB, tema.Fraco)
 	}
-	fundo, borda, texto := peso.cores(btn.Hovered())
-	return caixaBotao(gtx, th, btn, rot, fundo, borda, texto)
+	f0, b0, t0 := peso.cores(false)
+	f1, b1, t1 := peso.cores(true)
+	h := progressoHover(gtx, btn, btn.Hovered())
+	return caixaBotao(gtx, th, btn, rot, misturarCor(f0, f1, h), misturarCor(b0, b1, h), misturarCor(t0, t1, h))
 }
 
 func caixaBotao(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
