@@ -191,6 +191,8 @@ type imageOpData struct {
 	src    *image.RGBA
 	handle any
 	filter byte
+	// tela: patch acessos, ver paint.ImageOp.Tela.
+	tela byte
 }
 
 type linearGradientOpData struct {
@@ -209,6 +211,7 @@ func decodeImageOp(data []byte, refs []any) imageOpData {
 		src:    refs[0].(*image.RGBA),
 		handle: handle,
 		filter: data[1],
+		tela:   data[2],
 	}
 }
 
@@ -1079,6 +1082,15 @@ loop:
 			// for those cases also compute a partialTrans that maps texture coordinates between
 			// the new bounding rectangle and the transformed original paint rectangle.
 			t, off := transformOffset(state.t)
+			// --- patch acessos (ver third_party/gio/PATCH.md) ---
+			// Imagem ancorada na janela: troca a transformação corrente
+			// por uma escala pura a partir da origem. O recorte
+			// (state.cpath) já está em coordenadas de janela e fica como
+			// está.
+			if state.matType == materialTexture && state.image.tela > 0 {
+				e := float32(state.image.tela)
+				t, off = f32.AffineId().Scale(f32.Point{}, f32.Pt(e, e)), f32.Point{}
+			}
 			// Fill the clip area, unless the material is a (bounded) image.
 			// TODO: Find a tighter bound.
 			inf := float32(1e6)

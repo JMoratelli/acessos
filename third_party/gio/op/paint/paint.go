@@ -29,6 +29,15 @@ const (
 type ImageOp struct {
 	Filter ImageFilter
 
+	// --- patch acessos (ver third_party/gio/PATCH.md) ---
+	// Tela > 0 ancora a imagem na JANELA, e não na transformação
+	// corrente: o pixel (0,0) da imagem cai no pixel (0,0) da janela e
+	// cada pixel da imagem cobre Tela×Tela pixels dela. O recorte
+	// corrente continua valendo, então pintar dentro do molde de um
+	// cartão mostra só o pedaço da imagem que está atrás dele — é o que
+	// o vidro fosco precisa, sem que o cartão saiba onde está na tela.
+	Tela uint8
+
 	uniform bool
 	color   color.NRGBA
 	src     *image.RGBA
@@ -115,6 +124,7 @@ func (i ImageOp) Add(o *op.Ops) {
 	data := ops.Write2(&o.Internal, ops.TypeImageLen, i.src, i.handle)
 	data[0] = byte(ops.TypeImage)
 	data[1] = byte(i.Filter)
+	data[2] = i.Tela
 }
 
 func (c ColorOp) Add(o *op.Ops) {

@@ -1115,6 +1115,38 @@ func (w *Window) AtivarCom(token string) error {
 	return err
 }
 
+// --- patch acessos: desfoque de fundo (ver PATCH.md) ---
+
+type desfocador interface {
+	DefinirDesfoque(r image.Rectangle, raio int) bool
+}
+
+// DesfocarFundo pede ao compositor que desfoque o que está ATRÁS da
+// janela no retângulo arredondado r (pixels da janela). r vazio tira o
+// efeito. Devolve false quando a plataforma ou o compositor não fazem
+// isso — aí o app deve manter a superfície mais opaca, porque o fundo
+// vai aparecer nítido.
+//
+// Chamar de dentro do laço da janela (como PedirTokenAtivacao). Pedir o
+// mesmo retângulo a cada quadro é barato: só muda algo quando ele muda.
+func (w *Window) DesfocarFundo(r image.Rectangle, raio int) bool {
+	// Conferir ANTES do Run: fora do Wayland o Run despacha para a
+	// thread da janela e espera, e não há por que pagar isso (nem
+	// arriscar esperar no meio de um quadro) para ouvir um "não".
+	if _, sim := w.driver.(desfocador); !sim {
+		return false
+	}
+	ok := false
+	w.Run(func() {
+		if d, sim := w.driver.(desfocador); sim {
+			ok = d.DefinirDesfoque(r, raio)
+		}
+	})
+	return ok
+}
+
+// --- fim do patch ---
+
 // TopMost windows will be rendered above all other non-top-most windows.
 //
 // TopMost windows are supported on macOS, Windows.

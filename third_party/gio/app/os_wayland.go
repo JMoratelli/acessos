@@ -64,6 +64,7 @@ import (
 #include "wayland_xdg_shell.h"
 #include "wayland_xdg_decoration.h"
 #include "wayland_xdg_activation.h"
+#include "wayland_ext_background_effect.h"
 
 extern const struct wl_registry_listener gio_registry_listener;
 extern const struct wl_surface_listener gio_surface_listener;
@@ -72,6 +73,7 @@ extern const struct xdg_toplevel_listener gio_xdg_toplevel_listener;
 extern const struct zxdg_toplevel_decoration_v1_listener gio_zxdg_toplevel_decoration_v1_listener;
 extern const struct xdg_wm_base_listener gio_xdg_wm_base_listener;
 extern const struct xdg_activation_token_v1_listener gio_xdg_activation_token_v1_listener;
+extern const struct ext_background_effect_manager_v1_listener gio_ext_background_effect_manager_v1_listener;
 extern const struct wl_callback_listener gio_callback_listener;
 extern const struct wl_output_listener gio_output_listener;
 extern const struct wl_seat_listener gio_seat_listener;
@@ -112,6 +114,13 @@ type wlDisplay struct {
 	// --- patch acessos: cursor animado (ver PATCH.md) ---
 	cursorTimer *time.Timer
 	cursorTick  atomic.Bool
+
+	// --- patch acessos: desfoque de fundo (ver PATCH.md) ---
+	fundoEfeito *C.struct_ext_background_effect_manager_v1
+	// desfoqueOk: o compositor anunciou a capacidade "blur". Sem ela o
+	// pedido de região é aceito e não faz nada.
+	desfoqueOk bool
+	// --- fim do patch ---
 }
 
 type wlSeat struct {
@@ -250,6 +259,13 @@ type window struct {
 	closing    bool
 	closeEvent *ClosingEvent
 	delivered  *ClosingEvent
+
+	// --- patch acessos: desfoque de fundo (ver PATCH.md) ---
+	efeito         *C.struct_ext_background_effect_surface_v1
+	desfoqueAtual  image.Rectangle
+	desfoqueRaio   int
+	desfoqueEscala int
+	// --- fim do patch ---
 }
 
 type poller struct {
@@ -847,6 +863,11 @@ func gio_onRegistryGlobal(data unsafe.Pointer, reg *C.struct_wl_registry, name C
 	// --- patch acessos: xdg-activation (ver PATCH.md) ---
 	case "xdg_activation_v1":
 		d.activation = (*C.struct_xdg_activation_v1)(C.wl_registry_bind(reg, name, &C.xdg_activation_v1_interface, 1))
+	// --- fim do patch ---
+	// --- patch acessos: desfoque de fundo (ver PATCH.md) ---
+	case "ext_background_effect_manager_v1":
+		d.fundoEfeito = (*C.struct_ext_background_effect_manager_v1)(C.wl_registry_bind(reg, name, &C.ext_background_effect_manager_v1_interface, 1))
+		C.ext_background_effect_manager_v1_add_listener(d.fundoEfeito, &C.gio_ext_background_effect_manager_v1_listener, data)
 	// --- fim do patch ---
 	case "zxdg_decoration_manager_v1":
 		d.decor = (*C.struct_zxdg_decoration_manager_v1)(C.wl_registry_bind(reg, name, &C.zxdg_decoration_manager_v1_interface, 1))
@@ -1896,6 +1917,13 @@ func (w *window) destroy() {
 	if w.topLvl != nil {
 		C.xdg_toplevel_destroy(w.topLvl)
 	}
+	// --- patch acessos: desfoque de fundo ---
+	// Antes da superfície: o objeto do efeito pertence a ela.
+	if w.efeito != nil {
+		C.ext_background_effect_surface_v1_destroy(w.efeito)
+		w.efeito = nil
+	}
+	// --- fim do patch ---
 	if w.surf != nil {
 		C.wl_surface_destroy(w.surf)
 	}
@@ -2565,6 +2593,9 @@ func (d *wlDisplay) destroy() {
 	if d.decor != nil {
 		C.zxdg_decoration_manager_v1_destroy(d.decor)
 	}
+	if d.fundoEfeito != nil { // patch acessos: desfoque de fundo
+		C.ext_background_effect_manager_v1_destroy(d.fundoEfeito)
+	}
 	if d.shm != nil {
 		C.wl_shm_destroy(d.shm)
 	}
@@ -2677,4 +2708,66 @@ func (w *window) AtivarCom(token string) error {
 	C.xdg_activation_v1_activate(w.disp.activation, ctoken, w.surf)
 	C.wl_display_flush(w.disp.disp)
 	return nil
+}
+
+// --------------------------------------- patch acessos: desfoque de fundo
+//
+// ext-background-effect-v1 é o protocolo padrão (staging) para uma janela
+// translúcida pedir ao compositor que DESFOQUE o que está atrás dela —
+// o vidro fosco de verdade, sobre o desktop, que o Gio sozinho não tem
+// como fazer (ele não enxerga nada fora da própria janela). O KWin 6
+// expõe; GNOME não. Sem o global, ou sem a capacidade "blur", nada muda:
+// DefinirDesfoque devolve false e quem chama mantém a superfície mais
+// opaca.
+
+//export gio_onBackgroundEffectCapabilities
+func gio_onBackgroundEffectCapabilities(data unsafe.Pointer, m *C.struct_ext_background_effect_manager_v1, flags C.uint32_t) {
+	d := callbackLoad(data).(*wlDisplay)
+	d.desfoqueOk = flags&C.EXT_BACKGROUND_EFFECT_MANAGER_V1_CAPABILITY_BLUR != 0
+}
+
+// DefinirDesfoque desfoca o fundo atrás do retângulo arredondado r (em
+// pixels da janela, raio também). r vazio tira o efeito. Vale a partir
+// do próximo commit da superfície — o do quadro em andamento, quando
+// chamada de dentro dele.
+func (w *window) DefinirDesfoque(r image.Rectangle, raio int) bool {
+	d := w.disp
+	if d.fundoEfeito == nil || !d.desfoqueOk || w.surf == nil {
+		return false
+	}
+	s := max(1, w.scale)
+	if r == w.desfoqueAtual && raio == w.desfoqueRaio && s == w.desfoqueEscala {
+		return true
+	}
+	if w.efeito == nil {
+		w.efeito = C.ext_background_effect_manager_v1_get_background_effect(d.fundoEfeito, w.surf)
+	}
+	w.desfoqueAtual, w.desfoqueRaio, w.desfoqueEscala = r, raio, s
+	if r.Empty() {
+		C.ext_background_effect_surface_v1_set_blur_region(w.efeito, nil)
+		return true
+	}
+	// A região é em coordenadas da SUPERFÍCIE (pixels lógicos), e a
+	// escala é inteira: arredonda para DENTRO, para o desfoque nunca
+	// passar da borda do que a janela pinta.
+	x0, y0 := (r.Min.X+s-1)/s, (r.Min.Y+s-1)/s
+	x1, y1 := r.Max.X/s, r.Max.Y/s
+	R := min(raio/s, (x1-x0)/2, (y1-y0)/2)
+	reg := C.wl_compositor_create_region(d.compositor)
+	add := func(ax, ay, bx, by int) {
+		if bx > ax && by > ay {
+			C.wl_region_add(reg, C.int32_t(ax), C.int32_t(ay), C.int32_t(bx-ax), C.int32_t(by-ay))
+		}
+	}
+	// Miolo inteiro, e os cantos arredondados em faixas de uma linha.
+	add(x0, y0+R, x1, y1-R)
+	for i := range R {
+		dy := float64(R) - float64(i) - 0.5
+		recuo := int(math.Ceil(float64(R) - math.Sqrt(float64(R*R)-dy*dy)))
+		add(x0+recuo, y0+i, x1-recuo, y0+i+1)
+		add(x0+recuo, y1-i-1, x1-recuo, y1-i)
+	}
+	C.ext_background_effect_surface_v1_set_blur_region(w.efeito, reg)
+	C.wl_region_destroy(reg)
+	return true
 }

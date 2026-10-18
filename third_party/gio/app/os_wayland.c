@@ -7,6 +7,7 @@
 #include "wayland_xdg_decoration.h"
 #include "wayland_text_input.h"
 #include "wayland_xdg_activation.h"
+#include "wayland_ext_background_effect.h"
 #include "_cgo_export.h"
 
 const struct wl_registry_listener gio_registry_listener = {
@@ -45,6 +46,12 @@ const struct xdg_wm_base_listener gio_xdg_wm_base_listener = {
 const struct xdg_activation_token_v1_listener gio_xdg_activation_token_v1_listener = {
 	// Cast away const parameter.
 	.done = (void (*)(void *, struct xdg_activation_token_v1 *, const char *))gio_onActivationTokenDone,
+};
+// --- fim do patch ---
+
+// --- patch acessos: desfoque de fundo (ver PATCH.md) ---
+const struct ext_background_effect_manager_v1_listener gio_ext_background_effect_manager_v1_listener = {
+	.capabilities = (void (*)(void *, struct ext_background_effect_manager_v1 *, uint32_t))gio_onBackgroundEffectCapabilities,
 };
 // --- fim do patch ---
 

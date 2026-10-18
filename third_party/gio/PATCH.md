@@ -297,3 +297,39 @@ Dois patches de cursor, em `app/os_wayland.go` (2026-10-17):
   quadro tem duração, um `time.AfterFunc` por display acorda o laço
   (`cursorTick` + `wakeup`) e o `dispatch` troca o quadro na thread
   certa. Cursor estático não arma timer nenhum.
+
+Dois patches de vidro fosco (2026-10-18):
+
+- **Imagem ancorada na janela** — `paint.ImageOp.Tela` (`op/paint/paint.go`),
+  um byte a mais no op de imagem (`internal/ops/ops.go`, `TypeImageLen`) e
+  a leitura dele no renderizador (`gpu/gpu.go`: `imageOpData.tela`,
+  `decodeImageOp` e o caso `ops.TypePaint`). Com `Tela > 0` a pintura da
+  imagem troca a transformação corrente por uma escala pura a partir da
+  origem da JANELA: o pixel (0,0) da imagem cai no (0,0) da janela e
+  cada pixel dela cobre `Tela`×`Tela` pixels. O recorte continua o
+  corrente. É o que deixa o card pintar, dentro do próprio molde, o
+  pedaço exato do fundo desfocado que está atrás dele — com rolagem,
+  hover e tudo — sem saber onde está na tela (o Gio não expõe a posição
+  absoluta durante o layout: o Flex só posiciona o filho depois de
+  desenhá-lo). Só o `paint.go` escreve esse op e só o `gpu.go` lê;
+  `Tela` zero é o comportamento de origem. `gpu/internal/rendertest`
+  passa. Quem usa: `cmd/acessos/vidro.go`.
+- **Desfoque do compositor (ext-background-effect-v1)** — protocolo
+  padrão do Wayland (staging) para a janela pedir que o compositor
+  desfoque o que está ATRÁS dela; o KWin 6 expõe, o GNOME não.
+  `app/wayland_ext_background_effect.{c,h}` saíram do
+  `wayland-scanner 1.26.0` (`client-header` e `private-code`) a partir do
+  XML do `wayland-protocols` (`staging/ext-background-effect`), com a
+  linha de build do `.c` igual à dos outros gerados. Em `os_wayland.c`, o
+  listener da capacidade; em `os_wayland.go`, o bind do global, a
+  capacidade "blur" (`desfoqueOk`), `(*window).DefinirDesfoque` (monta a
+  região em coordenadas de SUPERFÍCIE, com os cantos arredondados em
+  faixas de uma linha, arredondando para dentro) e a destruição do
+  objeto do efeito ANTES da superfície. Em `window.go`,
+  `(*Window).DesfocarFundo(r, raio) bool`, que confere a interface do
+  driver antes do `Run` — fora do Wayland devolve false sem despachar
+  nada para a thread da janela. Quem usa: a caixa do atalho global
+  (`cmd/acessos/buscapop.go`), que engrossa a tinta quando ouve false.
+  Os campos novos ficam no FIM das structs de propósito, para o gofmt
+  não realinhar os campos de origem e o diff contra o upstream continuar
+  só de acréscimos.
