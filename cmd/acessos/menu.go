@@ -95,14 +95,19 @@ func layoutMenu(gtx layout.Context, th *material.Theme, janela *app.Window) layo
 				return it.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Background{}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
-							if it.btn.Hovered() {
+							if it.btn.Hovered() && it.acao != nil {
 								superficie(gtx, gtx.Constraints.Min, tema.Hover, transparente, 0)
 							}
 							return layout.Dimensions{Size: gtx.Constraints.Min}
 						},
 						func(gtx layout.Context) layout.Dimensions {
 							cor := tema.Texto
-							if it.perigo {
+							switch {
+							case it.acao == nil:
+								// Item sem ação (as teclas do VNC em modo
+								// só-ver): parecia clicável e não fazia nada.
+								cor = tema.Fraco
+							case it.perigo:
 								cor = tema.ErroFg
 							}
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X

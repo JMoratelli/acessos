@@ -368,7 +368,7 @@ func (d *dashTab) hero(gtx layout.Context) layout.Dimensions {
 							layout.Rigid(layout.Spacer{Height: 2}.Layout),
 							layout.Rigid(rotulo(d.th, fonteMono, spHeroSub, d.caminho, tema.HeroSec)),
 							layout.Rigid(layout.Spacer{Height: 1}.Layout),
-							layout.Rigid(rotulo(d.th, fonteMono, spHeroSub, "Desenvolvido por @JJMoratelli", tema.Fraco)),
+							layout.Rigid(rotulo(d.th, fonteMono, spHeroSub, "Desenvolvido por @JJMoratelli", tema.HeroSec)),
 						)
 					}),
 					layout.Rigid(d.numeros),
@@ -700,10 +700,11 @@ func (d *dashTab) grade(gtx layout.Context, lista []conexoes.Conexao) layout.Dim
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, linhas...)
 }
 
-// card: elevação por LUZ, não por cor — repouso vidro2, hover vidro3.
-// Como o fundo por baixo tem gradiente, o mesmo card não fica idêntico no
-// topo e na base da lista, e é isso que o olho lê como vidro. A borda é de
-// luz (LuzB): borda cinza sobre translúcido denuncia o truque.
+// card: vidro fosco (superficieVidro) — o fundo da janela desfocado atrás,
+// tinta fina por cima. Como o fundo tem gradiente, o mesmo card não fica
+// idêntico no topo e na base da lista, e é isso que o olho lê como vidro.
+// Em repouso a borda é de luz (clara em cima, apagando para baixo); no
+// hover a tinta engrossa e a borda vira Borda2.
 func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimensions {
 	cor := corCategoria(cx.Grupo[0])
 	hov := d.clique("card:" + cx.GrupoStr() + "|" + cx.Nome)
@@ -716,16 +717,20 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 		pedirDica("card:"+cx.GrupoStr()+"|"+cx.Nome, cx.Descricao)
 	}
 
+	// A sombra fica FORA do Clickable: ele recorta o que desenha no
+	// tamanho do card (é o recorte da área de clique), e a sombra, que
+	// mora justamente fora do card, sumia inteira — a antiga só
+	// escurecia o próprio card por dentro.
+	corpo := op.Record(gtx.Ops)
 	dims := hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
-				fundo, borda := tema.Vidro2, tema.LuzB
+				fundo, borda := tema.VidroTinta, transparente
 				if hov.Hovered() {
-					fundo, borda = tema.Vidro3, tema.Borda2
+					fundo, borda = tema.VidroTintaH, tema.Borda2
 				}
-				sombra(gtx, size, cardRaio)
-				superficieRelevo(gtx, size, fundo, borda, cardRaio)
+				superficieVidro(gtx, size, fundo, borda, cardRaio)
 				// Trilho da categoria na borda esquerda, recortado pelo
 				// MOLDE do card: sem esse recorte a faixa passava por fora
 				// do canto arredondado — era o vazamento da borda.
@@ -792,6 +797,9 @@ func (d *dashTab) card(gtx layout.Context, cx conexoes.Conexao) layout.Dimension
 			}),
 		)
 	})
+	desenho := corpo.Stop()
+	sombra(gtx, dims.Size, cardRaio)
+	desenho.Add(gtx.Ops)
 
 	return dims
 }
@@ -822,7 +830,7 @@ func (d *dashTab) cardRascunho(gtx layout.Context, termo string) layout.Dimensio
 				// borda na cor do assunto (e não a borda neutra dos cards
 				// salvos): é o que diz, sem legenda, que este card não
 				// está no inventário.
-				superficieRelevo(gtx, size, tema.Vidro2, tema.Azul, cardRaio)
+				superficieVidro(gtx, size, tema.VidroTinta, tema.Azul, cardRaio)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {

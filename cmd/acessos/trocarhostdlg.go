@@ -225,7 +225,7 @@ func layoutTrocarHost(gtx layout.Context, th *material.Theme) layout.Dimensions 
 		y = 0
 	}
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
-	sombra(gtx, dims.Size, 12)
+	sombraElev(gtx, dims.Size, 12, &elevDialogo)
 	superficie(gtx, dims.Size, tema.Cartao, tema.Borda, 12)
 	conteudo.Add(gtx.Ops)
 	return dims

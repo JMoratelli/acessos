@@ -272,7 +272,10 @@ func (d *dlgChaveiro) formulario(gtx layout.Context, th *material.Theme) layout.
 						aviso := "a senha será cifrada com o cofre"
 						cor := tema.Sec
 						if cofreAberto == nil {
-							aviso, cor = "cofre trancado: destranque para gravar senha", tema.ErroFg
+							// Âmbar, não vermelho: é aviso que pede providência
+							// (destrancar), não erro — vermelho fica para o que
+							// destrói ou falhou.
+							aviso, cor = "cofre trancado: destranque para gravar senha", tema.AtencaoFg
 						}
 						return rotulo(th, fonteMono, spCardMeta, aviso, cor)(gtx)
 					}),

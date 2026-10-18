@@ -109,7 +109,7 @@ func (d *dlgCofre) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensio
 				"Este inventário ainda não tem cofre.", tema.Sec)),
 			espaco(4),
 			layout.Rigid(paragrafo(th, fonteSans, spSecundario,
-				"A senha mestra cifra as senhas das conexões e do chaveiro. Ela não é guardada em lugar nenhum: perdeu, perdeu.", tema.Fraco)),
+				"A senha mestra cifra as senhas das conexões e do chaveiro. Ela não é guardada em lugar nenhum: perdeu, perdeu.", tema.Sec)),
 			espaco(8),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return campoSenha(gtx, th, &d.nova, "senha mestra nova")
@@ -141,7 +141,7 @@ func (d *dlgCofre) Corpo(gtx layout.Context, th *material.Theme) layout.Dimensio
 			}),
 			espaco(6),
 			layout.Rigid(rotulo(th, fonteMono, spCardMeta,
-				"Todos os segredos serão recifrados e o arquivo regravado.", tema.Fraco)),
+				"Todos os segredos serão recifrados e o arquivo regravado.", tema.Sec)),
 		)
 	}
 	if d.aviso != "" {

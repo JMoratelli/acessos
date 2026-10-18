@@ -88,7 +88,7 @@ func (d *dlgEfemera) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 
 	filhos := []layout.FlexChild{
 		layout.Rigid(paragrafo(th, fonteSans, spSecundario,
-			"Destino não cadastrado: a senha vale só para esta aba e nada é gravado.", tema.Fraco)),
+			"Destino não cadastrado: a senha vale só para esta aba e nada é gravado.", tema.Sec)),
 		espaco(10),
 	}
 	if d.proto != conexoes.VNC {

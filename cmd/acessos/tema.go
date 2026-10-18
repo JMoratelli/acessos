@@ -29,17 +29,26 @@ import (
 type Tema struct {
 	Fundo, Cartao, Borda, Borda2 color.NRGBA
 	Texto, Sec, Fraco            color.NRGBA
-	// CardFraco é o Fraco QUANDO o texto está por cima do preenchimento
-	// translúcido do card (Vidro2/Vidro3), não do fundo da janela — ver
-	// comentário no valor de cada tema.
+	// CardFraco é o Fraco QUANDO o texto está por cima do vidro do card
+	// (VidroTinta/VidroTintaH sobre o fundo desfocado), não do fundo da
+	// janela — ver comentário no valor de cada tema.
 	CardFraco              color.NRGBA
 	Fundo1, Fundo2, Fundo3 color.NRGBA
 	Luz1, Luz2             color.NRGBA
 	Vidro1, Vidro2, Vidro3 color.NRGBA
+	// VidroTinta/VidroTintaH são a tinta do vidro FOSCO (superficieVidro):
+	// por baixo dela já vai o fundo da janela desfocado, então ela pode
+	// ser bem mais fina que Vidro2/Vidro3 sem o fundo "atravessar" o
+	// cartão — o que atravessa é só cor, sem forma.
+	VidroTinta, VidroTintaH color.NRGBA
 	// BuscaVidro é o fundo da caixa de busca do atalho global, que
 	// flutua sobre o DESKTOP e não sobre o fundo do app — por isso não
 	// reaproveita Vidro*: aqui o que está atrás é imprevisível.
-	BuscaVidro                                  color.NRGBA
+	BuscaVidro color.NRGBA
+	// BuscaFosco é o mesmo fundo quando o compositor DESFOCA o desktop
+	// atrás da caixa (ver buscapop.go): pode ser bem mais fino, porque o
+	// que atravessa é só cor, sem forma.
+	BuscaFosco                                  color.NRGBA
 	LuzB                                        color.NRGBA
 	Barra                                       color.NRGBA
 	HeroLuz1, HeroLuz2                          color.NRGBA
@@ -68,18 +77,19 @@ type Tema struct {
 	// Gio compõe overlay translúcido mais forte sobre fundo escuro
 	// (espaço linear, não sRGB) e precisa de alfa bem mais baixo ali.
 	Escuro bool
-	// SombraBase/SombraPasso calibram sombra(): preto puro em baixa alfa,
-	// que basta pra "levantar" um cartão claro do fundo claro, é
-	// invisível sobre um fundo já quase preto — o escuro precisa de bem
-	// mais alfa pra registrar a mesma diferença perceptível.
-	SombraBase, SombraPasso uint8
 }
 
 var temaClaro = Tema{
 	Fundo: hex(0xd9e2ee), Cartao: hex(0xffffff), Borda: hex(0xc7cfd8), Borda2: hex(0xacb6c2),
-	Texto: hex(0x1b232b), Sec: hex(0x5b6976), Fraco: hex(0x94a1ad),
-	// Sem relato de baixo contraste no card claro — mesmo valor do Fraco.
-	CardFraco: hex(0x94a1ad),
+	// Sec e Fraco escureceram na revisão de contraste (2026-10-18), no
+	// MESMO tom: Fraco #94a1ad dava 2,6:1 no branco (abaixo do mínimo de
+	// 3 até para dica), e Sec sumia na base da janela, onde o gradiente
+	// é mais escuro (2,4:1). Agora Fraco 3,9:1 e Sec 7,1:1 no Cartao.
+	Texto: hex(0x1b232b), Sec: hex(0x4e5a65), Fraco: hex(0x738494),
+	// O vidro do card deixa passar o tom do fundo, que embaixo é um
+	// azul-acinzentado escuro: o Fraco de antes caía a 1,9:1 ali.
+	// #61717f fica em 3,7:1 no pior card e 4,8:1 no do topo.
+	CardFraco: hex(0x61717f),
 	// Fundo1/Fundo3 são as pontas do gradiente da janela (fundoJanela) —
 	// eram próximos demais (diff de ~40 por canal) e o degradê saía
 	// quase plano num teste real. Vão mais afastados, do jeito
@@ -90,7 +100,8 @@ var temaClaro = Tema{
 	// era praticamente branco opaco e o degradê da janela não passava —
 	// o painel inteiro lia como blocos chapados sobre um fundo bonito.
 	Vidro1: rgba(0xffffff, 0.70), Vidro2: rgba(0xffffff, 0.78), Vidro3: rgba(0xffffff, 1.00),
-	BuscaVidro: rgba(0xf4f7fb, 0.82),
+	VidroTinta: rgba(0xffffff, 0.52), VidroTintaH: rgba(0xffffff, 0.80),
+	BuscaVidro: rgba(0xf4f7fb, 0.82), BuscaFosco: rgba(0xf4f7fb, 0.62),
 	// Borda do card em repouso: era 11%, quase se perdia contra o fundo —
 	// ver o relato de bordas "dissolvendo" no tema claro.
 	LuzB:     rgba(0x11161a, 0.17),
@@ -104,7 +115,7 @@ var temaClaro = Tema{
 	// conteúdo.
 	Titulo1: hex(0xdbe3ee), Titulo2: hex(0xcbd6e4), TituloBorda: rgba(0x11161a, 0.22),
 	Abas1: hex(0xf5f8fc), Abas2: hex(0xeaf0f7),
-	TopoTxt: hex(0x11161a), TopoSec: hex(0x5b6976),
+	TopoTxt: hex(0x11161a), TopoSec: hex(0x4e5a65),
 	// Sobre cromo CLARO quem modula é PRETO translúcido — branco sobre
 	// barra clara resolve para a própria cor da barra e some (tema.py).
 	Vidro: rgba(0x11161a, 0.05), VidroH: rgba(0x11161a, 0.11), VidroB: rgba(0x11161a, 0.12),
@@ -124,8 +135,10 @@ var temaClaro = Tema{
 		hex(0x8a97a3), hex(0xd94f5c), hex(0x1aa877), hex(0xc99a1f),
 		hex(0x4c6ef5), hex(0x9a5fdb), hex(0x159aa0), hex(0xcfd6dc),
 	},
-	Hover: hex(0xeef2f5), Campo: hex(0xffffff),
-	OkBg: hex(0xdcf5ec), OkFg: hex(0x0b7a63),
+	// Hover era #eef2f5: 1,1:1 contra o Cartao, e o item do menu sob o
+	// mouse mal mudava. #e6ecf4 marca sem virar seleção.
+	Hover: hex(0xe6ecf4), Campo: hex(0xffffff),
+	OkBg: hex(0xdcf5ec), OkFg: hex(0x0a735d),
 	ErroBg: hex(0xfde4e4), ErroFg: hex(0xb02a37), ErroH: hex(0x8d1f2a),
 	AtencaoBg: hex(0xfdf1d8), AtencaoFg: hex(0x8a5a00),
 	Azul: hex(0x4c6ef5), AzulH: hex(0x3b5bdb), Verde: hex(0x0ca678), Roxo: hex(0x6b40d0),
@@ -135,21 +148,23 @@ var temaClaro = Tema{
 	// texto secundário dele tem que vir da paleta ESCURA. Usar o topo_sec
 	// do tema claro (#5b6976) sobre um hero quase preto é o mesmo erro da
 	// "faixa preta acidental" que a skill descreve, só que invertido.
-	HeroSec:    hex(0x9aa6b2),
-	Escuro:     false,
-	SombraBase: 6, SombraPasso: 3,
+	HeroSec: hex(0x9aa6b2),
+	Escuro:  false,
 }
 
 var temaEscuro = Tema{
 	Fundo: hex(0x10141a), Cartao: hex(0x171b21), Borda: hex(0x242a32), Borda2: hex(0x333b45),
-	Texto: hex(0xd6dde5), Sec: hex(0x94a1ae), Fraco: hex(0x68757f),
+	// Revisão de contraste (2026-10-18): Sec e Fraco um degrau mais
+	// claros. O pior caso é texto sobre um card que está em cima de uma
+	// faixa diagonal do fundo — ali o Sec antigo dava 2,8:1.
+	Texto: hex(0xd6dde5), Sec: hex(0x9eaab6), Fraco: hex(0x75838e),
 	// Fraco foi calibrado contra Fundo (quase preto). O preenchimento
 	// translúcido do card (Vidro2/Vidro3) sai mais claro que a conta em
 	// sRGB prevê — o Gio compõe em linear, mesmo aviso do Luz1/Luz2 mais
 	// abaixo — e Fraco quase desaparecia em cima dele, pior ainda no
 	// hover/selecionado (Vidro3, translúcido a mais ainda). CardFraco é
 	// um degrau mais claro, só pra texto que fica sobre o card.
-	CardFraco: hex(0x8a97a3),
+	CardFraco: hex(0x9da7b2),
 	Fundo1:    hex(0x1a212b), Fundo2: hex(0x10141a), Fundo3: hex(0x080b0f),
 	// As luzes vão bem abaixo do alfa do tema.py (0.16/0.10 lá). O Gio
 	// compõe em espaço LINEAR, o GTK/cairo em sRGB: a mesma rgba() sobre
@@ -163,7 +178,8 @@ var temaEscuro = Tema{
 	// claro que a conta previa, um cinza lavado que atropelava até o
 	// contraste do texto secundário em cima do card.
 	Vidro1: rgba(0xffffff, 0.045), Vidro2: rgba(0xffffff, 0.075), Vidro3: rgba(0xffffff, 0.13),
-	BuscaVidro: rgba(0x171b21, 0.72),
+	VidroTinta: rgba(0xffffff, 0.030), VidroTintaH: rgba(0xffffff, 0.075),
+	BuscaVidro: rgba(0x171b21, 0.72), BuscaFosco: rgba(0x171b21, 0.55),
 	// A borda do card em repouso era branco puro translúcido — sobre fundo
 	// quase preto isso lê como BRILHO, não como borda de material. Um
 	// azul-acinzentado neutro em vez de branco resolve isso sem mudar o
@@ -187,7 +203,7 @@ var temaEscuro = Tema{
 		hex(0x5c6570), hex(0xe05561), hex(0x38d9a9), hex(0xe0b458),
 		hex(0x748ffc), hex(0xb197fc), hex(0x3bc9db), hex(0xffffff),
 	},
-	Hover: hex(0x1e242b), Campo: hex(0x171b21),
+	Hover: hex(0x262d36), Campo: hex(0x171b21),
 	OkBg: hex(0x0d2f28), OkFg: hex(0x4fd1b0),
 	ErroBg: hex(0x341a1e), ErroFg: hex(0xc9414d), ErroH: hex(0xe05561),
 	AtencaoBg: hex(0x332810), AtencaoFg: hex(0xe0b458),
@@ -196,10 +212,21 @@ var temaEscuro = Tema{
 	Hero1: hex(0x0b0e12), Hero2: hex(0x1c2733), HeroTxt: hex(0xffffff),
 	HeroSec: hex(0x9aa6b2),
 	Escuro:  true,
-	// ~4x o do tema claro: preto de baixa alfa não registra sobre um
-	// fundo que já está perto do preto — sem isso a sombra existia só no
-	// código, o cartão escuro nunca teve pista de elevação nenhuma.
-	SombraBase: 26, SombraPasso: 12,
+}
+
+// paletaMaterial põe a paleta do app no material.Theme da janela. É dela
+// que os widgets do Gio tiram as cores que o app não passa à mão: a
+// barra de rolagem das listas (Fg) e a seleção de texto dos campos
+// (ContrastBg). Sem isto valiam os padrões do Material — rolagem PRETA
+// nos dois temas, invisível no escuro, e seleção índigo (#3f51b5), fora
+// da paleta. Chamada no começo de cada quadro, em cada janela (cada uma
+// tem o próprio Theme): são quatro atribuições, e a troca de tema vale
+// no quadro seguinte sem ninguém precisar avisar.
+func paletaMaterial(th *material.Theme) {
+	th.Palette = material.Palette{
+		Fg: tema.Texto, Bg: tema.Cartao,
+		ContrastBg: tema.Azul, ContrastFg: hex(0xffffff),
+	}
 }
 
 // Foco em campo de texto.
@@ -380,6 +407,9 @@ func fundoJanela(gtx layout.Context, size image.Point) {
 	gradCSS(gtx, size, 150, tema.Luz1, 0, transparente, 0.55)
 	gradCSS(gtx, size, 15, tema.Luz2, 0, transparente, 0.45)
 	fundoCanto(gtx, size)
+	// A cópia desfocada deste mesmo fundo, para o vidro dos cartões —
+	// ver vidro.go. Só refaz quando muda o tamanho, o tema ou a escala.
+	atualizarFosco(gtx, size)
 }
 
 // fundoCanto desenha, sobre a janela inteira, faixas diagonais
@@ -425,28 +455,70 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 	if temaApp == nil {
 		return
 	}
-	txtCor := comAlfa(tema.Sec, 0.85)
-	// ~2x o original (era 12/16/42/3) — 3x vazava pra fora da janela.
-	const (
-		tamFonte  = 24
-		altLinha  = 32
-		largBarra = 84
-		altBarra  = 6
-	)
-	bloco := func(y float32, linhas []string) {
-		x := w * 0.87
-		for i, s := range linhas {
-			pos := op.Offset(image.Pt(int(x), int(y)+i*altLinha)).Push(gtx.Ops)
-			txt(temaApp, fonteMono, unit.Sp(tamFonte), s, txtCor).Layout(gtx)
+	txtCor := comAlfa(tema.Sec, cantoTxtAlfa)
+	for _, b := range blocosCanto {
+		x, y := w*cantoX, h*b.y
+		for i, s := range b.linhas {
+			pos := op.Offset(image.Pt(int(x), int(y)+i*cantoAltLinha)).Push(gtx.Ops)
+			txt(temaApp, fonteMono, unit.Sp(cantoTamFonte), s, txtCor).Layout(gtx)
 			pos.Pop()
 		}
-		by := y + float32(len(linhas))*altLinha + 12
+		by := y + float32(len(b.linhas))*cantoAltLinha + cantoBarraDy
 		pos := op.Offset(image.Pt(int(x), int(by))).Push(gtx.Ops)
-		gradCSS(gtx, image.Pt(largBarra, altBarra), 90, tema.Roxo, 0, tema.Verde, 1)
+		gradCSS(gtx, image.Pt(cantoLargBarra, cantoAltBarra), 90, tema.Roxo, 0, tema.Verde, 1)
 		pos.Pop()
 	}
-	bloco(h*0.234, []string{"CONECTE", "GERENCIE", "ACESSE", "CONTROLE"})
-	bloco(h*0.677, []string{"ACESSO", "REMOTO", "SEM LIMITES"})
+}
+
+// Geometria do canto, numa tabela só: fundoCanto desenha a partir dela e
+// o fundo fosco (vidro.go) a refaz desfocada. Duas cópias dos números
+// sairiam de sincronia na primeira mexida, e o vidro mostraria atrás do
+// cartão um fundo que não é o da janela.
+const (
+	cantoX       = 0.87
+	cantoTxtAlfa = 0.85
+	// ~2x o original (era 12/16/42/3) — 3x vazava pra fora da janela.
+	cantoTamFonte  = 24
+	cantoAltLinha  = 32
+	cantoLargBarra = 84
+	cantoAltBarra  = 6
+	cantoBarraDy   = 12
+)
+
+var blocosCanto = [...]struct {
+	y      float32
+	linhas []string
+}{
+	{0.234, []string{"CONECTE", "GERENCIE", "ACESSE", "CONTROLE"}},
+	{0.677, []string{"ACESSO", "REMOTO", "SEM LIMITES"}},
+}
+
+// faixaCanto é uma das faixas diagonais translúcidas do fundo.
+type faixaCanto struct {
+	cor color.NRGBA
+	pts [4]f32.Point
+}
+
+// faixasCanto devolve as faixas para uma janela w×h. Tema escuro entra
+// bem mais baixo de propósito — overlay translúcido sobre fundo quase
+// preto sai mais forte do que a conta em sRGB prevê (mesmo aviso de
+// sempre: LuzB, Luz1/Luz2, as tentativas anteriores de fundoCanto).
+func faixasCanto(w, h float32) [4]faixaCanto {
+	op1, op2 := 0.35, 0.20
+	if tema.Escuro {
+		// Eram 0,05/0,03: em linear, 5% de branco sobre quase preto vira
+		// uma faixa cinza forte, e o card que caía em cima dela ficava
+		// "lavado", com o texto secundário a 2,8:1. Pela metade, a faixa
+		// continua lá e o card deixa de desbotar.
+		op1, op2 = 0.025, 0.015
+	}
+	f1, f2 := comAlfa(hex(0xffffff), op1), comAlfa(hex(0xffffff), op2)
+	return [4]faixaCanto{
+		{f1, [4]f32.Point{{X: w * -0.06, Y: h * 0.29}, {X: w * 0.29, Y: h * -0.08}, {X: w * 0.46, Y: h * -0.08}, {X: w * 0.12, Y: h * 0.29}}},
+		{f1, [4]f32.Point{{X: w * 0.17, Y: h * 0.48}, {X: w * 0.58, Y: h * -0.08}, {X: w * 0.72, Y: h * -0.08}, {X: w * 0.31, Y: h * 0.48}}},
+		{f1, [4]f32.Point{{X: w * 0.40, Y: h * 0.73}, {X: w * 0.87, Y: h * 0.03}, {X: w * 0.98, Y: h * 0.03}, {X: w * 0.52, Y: h * 0.73}}},
+		{f2, [4]f32.Point{{X: w * 0.0, Y: h * 0.68}, {X: w * 0.35, Y: h * 0.19}, {X: w * 0.44, Y: h * 0.19}, {X: w * 0.09, Y: h * 0.68}}},
+	}
 }
 
 // fundoCantoFormas desenha só as formas (faixas, grade, linha+nós) num
@@ -456,18 +528,13 @@ func fundoCanto(gtx layout.Context, size image.Point) {
 func fundoCantoFormas(o *op.Ops, size image.Point) {
 	w, h := float32(size.X), float32(size.Y)
 
-	// Opacidade das faixas/grade/linha. Tema escuro entra bem mais
-	// baixo de propósito — overlay translúcido sobre fundo quase preto
-	// sai mais forte do que a conta em sRGB prevê (mesmo aviso de
-	// sempre nesta sessão: LuzB, Luz1/Luz2, as tentativas anteriores
-	// de fundoCanto).
-	faixaOp, faixaOp2, pontoOp, linhaOp := 0.35, 0.20, 0.55, 0.5
+	// Opacidade da grade/linha (as faixas vêm de faixasCanto). Tema
+	// escuro entra bem mais baixo, pelo mesmo motivo das faixas.
+	pontoOp, linhaOp := 0.55, 0.5
 	if tema.Escuro {
-		faixaOp, faixaOp2, pontoOp, linhaOp = 0.05, 0.03, 0.4, 0.3
+		pontoOp, linhaOp = 0.4, 0.3
 	}
 
-	faixa := comAlfa(hex(0xffffff), faixaOp)
-	faixa2 := comAlfa(hex(0xffffff), faixaOp2)
 	poligono := func(cor color.NRGBA, pts ...f32.Point) {
 		var p clip.Path
 		p.Begin(o)
@@ -478,10 +545,9 @@ func fundoCantoFormas(o *op.Ops, size image.Point) {
 		p.Close()
 		paint.FillShape(o, cor, clip.Outline{Path: p.End()}.Op())
 	}
-	poligono(faixa, f32.Pt(w*-0.06, h*0.29), f32.Pt(w*0.29, h*-0.08), f32.Pt(w*0.46, h*-0.08), f32.Pt(w*0.12, h*0.29))
-	poligono(faixa, f32.Pt(w*0.17, h*0.48), f32.Pt(w*0.58, h*-0.08), f32.Pt(w*0.72, h*-0.08), f32.Pt(w*0.31, h*0.48))
-	poligono(faixa, f32.Pt(w*0.40, h*0.73), f32.Pt(w*0.87, h*0.03), f32.Pt(w*0.98, h*0.03), f32.Pt(w*0.52, h*0.73))
-	poligono(faixa2, f32.Pt(w*0.0, h*0.68), f32.Pt(w*0.35, h*0.19), f32.Pt(w*0.44, h*0.19), f32.Pt(w*0.09, h*0.68))
+	for _, f := range faixasCanto(w, h) {
+		poligono(f.cor, f.pts[:]...)
+	}
 
 	// grade de pontos, canto superior esquerdo
 	pontoCor := comAlfa(tema.Sec, pontoOp)
@@ -611,6 +677,13 @@ func superficieRelevo(gtx layout.Context, size image.Point, fundo, borda color.N
 		return
 	}
 	superficie(gtx, size, fundo, borda, raioDp)
+	brilhoRelevo(gtx, size, raioDp)
+}
+
+// brilhoRelevo é a luz de superficieRelevo sem o fundo: o degradê que
+// desce do topo e o fio de 1px na borda de cima. Separado para o vidro
+// fosco (vidro.go) pôr a mesma luz por cima da tinta dele.
+func brilhoRelevo(gtx layout.Context, size image.Point, raioDp unit.Dp) {
 	rr := clip.UniformRRect(image.Rectangle{Max: size}, gtx.Dp(raioDp))
 	molde := rr.Push(gtx.Ops)
 	luz := rgba(0xffffff, 0.09)
@@ -638,29 +711,6 @@ func superficieRelevo(gtx layout.Context, size image.Point, fundo, borda color.N
 		Min: image.Pt(gtx.Dp(raioDp), 0), Max: image.Pt(size.X-gtx.Dp(raioDp), 1),
 	}.Op())
 	molde.Pop()
-}
-
-// sombra desenha uma sombra suave sob um retângulo arredondado. O Gio não
-// tem primitiva de sombra nem blur, então empilhamos algumas camadas
-// arredondadas cada vez maiores e mais fracas — de perto é degradê, de
-// longe é sombra, e é o suficiente pra levantar o cartão do fundo.
-//
-// Cinco camadas e um deslocamento para baixo: com três e coladas na
-// caixa, a sombra lia como borda escura; mais aberta e caindo, lê como
-// luz vindo de cima.
-func sombra(gtx layout.Context, size image.Point, raioDp unit.Dp) {
-	raio := gtx.Dp(raioDp)
-	const camadas = 5
-	for i := camadas; i >= 1; i-- {
-		d := gtx.Dp(unit.Dp(float32(i)))
-		r := image.Rect(-d/2, d/4, size.X+d/2, size.Y+d)
-		rr := clip.UniformRRect(r, raio+d)
-		alfa := (int(tema.SombraBase) + int(tema.SombraPasso)*(camadas-i)) * 3 / 5
-		if alfa > 255 {
-			alfa = 255
-		}
-		paint.FillShape(gtx.Ops, color.NRGBA{A: uint8(alfa)}, rr.Op(gtx.Ops))
-	}
 }
 
 // icone desenha um ícone vetorial Material. Ícone de verdade, não glifo de

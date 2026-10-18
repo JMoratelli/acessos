@@ -126,7 +126,7 @@ func layoutModal(gtx layout.Context, th *material.Theme) layout.Dimensions {
 		conteudo := macro.Stop()
 
 		// peso vem da SOMBRA, não de vidro: o cartão é opaco.
-		sombra(gtx, dims.Size, 12)
+		sombraElev(gtx, dims.Size, 12, &elevDialogo)
 		superficieRelevo(gtx, dims.Size, tema.Cartao, tema.Borda, 12)
 		conteudo.Add(gtx.Ops)
 		return dims

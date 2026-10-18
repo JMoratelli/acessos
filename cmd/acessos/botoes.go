@@ -69,6 +69,14 @@ func botao(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
 	rot string, peso pesoBotao, desligado bool) layout.Dimensions {
 
 	if desligado {
+		if peso == pesoPerigo {
+			// Destrutivo é vermelho SEMPRE, inclusive esperando a
+			// contagem da confirmação em lote: cinza ali apagava o aviso
+			// justamente nos 3s em que a pessoa está lendo o que vai
+			// sumir. Vermelho apagado (fundo de erro, texto de erro) diz
+			// "perigoso, ainda não" sem parecer clicável.
+			return caixaBotao(gtx, th, nil, rot, tema.ErroBg, comAlfa(tema.ErroFg, 0.45), tema.ErroFg)
+		}
 		return caixaBotao(gtx, th, nil, rot, tema.Vidro2, tema.LuzB, tema.Fraco)
 	}
 	fundo, borda, texto := peso.cores(btn.Hovered())

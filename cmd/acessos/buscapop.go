@@ -64,6 +64,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"strings"
 	"time"
@@ -467,6 +468,7 @@ func abrirJanelaBusca(th *material.Theme, arq *conexoes.Arquivo, tokenAtivacao s
 					w.Perform(system.ActionClose)
 				}
 			case app.FrameEvent:
+				paletaMaterial(j.th)
 				gtx := app.NewContext(&ops, e)
 				// A caixa obedece ao A+ como o resto do app. Sem esta
 				// linha ela era a ÚNICA janela em tamanho base — e
@@ -597,18 +599,27 @@ func (j *janelaBusca) quadro(gtx layout.Context, w *app.Window) layout.Dimension
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
-				sombra(gtx, size, buscaRaio)
+				sombraVazada(gtx, size, buscaRaio, &elevBusca)
 				// Vidro, não sólido: é o mesmo tratamento dos cards, e
 				// aqui ele tem função — a caixa aparece POR CIMA do que
 				// a pessoa estava olhando, e deixar o fundo atravessar
 				// diz sozinho que isto é passageiro, não uma janela que
 				// veio para ficar.
 				//
-				// O alfa mora no tema (BuscaVidro) porque claro e escuro
-				// não aguentam o mesmo valor: sobre um desktop qualquer,
-				// o cartão escuro pode ser bem mais fino que o claro sem
-				// o texto perder legibilidade.
-				superficie(gtx, size, tema.BuscaVidro, tema.Borda2, buscaRaio)
+				// Onde o compositor desfoca o que está atrás (KWin, via
+				// ext-background-effect), o vidro é fosco de verdade e a
+				// tinta pode ser fina (BuscaFosco): o desktop passa só
+				// como cor. Onde não desfoca, o desktop atravessaria
+				// nítido, com texto e tudo, e a tinta fica a de sempre
+				// (BuscaVidro). Claro e escuro têm alfas próprios: sobre
+				// um desktop qualquer o escuro aguenta ser mais fino.
+				m := gtx.Dp(buscaMargem)
+				cartao := image.Rectangle{Min: image.Pt(m, m), Max: image.Pt(m, m).Add(size)}
+				tinta := tema.BuscaVidro
+				if w.DesfocarFundo(cartao, gtx.Dp(buscaRaio)) {
+					tinta = tema.BuscaFosco
+				}
+				vidroSobreDesktop(gtx, size, tinta, buscaRaio)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {

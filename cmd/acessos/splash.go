@@ -288,7 +288,7 @@ func desenharSplash(gtx layout.Context, th *material.Theme, s *splash,
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, filhos...)
 		})
 		conteudo := macro.Stop()
-		sombra(gtx, dims.Size, 14)
+		sombraElev(gtx, dims.Size, 14, &elevDialogo)
 		superficie(gtx, dims.Size, tema.Cartao, tema.Borda, 14)
 		conteudo.Add(gtx.Ops)
 		return dims

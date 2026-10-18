@@ -731,6 +731,7 @@ func runApp(w *app.Window, th *material.Theme, bar *tabBar, recarregar func(),
 			// a marca é recalculada a cada quadro pelos campos de texto
 			focoEmCampo.Store(false)
 			est.atualizarInibicao(activeTab())
+			paletaMaterial(th)
 			gtx := app.NewContext(&ops, e)
 			if btnTelaCheia.Clicked(gtx) {
 				if t, ok := activeTab().(abaDestacavel); ok {

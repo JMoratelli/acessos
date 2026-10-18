@@ -182,6 +182,21 @@
   clipboard de fora durante o teste, no KDE: `qdbus6 org.kde.klipper
   /klipper setClipboardContents "texto"`.
 
+- **Regras visuais** (revisão de 2026-10-18). Destrutivo é vermelho
+  sólido sempre — inclusive desabilitado na contagem de 3s, em vermelho
+  apagado (`botoes.go`); aviso que pede providência é âmbar
+  (`tema.AtencaoFg`), nunca `ErroFg`. `Fraco` é só dica, placeholder e
+  contador; parágrafo de explicação em diálogo é `Sec`. Os mínimos de
+  contraste estão em `TestContrasteDosTokens` (`cmd/acessos/vidro_test.go`),
+  com a composição em espaço LINEAR como o Gio faz — conta em sRGB
+  promete contraste que a tela escura não entrega. Vidro fosco
+  (`superficieVidro`) só em superfície que fica DIRETO sobre o fundo da
+  janela; diálogo e menu ficam sobre os cards, que o fundo desfocado não
+  tem, e mostrariam o fundo "por trás" deles. Sombra fica fora do
+  `Clickable` (ele recorta a pintura no tamanho da área de clique — a
+  sombra dos cards nunca tinha aparecido por isso) e é `sombraVazada` em
+  superfície translúcida.
+
 - Uma vez por mês (não a cada sessão — era diário antes e virou ruído),
   checar se há versão nova das bibliotecas externas usadas no projeto:
   FreeRDP e libvncserver (versões fixas no manifesto Flatpak,

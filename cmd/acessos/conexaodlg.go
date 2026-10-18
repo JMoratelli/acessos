@@ -350,11 +350,13 @@ func (d *dlgConexao) Corpo(gtx layout.Context, th *material.Theme) layout.Dimens
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					aviso := "senhas novas serão cifradas no cofre"
+					aviso, cor := "senhas novas serão cifradas no cofre", tema.Sec
 					if cofreAberto == nil {
-						aviso = "cofre trancado: senha nova entraria em claro"
+						// Âmbar: pede providência (destrancar antes de
+						// salvar senha), como o aviso igual do Chaveiro.
+						aviso, cor = "cofre trancado: senha nova entraria em claro", tema.AtencaoFg
 					}
-					return rotulo(th, fonteMono, spCardMeta, aviso, tema.Fraco)(gtx)
+					return rotulo(th, fonteMono, spCardMeta, aviso, cor)(gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: gtx.Constraints.Min}

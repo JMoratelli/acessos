@@ -295,6 +295,7 @@ func (j *janelaSessao) quadro(e app.FrameEvent, ops *op.Ops) (ok bool) {
 	}()
 
 	j.est.atualizarInibicao(j.t)
+	paletaMaterial(j.th)
 	gtx := app.NewContext(ops, e)
 	tratarTecladoFrame(j.w, gtx, umaAbaDe(j))
 	tratarClipboardFrame(j.est, gtx, umaAbaDe(j))
