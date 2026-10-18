@@ -64,6 +64,14 @@
   <url type="bugtracker">https://github.com/JMoratelli/acessos/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.8.2" date="2026-10-18">
+      <description>
+        <p>Os cartões do painel viraram vidro fosco: o fundo da janela aparece desfocado atrás de cada um, então eles ficaram bem mais leves sem que as faixas e os textos do fundo atravessem por trás do nome da máquina. A sombra embaixo dos cartões, que antes quase não aparecia, agora cai suave como a de um objeto de verdade. A barra lateral, o rodapé e a barra das sessões ganharam o mesmo vidro; diálogos, menus e dicas ganharam uma borda de luz, e o fundo escurecido atrás dos diálogos fecha mais nas bordas do que no centro. Passar o mouse sobre cartões, botões e menus muda a cor com uma transição curta, em vez de trocar de uma vez.</p>
+        <p>No KDE Plasma, a caixa de busca do atalho global (Ctrl+Shift+F12) pede ao próprio sistema que desfoque o que está atrás dela: vira vidro fosco de verdade sobre a área de trabalho.</p>
+        <p>Textos em cinza ficaram mais legíveis nos dois temas, principalmente nos diálogos, nos detalhes dos cartões e no rodapé. No tema escuro os cartões deixaram de ficar desbotados sobre as faixas do fundo, o botão principal ganhou um azul mais firme, a barra de rolagem passou a aparecer e a seleção de texto usa a cor do aplicativo.</p>
+        <p>O botão de remover continua vermelho durante a contagem de confirmação, e o aviso de cofre trancado aparece em âmbar, como os outros avisos que pedem uma providência.</p>
+      </description>
+    </release>
     <release version="2.8.1" date="2026-10-17">
       <description>
         <p>A interface ganhou relevo. Cartões, diálogos, menus e botões têm uma luz suave vinda de cima e uma sombra que cai para baixo, em vez de blocos de cor chapados; no tema claro os cartões ficaram mais translúcidos e deixam o fundo aparecer, e a barra das sessões deixou de ser uma faixa sólida.</p>
